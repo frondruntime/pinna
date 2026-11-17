@@ -1,0 +1,77 @@
+---
+import "../styles/design-system.css";
+import { Font } from "astro:assets";
+import { ClientRouter } from "astro:transitions";
+import SiteBackground from "../components/SiteBackground.astro";
+import { palette } from "../lib/palette";
+import {
+  createJsonLd,
+  projectIdentityLinks,
+  siteAuthor,
+  siteDescription,
+  siteName,
+} from "../lib/siteMetadata";
+
+interface Props {
+  /** The full document title. */
+  title: string;
+  description?: string;
+  /**
+   * Indexable pages get a canonical URL, Open Graph, Twitter, and JSON-LD.
+   * Off everywhere until Pinna is published: robots.txt disallows the site too.
+   */
+  indexable?: boolean;
+  ogType?: "website" | "article";
+  bodyClass?: string;
+}
+
+const {
+  title,
+  description = siteDescription,
+  indexable = false,
+  ogType = "website",
+  bodyClass,
+} = Astro.props;
+const canonicalUrl = new URL(Astro.url.pathname, Astro.site).href;
+const jsonLdSchema = createJsonLd({ title, description, url: canonicalUrl });
+---
+
+<!doctype html>
+<html lang="en" transition:animate="none">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content={palette.bg} />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="author" content={siteAuthor.name} />
+    {!indexable && <meta name="robots" content="noindex, nofollow" />}
+    {indexable && (
+      <Fragment>
+        <link rel="canonical" href={canonicalUrl} />
+        <meta property="og:type" content={ogType} />
+        <meta property="og:site_name" content={siteName} />
+        <meta property="og:url" content={canonicalUrl} />
+        <meta property="og:title" content={title} />
+        <meta property="og:description" content={description} />
+        <meta property="og:locale" content="en_US" />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:creator" content={siteAuthor.twitterHandle} />
+        <meta name="twitter:title" content={title} />
+        <meta name="twitter:description" content={description} />
+        <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLdSchema)} />
+        <link rel="author" href={siteAuthor.url} />
+        {projectIdentityLinks.map((href) => <link rel="me" href={href} />)}
+      </Fragment>
+    )}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <Font cssVariable="--font-plex-mono" preload={[{ weight: "400" }, { weight: "700" }]} />
+    <slot name="head" />
+    <ClientRouter fallback="swap" />
+  </head>
+  <body class={bodyClass}>
+    <SiteBackground />
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,8 @@
+<!-- The header mark, drawn as beams on a 64-unit grid: a lime frame at 70% with its corners lit, the stem and two pairs of leaves, and a cyan tip. A bright edge also keeps Safari from framing the dark icon in a light border of its own. Stroke width 2 lands the frame on whole pixels at 32px. -->
+<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="64" height="64" fill="#090D12"/>
+<rect x="1" y="1" width="62" height="62" stroke="#C8F26B" stroke-opacity=".7" stroke-width="2"/>
+<path d="M0 0H4V4H0ZM60 0H64V4H60ZM0 60H4V64H0ZM60 60H64V64H60Z" fill="#C8F26B"/>
+<path d="M32 54V19M32 44L19 36M32 44L45 36M32 32L23 25.5M32 32L41 25.5" stroke="#C8F26B" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M29 10H35V16H29Z" fill="#3CCFED"/>
+</svg>

@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "rnbench",
+    "slug": "rnbench",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "dev.pinna.rnbench",
+      "supportsTablet": false
+    }
+  }
+}

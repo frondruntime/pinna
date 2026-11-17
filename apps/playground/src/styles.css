@@ -1,0 +1,54 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  --muted: #777;
+  --badge: #e8f0ff;
+  --badge-text: #2451b3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --badge: #1d2b4a;
+    --badge-text: #9db8ff;
+  }
+}
+body {
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 16px;
+}
+section {
+  border-top: 1px solid #8884;
+  margin-top: 24px;
+}
+ul {
+  list-style: none;
+  padding: 0;
+}
+li {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+button[aria-pressed="true"] {
+  font-weight: bold;
+}
+.muted {
+  color: var(--muted);
+}
+.done {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.renders {
+  background: var(--badge);
+  color: var(--badge-text);
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+}

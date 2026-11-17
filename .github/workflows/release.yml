@@ -1,0 +1,68 @@
+# Release metadata only: the version bump, the changelog, and the tag.
+# Publishing to npm is local, `bun run publish:npm`.
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Checkout
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: bun install --frozen-lockfile
+
+      - name: Read release pull request branch
+        id: release-pr
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        env:
+          RELEASE_PLEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: bun scripts/release.ts release-pr-branch
+
+      - name: Checkout release pull request branch
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.release-pr.outputs.head_branch }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+
+      # Not frozen: release-please has bumped the manifests, and the next
+      # step commits the lockfile this install writes.
+      - name: Install dependencies of the release branch
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: bun install
+
+      - name: Update Bun lockfile
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: bun scripts/release.ts lockfile --branch "${{ steps.release-pr.outputs.head_branch }}"

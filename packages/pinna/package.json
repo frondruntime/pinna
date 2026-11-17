@@ -1,0 +1,91 @@
+{
+  "name": "@frondruntime/pinna",
+  "version": "0.0.1",
+  "description": "Glitch-free observable state.",
+  "license": "MIT",
+  "author": {
+    "name": "Roman Dubinin",
+    "url": "https://romanonthego.dev"
+  },
+  "homepage": "https://pinna.frondruntime.dev",
+  "bugs": {
+    "url": "https://github.com/frondruntime/pinna/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frondruntime/pinna.git",
+    "directory": "packages/pinna"
+  },
+  "keywords": [
+    "reactive",
+    "signals",
+    "state",
+    "observable",
+    "glitch-free"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./internal": {
+      "source": "./src/internal/index.ts",
+      "types": "./dist/internal/index.d.ts",
+      "import": "./dist/internal/index.js",
+      "default": "./dist/internal/index.js"
+    },
+    "./testing": {
+      "source": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "AGENTS.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0",
+    "bun": ">=1"
+  },
+  "scripts": {
+    "build": "bun ../../scripts/release.ts build pinna",
+    "prepack": "bun run build",
+    "test": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test ./test",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "fuzz": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test/fuzz/cli.ts",
+    "bench": "bun --conditions=source bench/diamond.ts",
+    "bench:data": "bun --conditions=source bench/data.ts",
+    "bench:hermes": "bun --conditions=source bench/hermes.ts",
+    "bench:graph": "bun --conditions=source bench/graph.ts",
+    "bench:hermes-graph": "bun --conditions=source bench/hermes-graph.ts",
+    "bench:hermes-reaction": "bun --conditions=source bench/hermes-reaction.ts",
+    "bench:hermes-hooks": "bun --conditions=source bench/hermes-hooks.ts",
+    "bench:blackbox": "bun --conditions=source bench/blackbox.ts",
+    "bench:hermes-blackbox": "bun --conditions=source bench/hermes-blackbox.ts"
+  },
+  "dependencies": {
+    "@frondruntime/pinna-core": "0.0.1"
+  },
+  "devDependencies": {
+    "@frondruntime/pinna-core": "workspace:*",
+    "@frondruntime/pinna-effect": "workspace:*",
+    "@legendapp/state": "3.0.0-beta.48",
+    "@react-native/babel-preset": "0.88.1",
+    "alien-signals": "3.2.1",
+    "effect": "4.1.0",
+    "mobx": "7.1.7",
+    "reactive-framework-test-suite": "0.2.0"
+  }
+}

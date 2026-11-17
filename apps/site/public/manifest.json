@@ -1,0 +1,11 @@
+{
+  "name": "Pinna",
+  "short_name": "Pinna",
+  "description": "Reactive state on Effect Schema classes.",
+  "start_url": "/",
+  "display": "minimal-ui",
+  "background_color": "#090d12",
+  "theme_color": "#090d12",
+  "lang": "en-US",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

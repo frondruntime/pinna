@@ -1,0 +1,77 @@
+{
+  "name": "@frondruntime/pinna-react",
+  "version": "0.0.1",
+  "description": "React hooks for Pinna: useValue, useValues, useSelect, and a realm provider.",
+  "license": "MIT",
+  "author": {
+    "name": "Roman Dubinin",
+    "url": "https://romanonthego.dev"
+  },
+  "homepage": "https://pinna.frondruntime.dev",
+  "bugs": {
+    "url": "https://github.com/frondruntime/pinna/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frondruntime/pinna.git",
+    "directory": "packages/pinna-react"
+  },
+  "keywords": [
+    "reactive",
+    "state",
+    "react",
+    "hooks"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0",
+    "bun": ">=1"
+  },
+  "scripts": {
+    "build": "bun ../../scripts/release.ts build pinna-react",
+    "prepack": "bun run build",
+    "test": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test ./test",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "bench": "bun --conditions=source bench/render.tsx"
+  },
+  "dependencies": {
+    "@frondruntime/pinna-core": "0.0.1"
+  },
+  "peerDependencies": {
+    "@frondruntime/pinna": "0.0.1",
+    "react": ">=19"
+  },
+  "devDependencies": {
+    "@babel/core": "8.0.9",
+    "@babel/plugin-syntax-jsx": "8.0.1",
+    "@frondruntime/pinna": "workspace:*",
+    "@frondruntime/pinna-core": "workspace:*",
+    "@frondruntime/pinna-effect": "workspace:*",
+    "@happy-dom/global-registrator": "21.0.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "babel-plugin-react-compiler": "1.0.0",
+    "effect": "4.1.0",
+    "mobx": "7.1.7",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  }
+}

@@ -1,0 +1,348 @@
+---
+import "../styles/docs.css";
+import type { MarkdownHeading } from "astro";
+import Brand from "../components/Brand.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import SiteHeader from "../components/SiteHeader.astro";
+import { docsPath, getPagination, sidebar } from "../config/sidebar";
+import { siteDescription, siteName } from "../lib/siteMetadata";
+import BaseLayout from "./BaseLayout.astro";
+
+interface Props {
+  title: string;
+  description?: string;
+  slug: string;
+  headings: MarkdownHeading[];
+}
+
+const { title, description = siteDescription, slug, headings } = Astro.props;
+const { prev, next } = getPagination(slug);
+const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
+---
+
+<BaseLayout title={`${title} | ${siteName}`} description={description}>
+  <link slot="head" rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+  <link slot="head" rel="alternate" type="text/plain" title="llms-full.txt" href="/llms-full.txt" />
+
+  <div class="preview-banner">
+    <span class="preview-banner-label">Experiment</span>
+    <span class="preview-banner-detail">Pinna is not published yet. No compatibility promise.</span>
+  </div>
+
+  <SiteHeader current="docs" showMenuToggle />
+
+  <div class="sidebar-backdrop" aria-hidden="true"></div>
+
+  <div class="page-grid">
+
+    <nav class="sidebar" id="docs-sidebar" aria-label="Site navigation">
+
+      <div class="sidebar-header">
+        <Brand />
+        <button type="button" class="sidebar-close" aria-label="Close navigation">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <line x1="3" y1="3" x2="13" y2="13" />
+            <line x1="13" y1="3" x2="3" y2="13" />
+          </svg>
+        </button>
+      </div>
+
+      {sidebar.map((group) => (
+        <div class="nav-group">
+          <div class="nav-group-label">{group.label}</div>
+          <ul>
+            {group.items.map((item) => (
+              <li>
+                <a
+                  href={docsPath(item.slug)}
+                  class={`nav-link${slug === item.slug ? " active" : ""}`}
+                >
+                  {item.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      <div class="nav-group nav-group-context">
+        <div class="nav-group-label">AI context</div>
+        <ul>
+          <li><a href="/llms.txt" class="nav-link">llms.txt</a></li>
+          <li><a href="/llms-full.txt" class="nav-link">llms-full.txt</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <main class="content" transition:animate="fade">
+      <h1 class="page-title">{title}</h1>
+      <div class="prose">
+        <slot />
+      </div>
+
+      {(prev || next) && (
+        <div class="pagination">
+          {prev ? (
+            <a href={docsPath(prev.slug)} class="pagination-prev">
+              <span class="pagination-dir">Previous</span>
+              <span class="pagination-label">{prev.label}</span>
+            </a>
+          ) : (
+            <div />
+          )}
+          {next ? (
+            <a href={docsPath(next.slug)} class="pagination-next">
+              <span class="pagination-dir">Next</span>
+              <span class="pagination-label">{next.label}</span>
+            </a>
+          ) : (
+            <div />
+          )}
+        </div>
+      )}
+    </main>
+
+    <aside class="toc" aria-label="On this page">
+      {tocHeadings.length > 0 && (
+        <>
+          <div class="toc-label">On this page</div>
+          <nav>
+            {tocHeadings.map((h) => (
+              <a
+                href={`#${h.slug}`}
+                class={`toc-link${h.depth === 3 ? " toc-link--h3" : ""}`}
+              >
+                {h.text}
+              </a>
+            ))}
+          </nav>
+        </>
+      )}
+    </aside>
+
+  </div>
+
+  <SiteFooter />
+
+  <script>
+    declare global {
+      interface Window {
+        __pinnaDocsBehavior?: boolean;
+      }
+    }
+
+    function getDocsElements() {
+      return {
+        backdrop: document.querySelector<HTMLElement>('.sidebar-backdrop'),
+        sidebar: document.querySelector<HTMLElement>('.sidebar'),
+        toggle: document.querySelector<HTMLElement>('.menu-toggle'),
+      };
+    }
+
+    function closeSidebar({ restoreFocus = false } = {}) {
+      const { backdrop, sidebar, toggle } = getDocsElements();
+      if (!sidebar?.classList.contains('open')) return;
+
+      sidebar.classList.remove('open');
+      backdrop?.classList.remove('open');
+      toggle?.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) toggle?.focus();
+    }
+
+    function toggleSidebar() {
+      const { backdrop, sidebar, toggle } = getDocsElements();
+      if (sidebar === null || backdrop === null || toggle === null) return;
+
+      const open = !sidebar.classList.contains('open');
+      sidebar.classList.toggle('open', open);
+      backdrop.classList.toggle('open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+      if (open) sidebar.querySelector<HTMLElement>('.sidebar-close')?.focus();
+    }
+
+    async function copyCode(button: HTMLButtonElement) {
+      const code = button.closest('.code-frame')?.querySelector('pre')?.textContent ?? '';
+      let state = 'copied';
+      try {
+        await navigator.clipboard.writeText(code);
+      } catch {
+        state = 'failed';
+      }
+      button.dataset.state = state;
+      button.textContent = state === 'copied' ? 'Copied' : 'Failed';
+      setTimeout(() => {
+        delete button.dataset.state;
+        button.textContent = 'Copy';
+      }, 1500);
+    }
+
+    function centerActiveSidebarLink() {
+      const sidebar = document.querySelector<HTMLElement>('.sidebar');
+      const activeLink = sidebar?.querySelector<HTMLElement>('.nav-link.active');
+      if (sidebar === null || activeLink === undefined || activeLink === null) return;
+
+      const nextTop = activeLink.offsetTop - sidebar.clientHeight / 2 + activeLink.clientHeight / 2;
+      sidebar.scrollTo({ top: Math.max(0, nextTop), behavior: 'instant' });
+    }
+
+    function syncDocsPageChrome() {
+      requestAnimationFrame(centerActiveSidebarLink);
+    }
+
+    if (!window.__pinnaDocsBehavior) {
+      window.__pinnaDocsBehavior = true;
+
+      document.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+
+        if (target.closest('.menu-toggle')) {
+          toggleSidebar();
+          return;
+        }
+
+        const copyButton = target.closest<HTMLButtonElement>('.code-copy');
+        if (copyButton !== null) {
+          void copyCode(copyButton);
+          return;
+        }
+
+        if (target.closest('.sidebar-backdrop, .sidebar-close')) {
+          closeSidebar({ restoreFocus: true });
+          return;
+        }
+
+        if (target.closest('.sidebar .nav-link')) closeSidebar();
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeSidebar({ restoreFocus: true });
+      });
+
+      document.addEventListener('astro:page-load', syncDocsPageChrome);
+    }
+
+    syncDocsPageChrome();
+  </script>
+
+  <script>
+    // TOC scrollspy — port of Starlight's approach.
+    // Observe section *content* (each prose child), then map each intersecting
+    // element back to its owning heading (the most recent prior h2/h3 in DOM
+    // order). Pure heading-observation feels laggy and skips sections.
+    // A bundled script runs once per session, so the spy re-binds on every
+    // `astro:page-load` and releases the previous page's observer first.
+    const headingSel = 'h2[id], h3[id]';
+
+    // For any element inside .prose, find the heading that "owns" it:
+    // itself if it's a heading, else walk backwards through previous
+    // siblings looking for the nearest h2/h3.
+    const ownerHeading = (el: Element): HTMLHeadingElement | null => {
+      if (el.matches(headingSel)) return el as HTMLHeadingElement;
+      let p = el.previousElementSibling;
+      while (p) {
+        if (p.matches(headingSel)) return p as HTMLHeadingElement;
+        p = p.previousElementSibling;
+      }
+      return null;
+    };
+
+    const rootMargin = () => {
+      const headerH =
+        document.querySelector('.site-header')?.getBoundingClientRect()
+          .height ?? 0;
+      const top = headerH + 32;
+      const bottom = top + 53;
+      return `-${top}px 0% ${bottom - document.documentElement.clientHeight}px`;
+    };
+
+    let teardown: (() => void) | undefined;
+
+    function bindTocScrollspy() {
+      teardown?.();
+      teardown = undefined;
+
+      const toc = document.querySelector<HTMLElement>('aside.toc nav');
+      const prose = document.querySelector<HTMLElement>('main.content .prose');
+      if (!toc || !prose) return;
+
+      const links = [...toc.querySelectorAll<HTMLAnchorElement>('a.toc-link')];
+      const linkByHash = new Map<string, HTMLAnchorElement>(
+        links.map((l) => [l.hash, l]),
+      );
+      let current: HTMLAnchorElement | null = null;
+      const setCurrent = (link: HTMLAnchorElement | null) => {
+        if (link === current) return;
+        current?.removeAttribute('aria-current');
+        link?.setAttribute('aria-current', 'true');
+        current = link;
+      };
+
+      // Sections shorter than the viewport never reach the observed band near
+      // the top, so once the page cannot scroll further the last link wins.
+      const lastLink = links.at(-1) ?? null;
+      const atPageEnd = () =>
+        window.scrollY > 0 &&
+        window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+      const onScroll = () => {
+        if (atPageEnd()) setCurrent(lastLink);
+      };
+
+      const onIntersect: IntersectionObserverCallback = (entries) => {
+        if (atPageEnd()) {
+          setCurrent(lastLink);
+          return;
+        }
+        for (const { isIntersecting, target } of entries) {
+          if (!isIntersecting) continue;
+          const heading = ownerHeading(target);
+          if (!heading) continue;
+          const link = linkByHash.get(`#${encodeURIComponent(heading.id)}`)
+            ?? linkByHash.get(`#${heading.id}`);
+          if (link) {
+            setCurrent(link);
+            break;
+          }
+        }
+      };
+
+      let observer: IntersectionObserver | undefined;
+      const observe = () => {
+        const next = new IntersectionObserver(onIntersect, {
+          rootMargin: rootMargin(),
+        });
+        for (const target of prose.querySelectorAll(':scope > *')) next.observe(target);
+        observer = next;
+      };
+      let cancelObserve: () => void;
+      if ('requestIdleCallback' in window) {
+        const handle = requestIdleCallback(observe);
+        cancelObserve = () => cancelIdleCallback(handle);
+      } else {
+        const handle = setTimeout(observe, 1);
+        cancelObserve = () => clearTimeout(handle);
+      }
+
+      let resizeT: ReturnType<typeof setTimeout> | undefined;
+      const onResize = () => {
+        observer?.disconnect();
+        observer = undefined;
+        clearTimeout(resizeT);
+        resizeT = setTimeout(observe, 200);
+      };
+      addEventListener('resize', onResize);
+      addEventListener('scroll', onScroll, { passive: true });
+
+      teardown = () => {
+        cancelObserve();
+        clearTimeout(resizeT);
+        removeEventListener('resize', onResize);
+        removeEventListener('scroll', onScroll);
+        observer?.disconnect();
+      };
+    }
+
+    document.addEventListener('astro:page-load', bindTocScrollspy);
+  </script>
+
+</BaseLayout>

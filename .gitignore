@@ -1,0 +1,6 @@
+node_modules
+dist
+.DS_Store
+packages/pinna/test/.compiled-*
+apps/site/src/content/docs/
+apps/site/.astro/

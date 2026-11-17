@@ -1,0 +1,21 @@
+{
+  "name": "@frondruntime/pinna-bench",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Speed, memory, and conformance of Pinna against other reactive libraries, on Node, Bun, and Hermes.",
+  "type": "module",
+  "scripts": {
+    "bench": "bun --conditions=source src/cli.ts",
+    "test": "bun --conditions=source test ./test",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.1.0",
+    "@frondruntime/pinna": "workspace:*",
+    "@legendapp/state": "3.0.0-beta.48",
+    "@react-native/babel-preset": "0.88.1",
+    "alien-signals": "3.2.1",
+    "effect": "4.1.0",
+    "mobx": "7.1.7"
+  }
+}

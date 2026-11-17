@@ -1,0 +1,28 @@
+{
+  "name": "@frondruntime/pinna-desk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bunx vite",
+    "build": "bunx vite build",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "test": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test ./test",
+    "measure": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source scripts/measure.ts"
+  },
+  "dependencies": {
+    "@frondruntime/pinna": "workspace:*",
+    "@frondruntime/pinna-effect": "workspace:*",
+    "@frondruntime/pinna-react": "workspace:*",
+    "effect": "4.1.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "21.0.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "vite": "8.3.5"
+  }
+}

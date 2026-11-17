@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "initial-version": "0.0.1",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "packages": {
+    "packages/pinna-core": {
+      "package-name": "@frondruntime/pinna-core",
+      "component": "pinna-core"
+    },
+    "packages/pinna": {
+      "package-name": "@frondruntime/pinna",
+      "component": "pinna"
+    },
+    "packages/pinna-effect": {
+      "package-name": "@frondruntime/pinna-effect",
+      "component": "pinna-effect"
+    },
+    "packages/pinna-react": {
+      "package-name": "@frondruntime/pinna-react",
+      "component": "pinna-react"
+    }
+  },
+  "plugins": [
+    {
+      "type": "node-workspace",
+      "updatePeerDependencies": true
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "pinna",
+      "components": ["pinna-core", "pinna", "pinna-effect", "pinna-react"]
+    }
+  ]
+}

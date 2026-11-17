@@ -1,0 +1,939 @@
+---
+import { behaviors, correctness } from "reactive-framework-test-suite";
+import {
+  cases as expectedCases,
+  probes as expectedProbes,
+  type Miss,
+} from "../../../../packages/pinna/test/conformance/shared-suite/expected.ts";
+import type { FrameworkName } from "../../../../packages/pinna/test/conformance/shared-suite/frameworks.ts";
+import counterSample from "../../../playground/src/landing/counter.tsx?raw";
+import effectSample from "../../../playground/src/landing/effect.ts?raw";
+import explicitSample from "../../../playground/src/landing/explicit.ts?raw";
+import pointsSample from "../../../playground/src/landing/points.tsx?raw";
+import todoSample from "../../../playground/src/landing/todo.tsx?raw";
+import FrondGraph from "../components/FrondGraph.astro";
+import InlineCode from "../components/InlineCode.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import SiteHeader from "../components/SiteHeader.astro";
+import { docsPath } from "../config/sidebar";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { benchCell, benchLegend, benchLibraries, benchTables } from "../lib/benchResults";
+import { highlightSample } from "../lib/landingSamples";
+import { projectRepositoryUrl, siteDescription } from "../lib/siteMetadata";
+import "../styles/landing.css";
+
+const title = "Pinna — Reactive state that’s hard to get wrong";
+
+// A type error a sample shows is marked in the sample itself, under its line (landingSamples.ts).
+const todoHtml = await highlightSample(todoSample, "todo");
+
+const sourceUrl = (path: string) => `${projectRepositoryUrl}/tree/main/${path}`;
+const fileUrl = (path: string) => `${projectRepositoryUrl}/blob/main/${path}`;
+const performanceUrl = fileUrl("docs/performance.md");
+const designUrl = (anchor: string) => `${fileUrl("docs/design.md")}#${anchor}`;
+
+// The explicit section: one region of `explicit.ts` per rule, its correct use, then the mistakes it
+// stops, each labeled under its line as a type error or a throw.
+const rules: ReadonlyArray<{
+  readonly region: string;
+  readonly title: string;
+  readonly body: string;
+  readonly bar: string;
+}> = [
+  {
+    region: "read",
+    title: "A read says it is a read.",
+    body: "An observable is not its value. A computed value reads through read, a component through a hook. Skip either, and math, a comparison, or a method call on it is a type error.",
+    bar: "a computed value, and two that forgot read",
+  },
+  {
+    region: "write",
+    title: "A write has one place.",
+    body: "Boxes have no setters: only update hands out write. A value of the wrong type is a type error, and a schema box throws on one its schema rejects. A recipe is synchronous, so an async one is a type error, and throws if it slips past the types. An update that throws is undone, so a half-finished change never becomes state.",
+    bar: "an update, and the ones that fail",
+  },
+  {
+    region: "realm",
+    title: "State lives in a realm.",
+    body: "Pinna keeps no global state: a box is made in a realm the application creates, and answers only to it. A read or a write from another realm throws, so one test or request does not see another's state. So does a read kept past its update, and an update inside a computed value. Each error says where the call belongs.",
+    bar: "two realms, and calls out of place",
+  },
+];
+
+const ruleSections = await Promise.all(
+  rules.map(async (rule) => ({
+    ...rule,
+    html: await highlightSample(explicitSample, rule.region, "label"),
+  })),
+);
+
+// The React section: one sample, and the three things it assumes.
+const reactHtml = await highlightSample(pointsSample, "react");
+// A body marks its identifiers with backticks; the page renders them as `<code>`.
+const reactPoints: ReadonlyArray<{
+  readonly title: string;
+  readonly body: string;
+  readonly test: string;
+}> = [
+  {
+    title: "React Compiler",
+    body: "Components compiled with `babel-plugin-react-compiler` stay current, even one that hands its model to a helper or maps a changing list. Reads live inside hooks, so the compiler is free to memoize the rest.",
+    test: "packages/pinna-react/test/compiler.test.tsx",
+  },
+  {
+    title: "Strict Mode",
+    body: "Hooks subscribe through `useSyncExternalStore`. Strict Mode renders and mounts twice, and leaves no extra subscription behind: work started for the first observer stops after the last one.",
+    test: "packages/pinna-react/test/react.test.tsx",
+  },
+  {
+    title: "Server rendering",
+    body: "Each request creates its own realm and hands it to `RealmProvider`. A server render reads values and observes nothing.",
+    test: "packages/pinna-react/test/react.test.tsx",
+  },
+];
+
+// The core section: Pinna without Effect, every job in one sample.
+const apiHtml = await highlightSample(counterSample, "api");
+
+// Every value export, by package. Source: `packages/pinna/src/index.ts`,
+// `packages/pinna-react/src/index.ts`, and `packages/pinna-effect/src/index.ts`, which re-exports
+// every name of pinna and is counted for the names it adds; types are not counted. The export note
+// below counts from here.
+type ApiPackage = "pinna" | "pinna-react" | "pinna-effect";
+const apiPackages: ReadonlyArray<{
+  readonly name: ApiPackage;
+  readonly about: string;
+  readonly names: ReadonlyArray<string>;
+}> = [
+  {
+    name: "pinna",
+    about: "The realm, boxes, computed values, collections, models, updates, and watchers. It needs no Effect.",
+    names: [
+      "createRealm",
+      "atom",
+      "box",
+      "collection",
+      "computed",
+      "computedFunction",
+      "Model",
+      "update",
+      "observe",
+      "watch",
+      "autorun",
+      "onObserved",
+      "untracked",
+      "isTracking",
+      "reconcile",
+      "inspect",
+    ],
+  },
+  {
+    name: "pinna-react",
+    about: "The provider that hands components the realm, and the hooks that read it.",
+    names: ["RealmProvider", "useRealm", "useSelect", "useValue", "useValues"],
+  },
+  {
+    name: "pinna-effect",
+    about: "Models on Effect Schema, and Effect programs that stop with their scope. It re-exports every name of `pinna`.",
+    names: [
+      "schemaBox",
+      "SchemaModel",
+      "BoxField",
+      "CollectionField",
+      "FromContext",
+      "decode",
+      "reconcileSchema",
+      "RealmService",
+      "watchScoped",
+      "changes",
+      "observeScoped",
+      "fromStream",
+    ],
+  },
+];
+const apiCount = (name: ApiPackage) =>
+  apiPackages.filter((entry) => entry.name === name).reduce((total, entry) => total + entry.names.length, 0);
+
+// The Effect section: one sample, and what it shows.
+const effectHtml = await highlightSample(effectSample, "effect");
+const effectPoints: ReadonlyArray<{
+  readonly title: string;
+  readonly body: string;
+  readonly test: string;
+}> = [
+  {
+    title: "A model can be a SchemaModel.",
+    body: "A `SchemaModel` is an Effect `Schema.Class` whose `$` fields hold boxes and keyed collections: one class decodes server data, checks every write to its box fields, and encodes back.",
+    test: "packages/pinna-effect/test/mix.test.ts",
+  },
+  {
+    title: "The realm is a service.",
+    body: "`decode` hands the realm to what it makes as `RealmService`; programs read the same service.",
+    test: "packages/pinna-effect/test/effect.test.ts",
+  },
+  {
+    title: "Programs stop with their scope.",
+    body: "`watchScoped` runs an effect for each change, `changes` streams a value's changes, `observeScoped` keeps a value observed, and `fromStream` turns a stream into a value.",
+    test: "packages/pinna-effect/test/effect.test.ts",
+  },
+];
+
+// reactive-framework-test-suite 0.2.0, run on Pinna, MobX, and alien-signals in `packages/pinna/test/conformance/
+// shared-suite`. The case ids and titles come from the pinned package, the misses from the
+// suite's `expected.ts`, which `bun run test` checks: a case it does not list passes, and a gap
+// that opens or closes fails the run. A library is one entry of `suiteLibraries`, so a third row
+// is data. A case a library fails reads "differs" for every library alike: the suite encodes one
+// set of design choices, and the recorded reason, on hover, says which one the library took.
+type CaseState = "pass" | "differs" | "skip";
+
+interface SuiteSquare {
+  readonly state: CaseState;
+  readonly title: string;
+}
+
+const suiteLibraries: ReadonlyArray<{
+  readonly key: FrameworkName;
+  readonly name: string;
+}> = [
+  { key: "pinna", name: "Pinna" },
+  { key: "mobx", name: "MobX 7.1.7" },
+  { key: "alien-signals", name: "alien-signals 3.2.1" },
+];
+
+const suiteCases = correctness.flatMap((section) => section.cases);
+
+const missState = (miss: Miss): CaseState => (miss.status === "skip" ? "skip" : "differs");
+
+const suiteRows = suiteLibraries.map((library) => {
+  const squares: ReadonlyArray<SuiteSquare> = suiteCases.map((testCase) => {
+    const miss = expectedCases[library.key][testCase.id];
+    const heading = `#${testCase.id} ${testCase.title}`;
+    return miss === undefined
+      ? { state: "pass", title: heading }
+      : { state: missState(miss), title: `${heading}\n${miss.reason}` };
+  });
+  const count = (state: CaseState) => squares.filter((square) => square.state === state).length;
+  const parts = [
+    [count("pass"), "pass"],
+    [count("differs"), count("differs") === 1 ? "differs" : "differ"],
+    [count("skip"), "skip"],
+  ] as const;
+  const summary = parts
+    .filter(([number]) => number > 0)
+    .map(([number, word]) => `${number} ${word}`)
+    .join(", ");
+  return { key: library.key, name: library.name, squares, summary, count };
+});
+
+const suiteLegend = (
+  [
+    { state: "pass", text: "pass" },
+    { state: "differs", text: "differs from the suite" },
+    { state: "skip", text: "skip" },
+  ] as const
+).filter((entry) => suiteRows.some((row) => row.count(entry.state) > 0));
+
+
+const probeTotal = behaviors.cases.length;
+const pinnaProbeMisses = Object.values(expectedProbes.pinna).filter((answer) => typeof answer !== "string").length;
+
+const suiteSource = "https://github.com/johnsoncodehk/reactive-framework-test-suite";
+
+const sharedCasesPath = "packages/pinna-bench/test/conformance";
+
+// The other suites that run in this repository, as Pinna's own result and the file behind it.
+// The figures are the suites' own expectations, which `bun run test` checks.
+interface OtherSuite {
+  readonly figure: string;
+  readonly label: string;
+  readonly files: ReadonlyArray<{ readonly text: string; readonly href: string }>;
+  readonly source?: { readonly text: string; readonly href: string };
+}
+
+// The MobX conformance files, each package's `test/conformance/mobx-uses`.
+const mobxUses = (name: "pinna" | "pinna-effect" | "pinna-react") => ({
+  text: name,
+  href: sourceUrl(`packages/${name}/test/conformance/mobx-uses`),
+});
+
+const otherSuites: ReadonlyArray<OtherSuite> = [
+  {
+    // The count of `cases` in cases.ts, and `gaps.ts` lists no Pinna miss. The page cannot import
+    // the cases: the module imports `bun:test` at runtime.
+    figure: "20 of 20",
+    label: "shared cases: diamonds, glitches, dynamic dependencies, batching, errors",
+    files: [{ text: "cases.ts", href: fileUrl(`${sharedCasesPath}/cases.ts`) }],
+  },
+  {
+    figure: "200",
+    label: "seeded random graphs, run on Pinna, MobX, and alien-signals and compared on notifications, values, and recomputes",
+    files: [{ text: "differential.test.ts", href: fileUrl(`${sharedCasesPath}/differential.test.ts`) }],
+  },
+  {
+    // 7 files in pinna, 3 in pinna-effect, 1 in pinna-react; one of them,
+    // become-observed.test.ts, is ported from MobX's tests.
+    figure: "11 files",
+    label: "of MobX as an application uses it, each case run on MobX and on Pinna, with every difference stated in the file",
+    files: [mobxUses("pinna"), mobxUses("pinna-effect"), mobxUses("pinna-react")],
+    source: { text: "run against MobX 7.1.7; one file ported, MIT, Michel Weststrate", href: "https://github.com/mobxjs/mobx" },
+  },
+];
+
+// The three things Pinna is built on, each linked to the section that shows it.
+---
+
+<BaseLayout title={title} description={siteDescription}>
+  <div class="preview-banner">
+    <span class="preview-banner-label">Experiment</span>
+    <span class="preview-banner-detail">Pinna is not published yet. No compatibility promise.</span>
+  </div>
+  <SiteHeader />
+  <main>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         1. HERO
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-top">
+        <FrondGraph />
+        <div class="hero-content">
+          <h1 id="hero-title" class="hero-title">
+            <span class="hero-line">Reactive state</span>
+            <span class="hero-line">that’s <span class="hero-accent">hard</span></span>
+            <span class="hero-line">to get wrong.</span>
+          </h1>
+
+          <p class="lede">
+            <span class="lede-c-pinna">Pinna</span> is synchronous state for domain models, built so
+            the usual state bugs cannot happen and the rest fail where you, or your agent, can see
+            them.
+          </p>
+
+          <div class="hero-actions">
+            <a href={docsPath("start")} class="action btn-primary">Documentation</a>
+            <a href={projectRepositoryUrl} class="action btn-secondary" target="_blank" rel="noopener noreferrer">
+              GitHub
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="code-block code-block-pinna pinna-hero-code">
+        <div class="code-bar"><span>a todo, the row that renders it, and its realm</span></div>
+        <div set:html={todoHtml} />
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         3. EXPLICIT
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="section" id="explicit" aria-labelledby="explicit-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="explicit-title">Reads and writes are explicit. A mistake is loud.</h2>
+          <p>
+            Pinna is glitch-free: a write marks what depends on it, a read validates before it
+            recomputes, and watchers run once the write settles. The cost is a call at every read
+            and the time to track it, which the tables below measure.
+          </p>
+          <p>
+            A mistake Pinna can detect is a type error, an error that says where the call belongs,
+            or both. The ones that still pass, such as a forgotten read in a condition or a
+            template literal, are{" "}
+            <a href={`${docsPath("start/principles")}#misuse-is-loud`}>listed</a>. The rules an
+            agent follows ship in the <code>pinna</code> package as{" "}
+            <a href={fileUrl("packages/pinna/AGENTS.md")} target="_blank" rel="noopener noreferrer">AGENTS.md</a>,
+            with the MobX habits that do not carry over, and the documentation comes as one{" "}
+            <a href="/llms-full.txt">llms-full.txt</a>.
+          </p>
+        </header>
+
+        <div class="pinna-points">
+          {
+            ruleSections.map((rule) => (
+              <article class="pinna-point">
+                <div class="pinna-point-text">
+                  <h3>{rule.title}</h3>
+                  <p>{rule.body}</p>
+                </div>
+                <div class="code-block code-block-pinna">
+                  <div class="code-bar"><span>{rule.bar}</span></div>
+                  <div set:html={rule.html} />
+                </div>
+              </article>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         API
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="section" id="api" aria-labelledby="api-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="api-title">The API, in one sample.</h2>
+          <p>
+            A state manager decides where state lives, then does five jobs: create it, read it,
+            write it, observe it, and start work while something reads it. The sample uses{" "}
+            <code>@frondruntime/pinna</code>, which needs no Effect.
+          </p>
+          <a href={docsPath("start")} class="section-doclink">Boxes, computed values, and updates</a>
+        </header>
+
+        <div class="pinna-points">
+          <article class="pinna-point is-mirrored">
+            <ul class="pinna-point-list" aria-label="Every value export of Pinna, by package">
+              {
+                apiPackages.map((entry) => (
+                  <li>
+                    <h3>{entry.name}</h3>
+                    <p>
+                      <InlineCode text={entry.about} />
+                    </p>
+                    <p class="pinna-point-names">
+                      {entry.names.map((name) => (
+                        <code>{name}</code>
+                      ))}
+                    </p>
+                    <a
+                      class="pinna-point-test"
+                      href={sourceUrl(`packages/${entry.name}/src/index.ts`)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {`${entry.name}/src/index.ts`}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+            <div class="pinna-point-text">
+              <div class="code-block code-block-pinna">
+                <div class="code-bar"><span>the five jobs</span></div>
+                <div set:html={apiHtml} />
+              </div>
+              <p class="pinna-bench-note">
+                Pinna exports {apiCount("pinna") + apiCount("pinna-react") + apiCount("pinna-effect")} names:{" "}
+                <code>pinna</code> {apiCount("pinna")}, <code>pinna-react</code> {apiCount("pinna-react")}, and{" "}
+                <code>pinna-effect</code> {apiCount("pinna-effect")} of its own, plus all of{" "}
+                <code>pinna</code>.
+              </p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         REACT
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="section" id="react" aria-labelledby="react-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="react-title">In React.</h2>
+          <p>
+            Components read through hooks, and no component is wrapped. Each feature below works with
+            plain hooks and has a test.
+          </p>
+        </header>
+
+        <div class="pinna-points">
+          <article class="pinna-point">
+            <ul class="pinna-point-list">
+              {
+                reactPoints.map((item) => (
+                  <li>
+                    <h3>{item.title}</h3>
+                    <p>
+                      <InlineCode text={item.body} />
+                    </p>
+                    <a
+                      class="pinna-point-test"
+                      href={sourceUrl(item.test)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {item.test.split("/").pop()}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+            <div class="code-block code-block-pinna">
+              <div class="code-bar"><span>a provider, a hook read, and a write from a handler</span></div>
+              <div set:html={reactHtml} />
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         7. EFFECT
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="section" id="effect" aria-labelledby="effect-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="effect-title">With <span class="lede-c-effect">Effect</span>.</h2>
+          <p>
+            <code>@frondruntime/pinna-effect</code> puts Pinna on Effect Schema and adds programs
+            that stop with their scope.
+          </p>
+          <a href={docsPath("effect/classes")} class="section-doclink">Models on Effect Schema</a>
+        </header>
+
+        <div class="pinna-points">
+          <article class="pinna-point">
+            <ul class="pinna-point-list">
+              {
+                effectPoints.map((item) => (
+                  <li>
+                    <h3>{item.title}</h3>
+                    <p>
+                      <InlineCode text={item.body} />
+                    </p>
+                    <a
+                      class="pinna-point-test"
+                      href={sourceUrl(item.test)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {item.test.split("/").pop()}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+            <div class="code-block code-block-effect">
+              <div class="code-bar"><span>a model, a checked write, and a program</span></div>
+              <div set:html={effectHtml} />
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         CONFORMANCE
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="section" id="conformance" aria-labelledby="conformance-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="conformance-title">Conformance.</h2>
+          <p>
+            Every suite runs in <code>bun run test</code>, and a gap that opens or closes fails the
+            run.
+          </p>
+        </header>
+
+        <div class="pinna-proof">
+
+          <div class="info-card suite-grid">
+            <h3>
+              <a href={suiteSource} target="_blank" rel="noopener noreferrer">reactive-framework-test-suite</a>
+            </h3>
+            <p class="suite-source">
+              {suiteCases.length} cases, one square each, in suite order. Hover a square for its case.
+              reactive-framework-test-suite 0.2.0, MIT, Johnson Chu;{" "}
+              <a href={sourceUrl("packages/pinna/test/conformance/shared-suite")} target="_blank" rel="noopener noreferrer">shared-suite</a>.
+            </p>
+            {
+              suiteRows.map((row) => (
+                <div class="suite-row">
+                  <p class="suite-row-head">
+                    <span class="suite-row-name">{row.name}</span>
+                    <span>{row.summary}</span>
+                  </p>
+                  <div class="suite-cells" role="img" aria-label={`${row.name}: ${row.summary}`}>
+                    {row.squares.map((square) => (
+                      <span class={`suite-cell is-${square.state}`} title={square.title} />
+                    ))}
+                  </div>
+                </div>
+              ))
+            }
+            <ul class="suite-legend">
+              {
+                suiteLegend.map((entry) => (
+                  <li>
+                    <span class={`suite-cell is-${entry.state}`} aria-hidden="true" />
+                    {entry.text}
+                  </li>
+                ))
+              }
+            </ul>
+            <p class="suite-probes">
+              Pinna differs on case #154, which expects a batch that throws to keep its writes:{" "}
+              <a href="#explicit">an update that throws is undone</a>.
+            </p>
+            <p class="suite-probes">
+              {probeTotal} probes record which valid design a library takes: Pinna answers{" "}
+              {pinnaProbeMisses === 0 ? "every one" : `${probeTotal - pinnaProbeMisses}, and ${pinnaProbeMisses} fail`}.{" "}
+              <a href={designUrl("reactive-framework-test-suite")} target="_blank" rel="noopener noreferrer">The design notes</a>{" "}
+              list each answer.
+            </p>
+          </div>
+
+          <ul class="suite-figures">
+            {
+              otherSuites.map((suite) => (
+                <li>
+                  <span class="suite-figure">{suite.figure}</span>
+                  <span class="suite-figure-label">{suite.label}</span>
+                  <span class="suite-figure-files">
+                    {suite.files.map((file) => (
+                      <a href={file.href} target="_blank" rel="noopener noreferrer">
+                        {file.text}
+                      </a>
+                    ))}
+                    {suite.source !== undefined && (
+                      <a href={suite.source.href} target="_blank" rel="noopener noreferrer">
+                        {suite.source.text}
+                      </a>
+                    )}
+                  </span>
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         5. HERMES
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="section" id="hermes" aria-labelledby="hermes-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="hermes-title">Measurements.</h2>
+          <p>
+            Speed and memory for Pinna, alien-signals, Legend State, and MobX: in a React Native
+            app on iOS, with the web and Android not measured yet, and for the graph alone on Bun,
+            Node, and Hermes.
+          </p>
+          <a href={performanceUrl} class="section-doclink" target="_blank" rel="noopener noreferrer">
+            How it is measured
+          </a>
+        </header>
+
+        <div class="pinna-bench">
+          <aside class="pinna-bench-disclaimer" aria-labelledby="bench-disclaimer-title">
+            <h3 id="bench-disclaimer-title" class="code-bar">
+              <span>Preview figures</span>
+            </h3>
+            <div class="pinna-bench-disclaimer-body">
+              <p>Read a gap as a direction, not a ranking.</p>
+              <ul>
+                <li>
+                  <strong>One machine</strong>
+                  <span>No figure was repeated on other hardware.</span>
+                </li>
+                <li>
+                  <strong>One set of adapters</strong>
+                  <span>
+                    Every library's adapter was written for these benches.
+                  </span>
+                </li>
+                <li>
+                  <strong>Quick runs</strong>
+                  <span>
+                    The Node and Hermes columns print pinna-bench's rough tier, one launch per cell, not its
+                    publish tier. The app ran on a simulator, not a device.
+                  </span>
+                </li>
+              </ul>
+            </div>
+          </aside>
+
+          <div class="pinna-bench-legend">
+            <p class="pinna-bench-note">
+              Lower is better. Each cell is colored against the best figure in its row on the same
+              runtime.
+            </p>
+            <ul>
+              {benchLegend.map((entry) => <li class={`pinna-bench-swatch is-${entry.tone}`}>{entry.text}</li>)}
+            </ul>
+            <p class="pinna-bench-note">Hover a cell for its ratio. A dash is not measured.</p>
+          </div>
+          {
+            benchTables.map((table) => {
+              const runtimes = table.runtimes;
+              return (
+              <section class="pinna-bench-block" aria-label={table.title}>
+                <h3>{table.title}</h3>
+                {table.groups.map((group) => (
+                  <div class="pinna-bench-group">
+                    <h4 class="pinna-bench-group-title">
+                      {group.title} <span class="pinna-bench-unit">{group.unit}</span>
+                    </h4>
+                    <div class="pinna-bench-scroll">
+                      <table class="pinna-bench-table">
+                        <caption class="visually-hidden">
+                          {table.title}, {group.title.toLowerCase()}: Pinna, alien-signals, Legend State, and MobX on{" "}
+                          {runtimes.map((runtime) => runtime.name).join(", ")}
+                        </caption>
+                        <colgroup>
+                          <col class="pinna-bench-scenario-column" />
+                          {benchLibraries.map(() => runtimes.map(() => <col />))}
+                        </colgroup>
+                        <thead>
+                          <tr>
+                            <th scope="col" rowspan="2">
+                              Scenario
+                            </th>
+                            {benchLibraries.map((library) => (
+                              <th scope="colgroup" colspan={runtimes.length} class="is-last">
+                                {library.name}
+                              </th>
+                            ))}
+                          </tr>
+                          <tr>
+                            {benchLibraries.map(() =>
+                              runtimes.map((runtime, index) => (
+                                <th
+                                  scope="col"
+                                  class:list={[
+                                    "pinna-bench-runtime",
+                                    { "is-last": index === runtimes.length - 1 },
+                                  ]}
+                                >
+                                  {runtime.name}
+                                </th>
+                              )),
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.rows.map((row) => (
+                            <tr>
+                              <th scope="row" title={row.name}>
+                                {row.name}
+                                {row.unit !== undefined && <span class="pinna-bench-unit"> {row.unit}</span>}
+                              </th>
+                              {benchLibraries.map((library) =>
+                                runtimes.map((runtime, index) => {
+                                  const cell = benchCell(row, library.key, runtime.key);
+                                  return (
+                                    <td
+                                      class:list={[
+                                        cell.tone !== undefined && `is-${cell.tone}`,
+                                        { "is-last": index === runtimes.length - 1 },
+                                      ]}
+                                      title={cell.tone === "failed" ? "stack overflow" : cell.ratio}
+                                    >
+                                      {cell.text}
+                                    </td>
+                                  );
+                                }),
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </section>
+              );
+            })
+          }
+
+          <div class="pinna-bench-notes">
+            <section class="pinna-bench-notes-row" aria-labelledby="bench-notes-where">
+              <header>
+                <h3 id="bench-notes-where">Where they ran</h3>
+                <p>All three on 2026-11-16.</p>
+              </header>
+              <dl class="pinna-bench-terms">
+                <div class="pinna-bench-term">
+                  <dt>The app</dt>
+                  <dd>
+                    <code>apps/rn-bench</code>, a release build on Hermes on the iPhone 17 Pro
+                    simulator. 10,000 rows, full mode. Each figure is the median of three rounds.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>The graph on Node and Hermes</dt>
+                  <dd>
+                    pinna-bench's rough tier on Node <code>26.13.1</code> and on hermes-ios{" "}
+                    <code>0.5</code> from the command line. Each launch is a process of its own
+                    that makes the library's instance once. The machine's load average was 8 to 10.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>The graph on Bun</dt>
+                  <dd>
+                    <code>bench:graph</code> on Bun <code>1.4.4</code>, the median of 9 runs, each
+                    library in a process of its own.
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="pinna-bench-notes-row" aria-labelledby="bench-notes-counted">
+              <header>
+                <h3 id="bench-notes-counted">What a figure counts</h3>
+              </header>
+              <dl class="pinna-bench-terms">
+                <div class="pinna-bench-term">
+                  <dt>App speed</dt>
+                  <dd>
+                    The synchronous write. Pinna and alien-signals rerun their readers inside it;
+                    MobX and Legend State rerun theirs in the render that follows, which is not
+                    timed.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>Parsing</dt>
+                  <dd>
+                    Left out. Every store takes plain values: <code>JSON.parse</code> and the
+                    conversion from wire JSON, 760 to 845 ms of each bulk write, are timed apart.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>App memory</dt>
+                  <dd>
+                    Hermes's own counters, the median of the three rounds.
+                    <ul>
+                      <li>
+                        <strong>Allocated:</strong> bytes allocated during the store's write alone,
+                        garbage included.
+                      </li>
+                      <li>
+                        <strong>Kept:</strong> allocated bytes after two forced full garbage collections
+                        with the 10,000 rows loaded, minus the same with the store empty, read on a
+                        fresh screen after every timed scenario.
+                      </li>
+                    </ul>
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>Graph memory</dt>
+                  <dd>
+                    Kilobytes allocated by one run of each scenario, the median of the runs, from
+                    the same pinna-bench run as the speed figures.
+                    <ul>
+                      <li>
+                        <strong>Node:</strong> V8's total allocated bytes, in a launch of its own
+                        with <code>--no-inline-new</code>, 15 runs after 10 of warm-up.
+                      </li>
+                      <li>
+                        <strong>Hermes:</strong> its count of allocated bytes, in the timed
+                        launches.
+                      </li>
+                      <li><strong>Bun:</strong> not measured.</li>
+                    </ul>
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="pinna-bench-notes-row" aria-labelledby="bench-notes-same">
+              <header>
+                <h3 id="bench-notes-same">The same for every library</h3>
+              </header>
+              <dl class="pinna-bench-terms">
+                <div class="pinna-bench-term">
+                  <dt>One shape</dt>
+                  <dd>
+                    Every store in the app keeps the same three fields of a row reactive, and all
+                    four share one list, one set of views, and one merge rule. The merge is mostly
+                    a comparison all four share.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>One build</dt>
+                  <dd>
+                    babel-preset-expo's defaults, tuned for none of them, and no store's rows
+                    extend a class. Under those defaults, making an instance of a class that
+                    extends another costs about 2.6 KB and 2.8 µs in Babel's{" "}
+                    <code>callSuper</code> helper.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>Noise</dt>
+                  <dd>Insert and remove vary up to 3× between rounds.</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="pinna-bench-notes-row" aria-labelledby="bench-notes-libraries">
+              <header>
+                <h3 id="bench-notes-libraries">Each library</h3>
+              </header>
+              <dl class="pinna-bench-terms">
+                <div class="pinna-bench-term">
+                  <dt>Pinna</dt>
+                  <dd>
+                    Plain boxes, which check nothing, held in plain objects rather than{" "}
+                    <code>Model</code> subclasses. Its tick looks rows up through{" "}
+                    <code>read.row</code>, which makes nothing per key where nothing tracks.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>alien-signals <code>3.2.1</code></dt>
+                  <dd>In the app, through a React hook written for this app.</dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>Legend State <code>3.0.0-beta.48</code></dt>
+                  <dd>
+                    A beta. In the app, loaded in one set; its ticks are not profiled. In the
+                    graph, its deep chain overflows the stack on Node and Hermes.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>MobX <code>7.1.7</code></dt>
+                  <dd>
+                    It makes an <code>ObservableValue</code>, which extends <code>Atom</code>, per
+                    observable field, so it pays Babel's helper inside its own code: the app's load and replace
+                    take about 80 ms more, and the load 60 MB more, than MobX 6.15.3's ES5 build
+                    did. On Hermes from the command line, without Babel, 7.1.7 is the faster of the
+                    two.
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="pinna-bench-notes-row" aria-labelledby="bench-notes-reproduce">
+              <header>
+                <h3 id="bench-notes-reproduce">Reproducing</h3>
+              </header>
+              <dl class="pinna-bench-terms">
+                <div class="pinna-bench-term">
+                  <dt>Node and Hermes</dt>
+                  <dd>
+                    <code class="pinna-bench-command">bun run bench --tier rough</code>
+                    In{" "}
+                    <a href={sourceUrl("packages/pinna-bench")} target="_blank" rel="noopener noreferrer">packages/pinna-bench</a>.
+                    Hermes needs a hermes-ios release, given with <code>--hermes</code> or{" "}
+                    <code>PINNA_HERMES</code>.
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>Bun</dt>
+                  <dd>
+                    <code class="pinna-bench-command">bun run --cwd packages/pinna bench:graph</code>
+                  </dd>
+                </div>
+                <div class="pinna-bench-term">
+                  <dt>The app</dt>
+                  <dd>
+                    <code class="pinna-bench-command">bun run --cwd apps/rn-bench ios</code>
+                    then
+                    <code class="pinna-bench-command">bun run --cwd apps/rn-bench bench --mode full</code>
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <SiteFooter />
+</BaseLayout>

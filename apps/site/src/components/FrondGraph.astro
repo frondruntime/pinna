@@ -1,0 +1,427 @@
+---
+// The hero's graph, behind its headline: the todos of `apps/playground/src/landing/todo.tsx` drawn
+// as a frond, live, in 3D where the browser has WebGL2 (`src/lib/frondScene.ts`) and flat
+// otherwise (`src/lib/frondGraph.ts`). The server draws them as the sample leaves them, after
+// `site.toggle()`; in the browser a Pinna realm holds them, a done todo's branch is lit, the stem
+// is lit while there is a todo and its tip once all are done, the leaves past the last todo hold
+// the realm's totals, and the caption counts what each toggle, add, or remove recomputed and rendered.
+import {
+  type FrondTodo,
+  frondClasses,
+  frondMarkup,
+  frondMaximum,
+  frondTotals,
+  frondViewBox,
+} from "../lib/frondGraph";
+
+// The sample's todos, in its order, after `site.toggle()`.
+const todos: ReadonlyArray<FrondTodo> = [
+  { id: "1", title: "Write the docs", done: false, label: "Write the docs" },
+  { id: "2", title: "Ship the site", done: true, label: "✓ Ship the site" },
+  { id: "3", title: "Measure Hermes", done: false, label: "Measure Hermes" },
+  { id: "4", title: "Run conformance", done: true, label: "✓ Run conformance" },
+  { id: "5", title: "Check the tarballs", done: false, label: "Check the tarballs" },
+  { id: "6", title: "Bench on Node", done: true, label: "✓ Bench on Node" },
+];
+const width = 460;
+const picture = {
+  todos,
+  added: undefined,
+  totals: frondTotals(
+    todos.length,
+    todos.filter((todo) => !todo.done).length,
+    todos.every((todo) => todo.done),
+  ),
+};
+---
+
+<div class="hero-frond" data-frond transition:persist="hero-frond">
+  <div class="frond-canvas">
+    <svg
+      class={frondClasses(picture)}
+      viewBox={frondViewBox(todos.length, width)}
+      role="group"
+      aria-label="The todos drawn as branches of a frond. Each branch runs from the todo's done box to its computed label to its rendered row; the branches the last action reached are lit."
+      set:html={frondMarkup(picture, width)}
+    />
+  </div>
+  <!-- Floats under the stem's root: `add()` writes `$todos`, the root. -->
+  <div class="frond-dock">
+    <form class="frond-add" data-frond-add>
+      <label class="frond-add-label" for="frond-title">add()</label>
+      <input
+        id="frond-title"
+        class="frond-add-input"
+        name="title"
+        maxlength="20"
+        autocomplete="off"
+        placeholder="A new todo"
+        required
+      />
+      <button class="frond-add-button" type="submit" data-maximum={frondMaximum}>Add</button>
+    </form>
+    <p class="frond-caption" aria-live="polite" data-frond-caption>
+      <code>toggle()</code> writes one <code>$done</code> → <code>$label</code> recomputed once →
+      one <code>&lt;Row&gt;</code> of six re-rendered. Tap a todo to toggle it; × removes it.
+    </p>
+  </div>
+</div>
+
+<script>
+  import {
+    autorun,
+    type Box,
+    box,
+    type Computed,
+    computed,
+    createRealm,
+    untracked,
+    update,
+  } from "@frondruntime/pinna";
+  import {
+    type FrondPicture,
+    fitLabel,
+    frondClasses,
+    frondMarkup,
+    frondMaximum,
+    frondTotals,
+    frondViewBox,
+  } from "../lib/frondGraph";
+  import type { FrondScene, FrondSignal } from "../lib/frondScene";
+
+  interface Todo {
+    readonly id: string;
+    readonly title: string;
+    readonly $done: Box<boolean>;
+    readonly $label: Computed<string>;
+    /** Stops the todo's `<Row>`. */
+    readonly stop: () => void;
+  }
+
+  const find = <Found extends Element>(parent: ParentNode, selector: string): Found => {
+    const element = parent.querySelector<Found>(selector);
+    if (element === null) {
+      throw new Error(`The hero frond has no ${selector}`);
+    }
+    return element;
+  };
+
+  // Whether a 3D frond has shown on this visit: only the first fades in.
+  let appeared = false;
+
+  /** Sets up one frond; returns what takes it down. */
+  const mount = (frond: HTMLElement): (() => void) => {
+    const canvas = find<HTMLElement>(frond, ".frond-canvas");
+    const svg = find<SVGSVGElement>(canvas, ".frond-graph");
+    const form = find<HTMLFormElement>(frond, "[data-frond-add]");
+    const input = find<HTMLInputElement>(form, "input");
+    const addButton = find<HTMLButtonElement>(form, "button");
+    const caption = find<HTMLElement>(frond, "[data-frond-caption]");
+
+    const realm = createRealm();
+    const $todos = box<ReadonlyArray<Todo>>(realm, []);
+    // The realm's totals, drawn on the leaves past the last todo.
+    const $count = computed(realm, (read) => read($todos).length);
+    const $left = computed(
+      realm,
+      (read) => read($todos).filter((todo) => !read(todo.$done)).length,
+    );
+    const $allDone = computed(realm, (read) => read($count) > 0 && read($left) === 0);
+
+    // What the last action cost, counted by the pads themselves: a `$label` counts each compute and
+    // a `<Row>` each render. The counters are for this drawing only; a model keeps computes pure.
+    let computes = 0;
+    const rendered = new Set<string>();
+    // What each `<Row>` last rendered, so redrawing the frond reads no label.
+    const labels = new Map<string, string>();
+
+    let nextId = 1;
+    const makeTodo = (title: string, done: boolean): Todo => {
+      const id = String(nextId++);
+      const $done = box(realm, done);
+      const $label = computed(realm, (read) => {
+        computes++;
+        return read($done) ? `✓ ${title}` : title;
+      });
+      // The `<Row>`: it reads `$label` alone, so it renders again only when its own label changes.
+      const stop = autorun(realm, (read) => {
+        labels.set(id, read($label));
+        rendered.add(id);
+        return undefined;
+      });
+      return { id, title, $done, $label, stop };
+    };
+
+    let picture: FrondPicture = { todos: [], added: undefined, totals: frondTotals(0, 0, false) };
+    let drawnWidth = 0;
+    let drawnIds = "";
+    // The 3D drawing, once it loads; the flat one stays where the browser has no WebGL2.
+    let scene: FrondScene | undefined;
+    let disposed = false;
+
+    const snapshot = (added: string | undefined): FrondPicture =>
+      untracked(realm, (read) => ({
+        todos: read($todos).map((todo) => ({
+          id: todo.id,
+          title: todo.title,
+          done: read(todo.$done),
+          label: labels.get(todo.id) ?? todo.title,
+        })),
+        added,
+        totals: frondTotals(read($count), read($left), read($allDone)),
+      }));
+
+    // A redraw for a new list or width; otherwise the branches change in place, so their colors ease.
+    // `signal` says what the action wrote and which rows it reached, for the 3D drawing to show.
+    const draw = (next: FrondPicture, signal?: FrondSignal): void => {
+      picture = next;
+      if (scene !== undefined) {
+        scene.set(next, signal);
+        return;
+      }
+      svg.setAttribute("class", frondClasses(next));
+      const width = Math.round(svg.getBoundingClientRect().width);
+      const ids = next.todos.map((todo) => todo.id).join(",");
+      if (width !== drawnWidth || ids !== drawnIds) {
+        drawnWidth = width;
+        drawnIds = ids;
+        svg.setAttribute("viewBox", frondViewBox(next.todos.length, width));
+        svg.innerHTML = frondMarkup(next, width);
+        return;
+      }
+      for (const todo of next.todos) {
+        const branch = svg.querySelector(`[data-id="${todo.id}"]`);
+        if (branch === null) {
+          continue;
+        }
+        branch.classList.toggle("is-done", todo.done);
+        branch.classList.remove("is-added");
+        const row = find(branch, ".frond-row");
+        row.textContent = fitLabel(todo.label, Number(row.getAttribute("data-characters")));
+        find(branch, ".frond-toggle").setAttribute("aria-pressed", String(todo.done));
+      }
+    };
+
+    const code = (text: string): HTMLElement => {
+      const element = document.createElement("code");
+      element.textContent = text;
+      return element;
+    };
+
+    const say = (...parts: ReadonlyArray<string | HTMLElement>): void => {
+      caption.replaceChildren(...parts, " Tap a todo to toggle it; × removes it.");
+    };
+
+    const times = (count: number): string => (count === 1 ? "once" : `${count} times`);
+
+    /** Runs one action, then draws and reports what it cost. */
+    const act = (run: () => void): { readonly computes: number; readonly rows: number } => {
+      computes = 0;
+      rendered.clear();
+      run();
+      return { computes, rows: rendered.size };
+    };
+
+    const syncAddButton = (): void => {
+      addButton.disabled = untracked(realm, (read) => read($todos).length) >= frondMaximum;
+    };
+
+    const toggle = (todo: Todo): void => {
+      const cost = act(() => {
+        update(realm, (read, write) => {
+          write(todo.$done, !read(todo.$done));
+        });
+      });
+      draw(snapshot(undefined), { from: todo.id, reached: [...rendered] });
+      const total = untracked(realm, (read) => read($todos).length);
+      say(
+        code("toggle()"),
+        " writes one ",
+        code("$done"),
+        " → ",
+        code("$label"),
+        ` recomputed ${times(cost.computes)} → ${cost.rows} `,
+        code("<Row>"),
+        ` of ${total} re-rendered.`,
+      );
+    };
+
+    const add = (title: string): void => {
+      let added: Todo | undefined;
+      const cost = act(() => {
+        const todo = makeTodo(title, false);
+        added = todo;
+        update(realm, (read, write) => {
+          write($todos, [...read($todos), todo]);
+        });
+      });
+      draw(snapshot(added?.id), { from: "root", reached: [...rendered] });
+      syncAddButton();
+      const others = untracked(realm, (read) => read($todos).length) - 1;
+      say(
+        code("add()"),
+        " writes ",
+        code("$todos"),
+        " → one new ",
+        code("$label"),
+        " and ",
+        code("<Row>"),
+        ` → ${cost.rows - 1} of the other ${others} re-rendered.`,
+      );
+    };
+
+    const remove = (todo: Todo): void => {
+      const cost = act(() => {
+        todo.stop();
+        update(realm, (read, write) => {
+          write(
+            $todos,
+            read($todos).filter((other) => other !== todo),
+          );
+        });
+      });
+      draw(snapshot(undefined), { from: "root", reached: [...rendered] });
+      syncAddButton();
+      const total = untracked(realm, (read) => read($todos).length);
+      say(
+        code("remove()"),
+        " writes ",
+        code("$todos"),
+        " → ",
+        code("$label"),
+        ` recomputed ${times(cost.computes)} → ${cost.rows} `,
+        code("<Row>"),
+        ` of ${total} re-rendered.`,
+      );
+    };
+
+    const todoOf = (target: EventTarget | null): { todo: Todo; action: string } | undefined => {
+      if (!(target instanceof Element)) {
+        return undefined;
+      }
+      const control = target.closest("[data-action]");
+      const id = control?.closest("[data-id]")?.getAttribute("data-id");
+      const action = control?.getAttribute("data-action");
+      const todo = untracked(realm, (read) => read($todos).find((each) => each.id === id));
+      return todo === undefined || action === null || action === undefined
+        ? undefined
+        : { todo, action };
+    };
+
+    const run = (target: EventTarget | null): boolean => {
+      const hit = todoOf(target);
+      if (hit === undefined) {
+        return false;
+      }
+      if (hit.action === "remove") {
+        remove(hit.todo);
+      } else {
+        toggle(hit.todo);
+      }
+      return true;
+    };
+
+    // On the frame, so the 3D drawing's buttons reach it too; they are buttons, so keys click them.
+    canvas.addEventListener("click", (event) => {
+      run(event.target);
+    });
+    svg.addEventListener("keydown", (event) => {
+      if ((event.key === "Enter" || event.key === " ") && run(event.target)) {
+        event.preventDefault();
+      }
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const title = input.value.trim();
+      if (title === "" || addButton.disabled) {
+        return;
+      }
+      add(title);
+      form.reset();
+    });
+
+    // The sample's todos, then its last line, so the frond starts as the server drew it.
+    const seed: ReadonlyArray<readonly [string, boolean]> = [
+      ["Write the docs", false],
+      ["Ship the site", false],
+      ["Measure Hermes", false],
+      ["Run conformance", true],
+      ["Check the tarballs", false],
+      ["Bench on Node", true],
+    ];
+    const initial = seed.map(([title, done]) => makeTodo(title, done));
+    update(realm, (_read, write) => {
+      write($todos, initial);
+    });
+    const site = initial[1];
+    if (site !== undefined) {
+      act(() => {
+        update(realm, (read, write) => {
+          write(site.$done, !read(site.$done));
+        });
+      });
+    }
+    draw(snapshot(undefined));
+    syncAddButton();
+
+    const resizes = new ResizeObserver(() => {
+      if (scene === undefined) {
+        draw(picture);
+      } else {
+        scene.resize();
+      }
+    });
+    resizes.observe(canvas);
+
+    // The flat drawing stays hidden until the 3D one loads or turns out unavailable.
+    const showFlat = (): void => canvas.classList.add("is-flat");
+    void import("../lib/frondScene").then(({ createFrondScene }) => {
+      if (disposed) {
+        return;
+      }
+      scene = createFrondScene(canvas, svg);
+      if (scene === undefined) {
+        showFlat();
+        return;
+      }
+      scene.set(picture, undefined);
+      if (!appeared) {
+        appeared = true;
+        const drawing = find<HTMLElement>(canvas, ".frond-scene");
+        drawing.classList.add("is-appearing");
+        drawing.addEventListener("animationend", () => drawing.classList.remove("is-appearing"), {
+          once: true,
+        });
+      }
+    }, showFlat);
+
+    return () => {
+      disposed = true;
+      resizes.disconnect();
+      scene?.dispose();
+      for (const todo of untracked(realm, (read) => read($todos))) {
+        todo.stop();
+      }
+    };
+  };
+
+  // The router swaps pages without running this script again, so each page load sets up a frond
+  // it has not seen. The frond persists across a swap to a page that has one too, keeping its
+  // todos; one a swap left off the page is taken down.
+  const mounted = new Map<HTMLElement, () => void>();
+  const mountAll = (): void => {
+    for (const [frond, dispose] of mounted) {
+      if (!frond.isConnected) {
+        dispose();
+        mounted.delete(frond);
+      }
+    }
+    for (const frond of document.querySelectorAll<HTMLElement>("[data-frond]")) {
+      if (!mounted.has(frond)) {
+        mounted.set(frond, mount(frond));
+      }
+    }
+  };
+  mountAll();
+  document.addEventListener("astro:page-load", mountAll);
+</script>

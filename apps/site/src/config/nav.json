@@ -1,0 +1,105 @@
+{
+  "groups": [
+    {
+      "label": "Start",
+      "items": [
+        {
+          "label": "Start",
+          "slug": "start"
+        },
+        {
+          "label": "Design principles",
+          "slug": "start/principles"
+        },
+        {
+          "label": "Coming from MobX",
+          "slug": "start/mobx"
+        }
+      ]
+    },
+    {
+      "label": "Core",
+      "items": [
+        {
+          "label": "Boxes and computed",
+          "slug": "state/boxes"
+        },
+        {
+          "label": "Updates",
+          "slug": "state/updates"
+        },
+        {
+          "label": "Collections",
+          "slug": "state/collections"
+        },
+        {
+          "label": "Reacting",
+          "slug": "state/reacting"
+        },
+        {
+          "label": "Lifecycles",
+          "slug": "state/lifecycles"
+        }
+      ]
+    },
+    {
+      "label": "React",
+      "items": [
+        {
+          "label": "Hooks",
+          "slug": "react/hooks"
+        }
+      ]
+    },
+    {
+      "label": "Effect",
+      "items": [
+        {
+          "label": "Schema-checked boxes",
+          "slug": "effect/boxes"
+        },
+        {
+          "label": "Classes",
+          "slug": "effect/classes"
+        },
+        {
+          "label": "Collection fields",
+          "slug": "effect/collections"
+        },
+        {
+          "label": "Equality and hashing",
+          "slug": "effect/equality"
+        },
+        {
+          "label": "Programs",
+          "slug": "effect/programs"
+        }
+      ]
+    },
+    {
+      "label": "Guides",
+      "items": [
+        {
+          "label": "Live data",
+          "slug": "guides/live-data"
+        },
+        {
+          "label": "Indexes and sets",
+          "slug": "guides/row-indexes"
+        },
+        {
+          "label": "Saving state",
+          "slug": "guides/saving"
+        },
+        {
+          "label": "Testing",
+          "slug": "guides/testing"
+        },
+        {
+          "label": "Errors and debugging",
+          "slug": "guides/errors"
+        }
+      ]
+    }
+  ]
+}

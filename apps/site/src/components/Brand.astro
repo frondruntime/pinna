@@ -1,0 +1,22 @@
+---
+interface Props {
+  readonly class?: string;
+  readonly href?: string;
+}
+
+const { class: className = "", href = "/" } = Astro.props;
+---
+
+<a class={`brand ${className}`.trim()} href={href} aria-label="Pinna">
+  <span class="mark" aria-hidden="true">
+    <!-- A leaflet drawn as beams on a 36px grid, one unit to a pixel: the stem, two pairs of
+         leaves, a cyan tip, and the frame with its corners lit. -->
+    <svg aria-hidden="true" width="36" height="36" viewBox="0 0 36 36">
+      <rect class="mark-frame" x="0.5" y="0.5" width="35" height="35" />
+      <path class="mark-corner" d="M0 0H2V2H0ZM34 0H36V2H34ZM0 34H2V36H0ZM34 34H36V36H34Z" />
+      <path class="mark-beam" d="M18 30V11M18 25L11 20.5M18 25L25 20.5M18 18L13 14.5M18 18L23 14.5" />
+      <path class="mark-tip" d="M16.5 6.5H19.5V9.5H16.5Z" />
+    </svg>
+  </span>
+  <span class="brand-name">Pinna</span>
+</a>

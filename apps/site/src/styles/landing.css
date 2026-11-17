@@ -1,0 +1,1584 @@
+/* ═══════════════════════════════════════════════════════════
+   PINNA LANDING
+   Landing layout, sections, benchmarks, and hero graph.
+   Tokens, reset, brand mark live in design-system.css.
+   ═══════════════════════════════════════════════════════════ */
+
+body {
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HERO
+   ═══════════════════════════════════════════════════════════ */
+
+.hero {
+  position: relative;
+  display: grid;
+  gap: 32px;
+  align-content: start;
+  width: var(--shell-width);
+  margin: 0 auto;
+  padding: 56px 0 112px;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 2;
+  max-width: 800px;
+  padding-top: 12px;
+}
+
+.hero-title {
+  display: grid;
+  margin-bottom: 28px;
+  color: var(--ink-bright);
+  font-size: clamp(2.8rem, 6vw, 5.6rem);
+  line-height: 0.96;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+}
+
+.hero-line {
+  display: block;
+  white-space: nowrap;
+}
+
+.hero-accent {
+  color: var(--accent);
+  text-shadow:
+    0 0 1px rgb(var(--accent-rgb) / 0.8),
+    0 0 20px rgb(var(--accent-rgb) / 0.2),
+    0 0 40px rgb(var(--accent-rgb) / 0.08);
+}
+
+.lede {
+  max-width: 600px;
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.72;
+}
+
+.lede-c-pinna {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.btn-primary,
+.btn-secondary {
+  transition:
+    background var(--duration-control),
+    border-color var(--duration-control),
+    color var(--duration-control);
+}
+
+/* The primary action is a beam frame, like the brand mark: a lit line at 70% with lit corners,
+   and no glow. Hover brightens the line and the fill. */
+.btn-primary {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--lit-line);
+  border-radius: 0;
+  background: var(--beam-corners);
+  background-color: rgb(var(--accent-rgb) / 0.08);
+  color: var(--accent);
+}
+
+.btn-primary:hover {
+  border-color: var(--lit-line-hover);
+  background-color: rgb(var(--accent-rgb) / 0.14);
+}
+
+.btn-secondary {
+  min-height: 44px;
+  border-bottom: 1px solid var(--lit-hairline);
+  background: transparent;
+  color: var(--muted);
+}
+
+.btn-secondary:hover {
+  color: var(--accent);
+}
+
+/* A quiet link into the docs, the last line of a section's header, under its intro. Descriptive
+   anchor text, underlined like the hero's secondary action, not dressed up like a button. The
+   header is a grid, which would stretch the link and its underline across the whole cell. */
+.section-doclink {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--lit-hairline);
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  transition:
+    color var(--duration-control),
+    border-color var(--duration-control);
+}
+
+.section-doclink:hover {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LANDING SECTION PRIMITIVES
+   ═══════════════════════════════════════════════════════════ */
+
+.section {
+  border-top: 1px solid var(--line);
+}
+
+.section-shell {
+  display: grid;
+  gap: 48px;
+  width: var(--shell-width);
+  margin: 0 auto;
+  padding: 112px 0;
+}
+
+.section-header {
+  display: grid;
+  gap: 20px;
+}
+
+.section-header code {
+  color: var(--ink-bright);
+  font-size: 0.92em;
+}
+
+.section-header > p {
+  max-width: 640px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.72;
+}
+
+.section-header h2 {
+  margin: 0;
+  max-width: 960px;
+  color: var(--ink-bright);
+  font-size: clamp(2rem, 4.8vw, 5rem);
+  line-height: 0.97;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  overflow-wrap: break-word;
+}
+
+/* ─── Code blocks ─── */
+.code-bar {
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.code-block {
+  min-width: 0;
+}
+
+.code-block .shiki {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--code-surface);
+}
+
+/* ── Code block accent variants ── */
+.code-block-pinna {
+  --code-accent: var(--accent);
+}
+
+:is(.code-block-pinna, .code-block-effect) .code-bar {
+  border-color: color-mix(in srgb, var(--code-accent) 30%, transparent);
+  color: var(--code-accent);
+}
+
+:is(.code-block-pinna, .code-block-effect) .shiki {
+  border-color: color-mix(in srgb, var(--code-accent) 30%, transparent);
+}
+
+.code-block-effect {
+  --code-accent: var(--green);
+}
+
+.lede-c-effect {
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* ─── Info cards ─── */
+.info-card {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--panel) 44%, var(--bg));
+}
+
+.info-card h3,
+.pinna-point h3 {
+  margin: 0;
+  color: var(--ink-bright);
+  font-size: clamp(1.2rem, 2vw, 1.8rem);
+  line-height: 1.08;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.info-card p:last-child {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.68;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TABLES
+   ═══════════════════════════════════════════════════════════ */
+
+/* Solid, so the page's grid does not show through the rows. Separate borders: collapsed ones
+   beside a hidden caption lose part of the table's top edge in Chrome. */
+.pinna-bench-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--line-bright);
+  background: var(--panel);
+  min-width: 1280px;
+  table-layout: fixed;
+}
+
+/* Every cell is ruled on both axes, in a line bright enough to read on the panel. */
+.pinna-bench-table th,
+.pinna-bench-table td {
+  border-right: 1px solid var(--line-bright);
+  border-bottom: 1px solid var(--line-bright);
+  text-align: left;
+  vertical-align: baseline;
+}
+
+.pinna-bench-table th:last-child,
+.pinna-bench-table td:last-child {
+  border-right: 0;
+}
+
+/* Only the table's last row drops its rule; a row closing one of several bodies keeps it. */
+.pinna-bench-table > :last-child > tr:last-child > th,
+.pinna-bench-table > :last-child > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.pinna-bench-table th {
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.pinna-bench-table td {
+  color: var(--muted);
+}
+
+.pinna-bench-table code {
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════ */
+
+@media (max-width: 48rem) {
+  .hero {
+    padding-top: 80px;
+  }
+
+  .hero-title {
+    font-size: clamp(2.2rem, 9vw, 3.6rem);
+  }
+
+  .hero-line {
+    white-space: normal;
+  }
+
+  .section-shell {
+    padding: 80px 0;
+  }
+}
+
+@media (max-width: 40rem) {
+  .code-bar {
+    padding: 8px 12px;
+  }
+
+  .code-block .shiki {
+    padding: 12px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PINNA SECTIONS
+   ═══════════════════════════════════════════════════════════ */
+
+.pinna-hero-code {
+  max-width: 920px;
+}
+
+.pinna-hero-code .shiki {
+  font-size: 0.78rem;
+}
+
+.pinna-points {
+  display: grid;
+  gap: 0;
+}
+
+/* A claim on the left, the code that shows it on the right, with no box around the pair. */
+.pinna-point {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+  gap: 24px;
+  align-items: start;
+  min-width: 0;
+  padding: 40px 0;
+  border-top: 1px solid var(--line);
+}
+
+.pinna-point:first-child,
+.pinna-point-list li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.pinna-point:last-child,
+.pinna-point-list li:last-child {
+  padding-bottom: 0;
+}
+
+.pinna-point p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.68;
+}
+
+.pinna-point-list {
+  display: grid;
+  align-content: start;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One row per point: a divider above, then the heading. */
+.pinna-point-list li {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.58;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.pinna-point-list h3,
+.pinna-point-list p {
+  margin: 0;
+}
+
+.pinna-point-list h3 {
+  font-size: 1.05rem;
+}
+
+.pinna-point-list code {
+  color: var(--ink-bright);
+  font-size: 0.88em;
+  overflow-wrap: anywhere;
+}
+
+/* A package's exports: names in a row that wraps. */
+.pinna-point-names,
+.suite-figure-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.pinna-point-test {
+  justify-self: start;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.pinna-point-test:hover,
+.suite-figure-files a:hover,
+.pinna-bench-notes-row a:hover {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+
+.pinna-point-text {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.pinna-point .shiki {
+  font-size: 0.78rem;
+}
+
+.pinna-proof,
+.pinna-bench,
+.pinna-bench-group {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.suite-grid a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.suite-grid h3 {
+  font-size: 1.05rem;
+}
+
+.suite-grid a:hover {
+  text-decoration-color: currentColor;
+}
+
+.suite-source,
+.suite-probes,
+.pinna-bench-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.suite-row {
+  display: grid;
+  gap: 8px;
+}
+
+.suite-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.suite-row-name {
+  color: var(--ink-bright);
+  font-weight: 700;
+}
+
+/* One square per case. Pass is the accent, a miss by design is amber, a fail is red, and a skip
+   is gray. */
+.suite-cells,
+.suite-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.suite-cell {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 11px;
+  height: 11px;
+  border: 2px solid transparent;
+  border-radius: 0;
+}
+
+.suite-cell.is-pass {
+  background: color-mix(in srgb, var(--accent) 55%, var(--bg));
+}
+
+.suite-cell.is-differs {
+  background: var(--amber);
+}
+
+.suite-cell.is-skip {
+  background: var(--dim);
+}
+
+.info-card .suite-legend {
+  display: flex;
+  gap: 8px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.suite-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.58;
+}
+
+.suite-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.suite-figures li {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.suite-figure {
+  color: var(--ink-bright);
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.suite-figure-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.suite-figure-files a {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  .suite-figures {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.pinna-bench-scroll {
+  overflow-x: auto;
+}
+
+.pinna-bench-block {
+  display: grid;
+  gap: 28px;
+  min-width: 0;
+  margin-top: 16px;
+}
+
+.pinna-bench-block h3 {
+  margin: 0;
+  color: var(--ink-bright);
+  font-size: 1.1rem;
+}
+
+/* A group's title and its unit, above its table. */
+.pinna-bench-group-title {
+  margin: 0;
+  color: var(--ink-bright);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The notes above the tables, in one column the width of the legend: a disclaimer first, then
+   one ruled row per subject, its heading in a rail on the left and its terms on the right. */
+/* The disclaimer wears the code panels' header bar, outlined in red with no fill. */
+.pinna-bench-disclaimer {
+  --disclaimer-border: rgb(var(--red-rgb) / 0.45);
+  --disclaimer-rule: rgb(var(--red-rgb) / 0.25);
+  border: 1px solid var(--disclaimer-border);
+}
+
+.pinna-bench-disclaimer .code-bar {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--disclaimer-border);
+  background: none;
+  color: var(--red);
+  font-weight: 400;
+}
+
+.pinna-bench-disclaimer-body {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.pinna-bench-disclaimer p {
+  margin: 0;
+  color: var(--ink-bright);
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* The three reasons, side by side under a rule and stacked on a narrow screen. */
+.pinna-bench-disclaimer ul {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 28px;
+  margin: 0;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--disclaimer-rule);
+  list-style: none;
+}
+
+.pinna-bench-disclaimer li {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.pinna-bench-disclaimer strong {
+  color: var(--ink-bright);
+}
+
+.pinna-bench-notes {
+  display: grid;
+  margin: 40px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.pinna-bench-notes-row {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  gap: 16px 32px;
+  align-items: start;
+  padding: 24px 0;
+  border-top: 1px solid var(--line);
+}
+
+.pinna-bench-notes-row header {
+  display: grid;
+  gap: 4px;
+}
+
+.pinna-bench-notes-row h3 {
+  margin: 0;
+  color: var(--ink-bright);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.pinna-bench-notes-row header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.pinna-bench-notes-row code {
+  color: var(--ink-bright);
+  font-size: 0.92em;
+  white-space: nowrap;
+}
+
+.pinna-bench-notes-row a {
+  color: var(--ink-bright);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+/* A term and what it means, on one line each. Every row's terms share one
+   width, so every row's content ends on the same line and keeps a readable measure. */
+.pinna-bench-terms {
+  display: grid;
+  gap: 16px;
+  max-width: 820px;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.pinna-bench-term {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 4px 24px;
+  align-items: baseline;
+}
+
+.pinna-bench-terms dt {
+  color: var(--ink-bright);
+  font-weight: 700;
+}
+
+.pinna-bench-terms dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.pinna-bench-terms ul {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0 0 0 16px;
+  border-left: 1px solid var(--line-bright);
+  list-style: none;
+}
+
+.pinna-bench-terms strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* A command on a line of its own; a long one wraps instead of widening the page. */
+.pinna-bench-terms .pinna-bench-command {
+  display: block;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-subtle);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.pinna-bench-terms .pinna-bench-command::before {
+  color: var(--muted);
+  content: "$ ";
+}
+
+/* A library's version sits under its name, in the term column. */
+.pinna-bench-terms dt code {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+
+@media (max-width: 900px) {
+  .pinna-bench-notes-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .pinna-bench-disclaimer ul,
+  .pinna-bench-term {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Four libraries by three runtimes. Fixed layout gives every runtime column the same width;
+   narrower screens scroll the table. */
+.pinna-bench-scenario-column {
+  width: 224px;
+}
+
+.pinna-bench-table th,
+.pinna-bench-table td {
+  padding: 8px;
+  font-size: 0.8rem;
+  line-height: 24px;
+}
+
+.pinna-bench-table thead th {
+  background: var(--bg-dim);
+  color: var(--ink-bright);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.pinna-bench-table thead .pinna-bench-runtime {
+  color: var(--ink-bright);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: right;
+  text-transform: none;
+}
+
+/* The scenario column stays in view while the figures scroll. */
+.pinna-bench-table thead th[rowspan],
+.pinna-bench-table tbody th[scope="row"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding-left: 16px;
+  border-right-color: var(--edge);
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinna-bench-table tbody th[scope="row"] {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+/* A brighter rule closes each library's three runtimes. */
+.pinna-bench-table .is-last:not(:last-child) {
+  border-right-color: var(--edge);
+}
+
+.pinna-bench-table td {
+  color: var(--dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.pinna-bench-unit {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+/* What each color means, in a block of its own above the tables. */
+.pinna-bench-legend {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line-bright);
+  border-radius: 0;
+}
+
+.pinna-bench-legend ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each cell against the best figure in its row on the same runtime; the legend's swatches match.
+   Only the best cell is filled, and its fill runs under its rules, so no gray line crosses a color.
+   The rest are told apart by their text, and the last tier by its glow. */
+.pinna-bench-swatch {
+  padding: 4px 12px;
+  border: 1px solid var(--line-bright);
+  font-size: 0.8rem;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.pinna-bench-table td.is-best,
+.pinna-bench-swatch.is-best {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--panel));
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.pinna-bench-table td.is-best.is-last:not(:last-child) {
+  border-right-color: var(--edge);
+}
+
+.pinna-bench-table td.is-near,
+.pinna-bench-swatch.is-near {
+  color: var(--ink);
+}
+
+.pinna-bench-table td.is-behind,
+.pinna-bench-swatch.is-behind {
+  color: var(--amber);
+}
+
+.pinna-bench-table td.is-far,
+.pinna-bench-swatch.is-far {
+  color: color-mix(in srgb, var(--amber) 50%, var(--red));
+}
+
+.pinna-bench-table td.is-farthest,
+.pinna-bench-swatch.is-farthest {
+  color: color-mix(in srgb, var(--red), #ff0033);
+}
+
+/* More than the last limit, and a run that gave no figure: the same red, lit. */
+.pinna-bench-table td.is-beyond,
+.pinna-bench-swatch.is-beyond,
+.pinna-bench-table td.is-failed,
+.pinna-bench-swatch.is-failed {
+  color: #ff5c77;
+  text-shadow:
+    0 0 6px rgb(255 0 51 / 0.9),
+    0 0 14px rgb(255 0 51 / 0.5);
+}
+
+.pinna-bench-table td.is-failed {
+  font-size: 0.72rem;
+}
+
+/* On a phone the scenario column narrows and its names wrap instead of being cut, the library
+   names wrap over two lines, and a figure column takes 80px instead of 88px. */
+@media (max-width: 40rem) {
+  .pinna-bench-table {
+    min-width: calc(112px + 12 * 80px);
+  }
+
+  .pinna-bench-scenario-column {
+    width: 112px;
+  }
+
+  .pinna-bench-table th,
+  .pinna-bench-table td {
+    padding: 8px 4px;
+  }
+
+  .pinna-bench-table thead th {
+    font-size: 0.74rem;
+    line-height: 16px;
+    white-space: normal;
+  }
+
+  .pinna-bench-table thead th[rowspan],
+  .pinna-bench-table tbody th[scope="row"] {
+    padding-left: 12px;
+    line-height: 18px;
+    text-overflow: clip;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 1100px) {
+  .pinna-point {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A mirrored point puts the sample in the wide column on the left and the claim in the narrow
+   one on the right. The markup stays claim first, so the stacked order and the reading order do
+   not change. */
+@media (min-width: 1101px) {
+  .pinna-point.is-mirrored {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+  }
+
+  .pinna-point.is-mirrored > :first-child {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .pinna-point.is-mirrored > :last-child {
+    grid-column: 1;
+    grid-row: 1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ERRORS IN SAMPLES
+   A sample marks under a line the type error it reports or the error it throws
+   (lib/landingSamples.ts): the span is marked, and a note under it starts with carets at the
+   span's column, then wraps to the block's edge. A type error is underlined; a throw is shaded, so
+   the two read apart in a block that has both.
+   ═══════════════════════════════════════════════════════════ */
+
+.code-error-span {
+  text-decoration: underline wavy var(--red);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.code-error-span.is-throw {
+  background: rgb(var(--red-rgb) / 0.14);
+  text-decoration: none;
+}
+
+.code-error-note {
+  display: block;
+  margin: 2px 0 4px;
+  color: var(--red);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  /* The carets start at the span's column; a wrapped line hangs under them, at most 12 columns
+     in, so a deep span still leaves the message room on a phone. */
+  --hang: min(var(--column), 12);
+  padding-left: calc(var(--hang) * 1ch);
+  text-indent: calc((var(--column) - var(--hang)) * 1ch);
+}
+
+.code-error-carets {
+  white-space: pre;
+}
+
+/* A short label stays on its line and scrolls with the code, as a code line does. */
+.code-error-note.is-label {
+  white-space: pre;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HERO FROND
+   The hero's todos drawn as a frond (components/FrondGraph.astro), behind the headline, out to
+   the window's right edge. The add form and the caption float under the stem's root.
+   ═══════════════════════════════════════════════════════════ */
+
+.hero-top {
+  position: relative;
+  display: grid;
+  align-content: center;
+  min-height: clamp(560px, calc(100dvh - var(--header-h) - 96px), 780px);
+}
+
+/* The headline lets clicks through to the branches behind it; its links still take theirs. */
+.hero-top .hero-content {
+  pointer-events: none;
+}
+
+.hero-top .hero-content a {
+  pointer-events: auto;
+}
+
+/* A halo of the page's own background keeps the headline and the lede readable over the traces
+   and names behind them. */
+.hero-top .hero-title,
+.hero-top .lede {
+  text-shadow:
+    0 0 2px var(--bg),
+    0 0 8px var(--bg),
+    0 0 16px var(--bg);
+}
+
+/* Behind the headline the frond recedes, so the branches on its left read as background. */
+@media (min-width: 901px) {
+  .hero-frond .frond-scene {
+    mask-image: linear-gradient(
+      to right,
+      rgb(0 0 0 / 0.22),
+      rgb(0 0 0 / 0.3) 42%,
+      rgb(0 0 0 / 0.85) 60%
+    );
+  }
+}
+
+.hero-frond {
+  position: absolute;
+  z-index: 0;
+  top: -48px;
+  right: calc(50% - 50vw);
+  bottom: 0;
+  left: 18%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  justify-items: center;
+  gap: 8px;
+}
+
+.frond-canvas {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 0;
+}
+
+/* With scripts, the flat drawing waits until the 3D one loads or fails, so a browser with WebGL2
+   never shows the flat one first; the 3D one fades in. Without scripts, the flat one shows. */
+@media (scripting: enabled) {
+  .frond-canvas:not(.is-flat) .frond-graph {
+    visibility: hidden;
+  }
+}
+
+/* Only the first frond a visit shows fades in; one the router moves or sets up again stays put. */
+.frond-scene.is-appearing {
+  animation: frond-appear var(--duration-enter) ease-out;
+}
+
+@keyframes frond-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frond-scene.is-appearing {
+    animation: none;
+  }
+}
+
+.frond-graph {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  font-family: var(--font-mono);
+}
+
+/* The add() panel is a beam frame too. Its shadow is dark, to lift it off the graph; nothing on it
+   glows. The input and the Add button inside keep their own plain frames. */
+.frond-dock {
+  width: min(440px, calc(100% - 32px));
+  border: 1px solid var(--lit-line-soft);
+  border-radius: 0;
+  background: var(--beam-corners);
+  background-color: color-mix(in srgb, var(--bg) 70%, transparent);
+  box-shadow: 0 18px 48px var(--shade);
+  backdrop-filter: blur(10px);
+}
+
+.frond-caption {
+  margin: 0;
+  padding: 12px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.66;
+}
+
+.frond-caption code {
+  color: var(--ink);
+}
+
+.frond-caption code:first-child {
+  color: var(--accent);
+}
+
+/* One unit is one pixel once the browser draws the frond (src/lib/frondGraph.ts), so lines are
+   1px like the page's borders and text keeps its size; non-scaling strokes hold them at 1px while
+   the server's drawing is still scaled to the canvas. */
+.frond-graph path,
+.frond-graph rect {
+  vector-effect: non-scaling-stroke;
+}
+
+.frond-stem,
+.frond-leaf,
+.frond-base,
+.frond-read {
+  fill: none;
+  stroke-width: 1;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.frond-stem,
+.frond-leaf,
+.frond-base {
+  stroke: var(--edge);
+}
+
+.frond-tip {
+  fill: var(--bg);
+  stroke: var(--dim);
+  stroke-width: 1;
+}
+
+.frond-read {
+  stroke: var(--dim);
+}
+
+.frond-box,
+.frond-computed,
+.frond-pad {
+  fill: var(--bg);
+  stroke: var(--dim);
+  stroke-width: 1;
+}
+
+.frond-name {
+  fill: var(--muted);
+  font-size: 11px;
+  text-anchor: middle;
+}
+
+.frond-root-name {
+  text-anchor: start;
+}
+
+.frond-row {
+  fill: var(--prose);
+  font-size: 13px;
+}
+
+.frond-total-value {
+  fill: var(--ink-bright);
+  font-size: 13px;
+}
+
+/* The areas a pointer toggles or removes: invisible, but they take the click. */
+.frond-hit {
+  fill: transparent;
+  stroke: none;
+}
+
+.frond-toggle,
+.frond-remove {
+  cursor: pointer;
+  outline: none;
+}
+
+.frond-remove-mark {
+  fill: var(--muted);
+  font-size: 13px;
+  text-anchor: middle;
+}
+
+.frond-toggle:hover .frond-row,
+.frond-toggle:focus-visible .frond-row,
+.frond-remove:hover .frond-remove-mark,
+.frond-remove:focus-visible .frond-remove-mark {
+  fill: var(--ink-bright);
+}
+
+.frond-toggle:focus-visible .frond-hit,
+.frond-remove:focus-visible .frond-hit {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+/* A done todo: its box, label, and row all hold it, so all three pads and the reads between them
+   are drawn in the lit color. Pads stay hollow either way, and nothing glows. */
+.frond-branch.is-done .frond-read,
+.frond-branch.is-done .frond-box,
+.frond-branch.is-done .frond-computed,
+.frond-branch.is-done .frond-pad {
+  stroke: var(--accent);
+}
+
+.frond-branch.is-done .frond-name {
+  fill: var(--accent);
+}
+
+.frond-branch.is-done .frond-row {
+  fill: var(--ink-bright);
+}
+
+.frond-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.frond-add-label {
+  color: var(--accent);
+}
+
+.frond-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line-bright);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.frond-add-input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.frond-add-button {
+  padding: 4px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.frond-add-button:hover:not(:disabled),
+.frond-add-button:focus-visible {
+  background: var(--lit-fill-hover);
+}
+
+.frond-add-button:disabled {
+  border-color: var(--line-bright);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Narrow, the frond is only a backdrop: faint and softened behind the headline with every name
+   and row still drawn, but with no add form and nothing to press, so the page reads straight on
+   to what follows. It sits right of center, out to the window's right edge and down behind the
+   code panel, so it reads as a background rather than a picture centered under the text. */
+@media (max-width: 900px) {
+  .hero-top {
+    min-height: 0;
+  }
+
+  .hero-frond {
+    top: -40px;
+    right: calc(50% - 50vw);
+    bottom: -300px;
+    left: 30%;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: clip;
+    opacity: 0.4;
+    filter: blur(0.6px);
+    pointer-events: none;
+  }
+
+  .pinna-hero-code {
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero-frond .frond-dock {
+    display: none;
+  }
+}
+
+/* A phone's window is too narrow for the whole frond to read as a backdrop, so its canvas is wider
+   than the window and the branches past the right edge are cut. */
+@media (max-width: 40rem) {
+  .hero-frond {
+    left: 14%;
+  }
+
+  .hero-frond .frond-canvas {
+    width: 140%;
+    justify-self: start;
+  }
+}
+
+/* When a todo's state changes, the SVG fallback's pads, traces, and text ease to the new colors,
+   and an added branch fades in. The WebGL scene has its own entrance on a first visit. */
+@media (prefers-reduced-motion: no-preference) {
+  .frond-stem,
+  .frond-leaf,
+  .frond-tip,
+  .frond-root > *,
+  .frond-realm-name,
+  .frond-branch,
+  .frond-branch > * {
+    transition:
+      fill var(--duration-graph) ease-out,
+      stroke var(--duration-graph) ease-out,
+      opacity var(--duration-graph) ease-out;
+  }
+
+  .frond-branch.is-added {
+    animation: frond-grow var(--duration-enter) ease-out;
+  }
+}
+
+@keyframes frond-grow {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The realm holds a todo: the stem, its totals, its root box, and their names are lit. With no
+   todo they stay gray. */
+.frond-graph.has-todos .frond-stem,
+.frond-graph.has-todos .frond-leaf,
+.frond-graph.has-todos .frond-total .frond-computed,
+.frond-graph.has-todos .frond-root .frond-box {
+  stroke: var(--accent);
+}
+
+.frond-graph.has-todos .frond-total .frond-name,
+.frond-graph.has-todos .frond-root-name,
+.frond-graph.has-todos .frond-realm-name {
+  fill: var(--accent);
+}
+
+/* Every todo is done: the tip is lit. */
+.frond-graph.is-complete .frond-tip {
+  stroke: var(--cyan);
+}
+
+/* The frond in 3D (src/lib/frondScene.ts), where the browser has WebGL2. The canvas draws the pads
+   and traces; the names, rows, and remove marks are HTML over it, placed on each pad's projected
+   position, so text stays crisp and the controls stay buttons. */
+.frond-scene {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  font-family: var(--font-mono);
+}
+
+.frond-scene-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.frond-scene-overlay,
+.frond-scene-branch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.frond-scene-name,
+.frond-scene-row,
+.frond-scene-remove {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+}
+
+/* A branch's names and row turn with it; `--leaf` is its angle on screen. */
+.frond-scene-branch .frond-scene-name,
+.frond-scene-row {
+  rotate: var(--leaf, 0rad);
+  transform-origin: 0 0;
+}
+
+.frond-scene-name {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  transform: translate(-50%, calc(-100% - 10px));
+}
+
+.frond-scene-row-name {
+  transform: translate(-50%, calc(-100% - 12px));
+}
+
+.frond-scene-root-name {
+  transform: translate(14px, -50%);
+}
+
+/* A total's value sits beside its diamond, upright, on the side away from the stem. */
+.frond-scene-value {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--ink-bright);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  transform: translate(16px, -50%);
+}
+
+.frond-scene-value.reads-left {
+  transform: translate(calc(-100% - 16px), -50%);
+}
+
+.frond-scene-realm-name {
+  transform: translate(-50%, 14px);
+}
+
+.frond-scene-row,
+.frond-scene-remove {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.frond-scene-row {
+  color: var(--prose);
+  font-size: 13px;
+  line-height: 1;
+  transform: translate(4px, 14px);
+}
+
+/* A row starts by the stem and reads out along its branch; a branch left of the stem reads left. */
+.frond-scene-row.reads-left {
+  transform: translate(calc(-100% - 4px), 14px);
+}
+
+.frond-scene-remove {
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+}
+
+.frond-scene.is-picking {
+  cursor: pointer;
+}
+
+.frond-scene-branch.is-hovered .frond-scene-name {
+  color: var(--prose);
+}
+
+.frond-scene-branch.is-hovered .frond-scene-row,
+.frond-scene-row:hover,
+.frond-scene-row:focus-visible,
+.frond-scene-remove:hover,
+.frond-scene-remove:focus-visible {
+  color: var(--ink-bright);
+}
+
+.frond-scene-branch.is-done .frond-scene-name,
+.frond-scene.has-todos .frond-scene-total .frond-scene-name,
+.frond-scene.has-todos .frond-scene-root-name,
+.frond-scene.has-todos .frond-scene-realm-name {
+  color: var(--accent);
+}
+
+.frond-scene-branch.is-done .frond-scene-row {
+  color: var(--ink-bright);
+}
+
+/* IBM Plex Mono has no ✓. The character keeps its place and its width, hidden, and a check is
+   drawn over it in two strokes. */
+.frond-scene-check {
+  position: relative;
+  display: inline-block;
+  -webkit-text-fill-color: transparent;
+}
+
+.frond-scene-check::before {
+  position: absolute;
+  top: 1px;
+  left: 0;
+  box-sizing: border-box;
+  width: 9px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 0 0 1.5px 1.5px;
+  content: "";
+  rotate: -45deg;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .frond-scene-name,
+  .frond-scene-row {
+    transition: color var(--duration-graph) ease-out;
+  }
+}
