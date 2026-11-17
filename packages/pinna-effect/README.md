@@ -4,7 +4,7 @@ Pinna on Effect Schema: boxes that check every write against a schema,
 models decoded from the wire with boxes and keyed collections as fields, and
 Effect programs that react to state. It re-exports every name of
 `@frondruntime/pinna` as it is, so an application imports from one package.
-`effect` is a peer dependency.
+`effect` 4.1 or a later 4.x is a peer dependency.
 
 0.0.1 is a pre-1.0 release: any version may change the API.
 

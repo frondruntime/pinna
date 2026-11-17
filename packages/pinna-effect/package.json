@@ -53,7 +53,7 @@
   },
   "peerDependencies": {
     "@frondruntime/pinna": "0.0.1",
-    "effect": "4.1.0"
+    "effect": "^4.1.0"
   },
   "devDependencies": {
     "@frondruntime/pinna": "workspace:*",
