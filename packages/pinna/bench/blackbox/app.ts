@@ -1,8 +1,7 @@
 /**
- * App scenarios: what a trading screen does to its state over a session,
- * shaped after a React Native trading app on MobX. A watch stands for a
- * mounted component: its select is what the component reads, its effect a
- * render.
+ * App scenarios: what a trading screen does to its state over a session.
+ * A watch stands for a mounted component: its select is what the component
+ * reads, its effect a render.
  */
 
 import {
@@ -186,7 +185,7 @@ const ratesBatch = (markets: number, batch: number, steps: number): Scenario => 
 });
 
 /**
- * A chart's candle series in one box, as the app's chart node holds it. Most
+ * A chart's candle series in one box, as a chart screen holds it. Most
  * messages update the last candle; one in ten opens a new one and trims the
  * oldest past `cap`. The chart reads the last candle and the visible range.
  */

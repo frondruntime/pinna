@@ -1,9 +1,8 @@
 # Pinna performance: direction and findings
 
-Written 2026-11-04 to carry the decisions and numbers of one working session
-forward. `design.md` "Benchmarks" still holds the reference table; this file
-holds where performance work goes next and why. "Where 1.0 stands" is the
-current state; "Measurements, in order" is the dated log behind it.
+`design.md` "Benchmarks" holds the reference table; this file holds where
+performance work goes next and why. "Where 1.0 stands" is the current state;
+"Measurements, in order" is the dated log behind it.
 
 ## Direction (owner, 2026-11-04)
 
@@ -16,8 +15,7 @@ current state; "Measurements, in order" is the dated log behind it.
    (network, storage, services); the core is what runs on every read and
    write.
 2. **Aim at alien-signals**, the fastest library of this family, for the graph
-   alone. MobX stays the line to beat, since Pinna replaces it, but it is a
-   low bar.
+   alone. MobX stays the line to beat, since Pinna replaces it.
 3. **Hermes first.** Hermes matters more than Bun: it is what ships, it scales
    to real applications, and code that allocates little and keeps stable
    shapes is fast on JavaScriptCore too. A win measured only in Bun counts as
@@ -963,7 +961,7 @@ alien-signals):
 `bench:hermes-blackbox <destroot>` runs app-shaped scenarios through the
 public API only, each in its own Hermes process, compiled as a release
 build compiles them; `bench:blackbox` runs the same on Bun. The scenarios are
-a trading app's state, shaped after a real React Native one: markets with
+a trading app's state: markets with
 live prices, positions, balances, chart series in a box and as a
 collection, refetch, pagination, scrolling, market switching, forms, memo
 lookups, a realm per screen, and errors. The js-reactivity-benchmark graph
@@ -1670,7 +1668,7 @@ store designs as much as libraries. This was read from the code on
   plain values.
 - **MobX makes all 13 fields observable**, with `observable.ref` on each
   `Big`, date, and array, and builds a `Network`, a `Limits`, and 12
-  `Point`s a row. That is the shape of the application it was copied from.
+  `Point`s a row.
 - **Legend State holds whole rows in one deep observable**, with no
   `ObservableHint.opaque`. Legend treats a `Big` as an object and walks its
   fields; a row has 17 of them and 12 history points.

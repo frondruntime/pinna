@@ -1,11 +1,11 @@
 # Pinna design brief
 
-The Pinna site follows the Frond family's look, the `frond-look` skill in
-helm-skills, and departs from it where this file says. Where the two
-disagree, this file wins for Pinna.
+The Pinna site follows the Frond family's look, the `frond-look` skill,
+and departs from it where this file says. Where the two disagree, this file
+wins for Pinna.
 
-Pinna leads. The Frond site takes these changes when Frond reaches
-1.0-rc, and the parts both sites share move into reusable components then.
+Pinna leads. The Frond site takes these changes later, and the parts
+both sites share move into reusable components then.
 Until that happens, `frond-look` still describes the old values, and a
 review of the Pinna site checks it against this file first.
 

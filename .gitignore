@@ -4,3 +4,4 @@ dist
 packages/pinna/test/.compiled-*
 apps/site/src/content/docs/
 apps/site/.astro/
+.claude/settings.local.json

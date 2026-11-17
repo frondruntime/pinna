@@ -39,8 +39,7 @@ Frond and imports nothing from it.
 - `apps/playground`: the demo app, `bun run dev`, and in `src/docs` the
   samples the site prints.
 - `apps/site`: the site, built from `docs/public`, `bun run site`.
-- `apps/desk`: a trading desk built on Pinna; `FINDINGS.md` records the
-  friction met while building it.
+- `apps/desk`: a trading desk built on Pinna.
 - `design/brief.md`: the site's design brief, where it departs from the Frond
   family's look (the `frond-look` skill) and why.
 - `apps/rn-bench`: a React Native app that measures Pinna against MobX on
