@@ -6,6 +6,8 @@ import SiteBackground from "../components/SiteBackground.astro";
 import { palette } from "../lib/palette";
 import {
   createJsonLd,
+  ogImage,
+  ogImageAlt,
   projectIdentityLinks,
   siteAuthor,
   siteDescription,
@@ -18,7 +20,7 @@ interface Props {
   description?: string;
   /**
    * Indexable pages get a canonical URL, Open Graph, Twitter, and JSON-LD.
-   * Off everywhere until Pinna is published: robots.txt disallows the site too.
+   * On by default; the 404 page turns it off.
    */
   indexable?: boolean;
   ogType?: "website" | "article";
@@ -28,7 +30,7 @@ interface Props {
 const {
   title,
   description = siteDescription,
-  indexable = false,
+  indexable = true,
   ogType = "website",
   bodyClass,
 } = Astro.props;
@@ -54,17 +56,26 @@ const jsonLdSchema = createJsonLd({ title, description, url: canonicalUrl });
         <meta property="og:url" content={canonicalUrl} />
         <meta property="og:title" content={title} />
         <meta property="og:description" content={description} />
+        <meta property="og:image" content={ogImage} />
+        <meta property="og:image:alt" content={ogImageAlt} />
+        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
         <meta property="og:locale" content="en_US" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:creator" content={siteAuthor.twitterHandle} />
         <meta name="twitter:title" content={title} />
         <meta name="twitter:description" content={description} />
+        <meta name="twitter:image" content={ogImage} />
+        <meta name="twitter:image:alt" content={ogImageAlt} />
         <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLdSchema)} />
         <link rel="author" href={siteAuthor.url} />
         {projectIdentityLinks.map((href) => <link rel="me" href={href} />)}
       </Fragment>
     )}
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
     <Font cssVariable="--font-plex-mono" preload={[{ weight: "400" }, { weight: "700" }]} />
     <slot name="head" />

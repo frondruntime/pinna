@@ -126,7 +126,7 @@ html {
 
 /* One focus ring for every control. It sits in :where() so a page rule can refine it; before,
    pre[tabindex] gave it more weight than any single-class focus rule. */
-:where(a, button, pre[tabindex]):focus-visible {
+:where(a, button, summary, pre[tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
   border-radius: 0;

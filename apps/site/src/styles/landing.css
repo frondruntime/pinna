@@ -679,7 +679,42 @@ p {
 .pinna-bench-notes {
   display: grid;
   margin: 40px 0 0;
+  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+}
+
+/* The method behind the figures, folded: the tables and caveats above are what a reader needs. */
+.pinna-bench-notes-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--duration-control);
+}
+
+.pinna-bench-notes-summary::-webkit-details-marker {
+  display: none;
+}
+
+.pinna-bench-notes-summary::before {
+  content: "+";
+  width: 1ch;
+  color: var(--accent);
+}
+
+.pinna-bench-notes[open] > .pinna-bench-notes-summary::before {
+  content: "−";
+}
+
+.pinna-bench-notes-summary:hover {
+  color: var(--ink-bright);
 }
 
 .pinna-bench-notes-row {

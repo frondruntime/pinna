@@ -1,11 +1,16 @@
 {
-  "name": "Pinna",
+  "name": "Pinna — Reactive state",
   "short_name": "Pinna",
-  "description": "Reactive state on Effect Schema classes.",
+  "description": "Pinna — reactive state that’s hard to get wrong. Synchronous state for domain models.",
   "start_url": "/",
   "display": "minimal-ui",
   "background_color": "#090d12",
   "theme_color": "#090d12",
   "lang": "en-US",
-  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+  "icons": [
+    { "src": "/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
 }

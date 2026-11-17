@@ -2,6 +2,8 @@ export const siteName = "Pinna";
 export const siteUrl = "https://pinna.frondruntime.dev";
 export const siteDescription =
   "Pinna — reactive state that’s hard to get wrong. Synchronous state for domain models, built so the usual state bugs cannot happen and the rest fail where you, or your agent, can see them.";
+export const ogImage = `${siteUrl}/og-image.png`;
+export const ogImageAlt = "Pinna — reactive state that’s hard to get wrong";
 
 export const siteAuthor = {
   name: "Roman Dubinin",
@@ -64,6 +66,7 @@ export function createJsonLd({ title, description, url }: JsonLdInput) {
         description: siteDescription,
         programmingLanguage: "TypeScript",
         codeRepository: projectRepositoryUrl,
+        image: ogImage,
         author: { "@id": siteAuthor.id },
         publisher: { "@id": projectOrganizationId },
       },

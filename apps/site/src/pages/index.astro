@@ -43,19 +43,19 @@ const rules: ReadonlyArray<{
   {
     region: "read",
     title: "A read says it is a read.",
-    body: "An observable is not its value. A computed value reads through read, a component through a hook. Skip either, and math, a comparison, or a method call on it is a type error.",
+    body: "An observable is not its value. A computed value reads through read, a component through a hook; math or a comparison on the observable itself is a type error.",
     bar: "a computed value, and two that forgot read",
   },
   {
     region: "write",
     title: "A write has one place.",
-    body: "Boxes have no setters: only update hands out write. A value of the wrong type is a type error, and a schema box throws on one its schema rejects. A recipe is synchronous, so an async one is a type error, and throws if it slips past the types. An update that throws is undone, so a half-finished change never becomes state.",
+    body: "Boxes have no setters: only update hands out write. An update that throws is undone, so a half-finished change never becomes state.",
     bar: "an update, and the ones that fail",
   },
   {
     region: "realm",
     title: "State lives in a realm.",
-    body: "Pinna keeps no global state: a box is made in a realm the application creates, and answers only to it. A read or a write from another realm throws, so one test or request does not see another's state. So does a read kept past its update, and an update inside a computed value. Each error says where the call belongs.",
+    body: "Pinna keeps no global state: a box answers only to the realm that made it. A call from another realm, or out of its place, throws and says where the call belongs.",
     bar: "two realms, and calls out of place",
   },
 ];
@@ -77,7 +77,7 @@ const reactPoints: ReadonlyArray<{
 }> = [
   {
     title: "React Compiler",
-    body: "Components compiled with `babel-plugin-react-compiler` stay current, even one that hands its model to a helper or maps a changing list. Reads live inside hooks, so the compiler is free to memoize the rest.",
+    body: "Components compiled with `babel-plugin-react-compiler` stay current, even one that hands its model to a helper. Reads live inside hooks, so the compiler is free to memoize the rest.",
     test: "packages/pinna-react/test/compiler.test.tsx",
   },
   {
@@ -284,8 +284,8 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
 
 <BaseLayout title={title} description={siteDescription}>
   <div class="preview-banner">
-    <span class="preview-banner-label">Experiment</span>
-    <span class="preview-banner-detail">Pinna is not published yet. No compatibility promise.</span>
+    <span class="preview-banner-label">v0 · Developer Preview</span>
+    <span class="preview-banner-detail">Pinna is under active development. APIs may change between releases.</span>
   </div>
   <SiteHeader />
   <main>
@@ -332,19 +332,15 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
         <header class="section-header">
           <h2 id="explicit-title">Reads and writes are explicit. A mistake is loud.</h2>
           <p>
-            Pinna is glitch-free: a write marks what depends on it, a read validates before it
-            recomputes, and watchers run once the write settles. The cost is a call at every read
-            and the time to track it, which the tables below measure.
+            Pinna is glitch-free, at the cost of a call at every read, which the tables below
+            measure.
           </p>
           <p>
-            A mistake Pinna can detect is a type error, an error that says where the call belongs,
-            or both. The ones that still pass, such as a forgotten read in a condition or a
-            template literal, are{" "}
-            <a href={`${docsPath("start/principles")}#misuse-is-loud`}>listed</a>. The rules an
-            agent follows ship in the <code>pinna</code> package as{" "}
-            <a href={fileUrl("packages/pinna/AGENTS.md")} target="_blank" rel="noopener noreferrer">AGENTS.md</a>,
-            with the MobX habits that do not carry over, and the documentation comes as one{" "}
-            <a href="/llms-full.txt">llms-full.txt</a>.
+            A mistake is a type error or an error that says where the call belongs; the few that
+            pass are <a href={`${docsPath("start/principles")}#misuse-is-loud`}>listed</a>. Agents
+            get the rules as{" "}
+            <a href={fileUrl("packages/pinna/AGENTS.md")} target="_blank" rel="noopener noreferrer">AGENTS.md</a>{" "}
+            and the documentation as <a href="/llms-full.txt">llms-full.txt</a>.
           </p>
         </header>
 
@@ -741,7 +737,8 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
             })
           }
 
-          <div class="pinna-bench-notes">
+          <details class="pinna-bench-notes">
+            <summary class="pinna-bench-notes-summary">How these were measured</summary>
             <section class="pinna-bench-notes-row" aria-labelledby="bench-notes-where">
               <header>
                 <h3 id="bench-notes-where">Where they ran</h3>
@@ -928,7 +925,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                 </div>
               </dl>
             </section>
-          </div>
+          </details>
         </div>
       </div>
     </section>
