@@ -136,12 +136,18 @@ How the core runs:
   the current clock returns at once. Otherwise it walks down to the first
   source that changed, recomputing on the way back up.
 - No step recurses except through user code: a compute that calls `get`.
-  First computes nest that way, one per value no one has read yet, so past
-  256 of them the read waits: every compute above it keeps nothing, the
-  outermost first compute computes the value it stopped at from its own
-  stack, then computes again. A chain of any length computes; past the
-  limit the values above each wait compute once more, under twice the
-  chain in all.
+  First computes and reentrant refreshes of cached values nest that way.
+  Past 256 nested stale reads, the read waits: every compute above it
+  discards its unfinished result, and the outermost bounded read refreshes
+  the value it stopped at from a shallow stack before retrying. A suspended
+  cached value keeps its value and version for the retry's equality check.
+  Its triggering dependency is marked unread because the interrupted run
+  already updated read versions; accepting those versions would skip the
+  unfinished compute. A single chain starts each suspended compute again,
+  under twice the chain in all; a compute reading separate deep branches
+  can suspend and restart for each branch. Ordinary cached freshness walks
+  remain iterative, and a changed earlier source can still drop a later
+  stale branch without reading it.
 - A watch or reaction whose run throws keeps its old sources plus the reads it
   made before the throw. A pending render that throws leaves the last pending
   render as it was. A value between a cycle's origin and the read that closed

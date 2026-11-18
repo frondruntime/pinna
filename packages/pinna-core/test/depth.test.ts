@@ -3,6 +3,7 @@ import {
   type DerivedNode,
   Graph,
   observerCount,
+  readAtom,
   readCell,
   readDerived,
   writeCell,
@@ -88,6 +89,209 @@ const unread = (graph: Graph, length: number, counted?: { computes: number }) =>
 };
 
 describe("a deep chain read first from the top", () => {
+  for (const length of [200, 600, 2000]) {
+    test(`keeps equality cutoff while refreshing ${length} cached levels`, () => {
+      const graph = new Graph();
+      const shared = graph.cell(0);
+      const base = graph.cell(1);
+      const levels: Array<DerivedNode<{ value: number }>> = [];
+      let computes = 0;
+      let comparisons = 0;
+      for (let index = 0; index < length; index++) {
+        const below = levels[index - 1];
+        levels.push(
+          graph.derived(
+            () => {
+              computes++;
+              readCell(shared);
+              return { value: below === undefined ? readCell(base) : readDerived(below).value };
+            },
+            {
+              equals: (left, right) => {
+                comparisons++;
+                return left.value === right.value;
+              },
+            },
+          ),
+        );
+      }
+      const top = levels[length - 1] as DerivedNode<{ value: number }>;
+      let effects = 0;
+      let selections = 0;
+      const stops = [
+        graph.watch(
+          () => readDerived(top),
+          () => effects++,
+        ),
+      ];
+      for (let index = 20; index < length - 1; index += 40) {
+        const level = levels[index] as DerivedNode<{ value: number }>;
+        stops.push(
+          graph.watch(
+            () => {
+              selections++;
+              return readDerived(level);
+            },
+            () => effects++,
+          ),
+        );
+      }
+      const previous = readDerived(top);
+      const versions = levels.map((level) => level.version);
+      computes = comparisons = selections = 0;
+
+      writeCell(shared, 1);
+
+      expect(effects).toBe(0);
+      expect(selections).toBe(0);
+      expect(readDerived(top)).toBe(previous);
+      expect(levels.map((level) => level.version)).toEqual(versions);
+      // Each suspended block restarts; equality runs only on finished results.
+      expect(computes).toBe(length + 256 * Math.floor((length - 2) / 256));
+      expect(comparisons).toBe(length);
+      for (const stop of stops) stop();
+      expectAtRest(graph);
+    });
+  }
+
+  test("a suspended cached compute finishes when its lower value stays equal", () => {
+    const graph = new Graph();
+    const shared = graph.cell(0);
+    const levels: Array<DerivedNode<number>> = [];
+    let top = graph.derived(() => 0);
+    for (let index = 0; index < 600; index++) {
+      const below = top;
+      top = graph.derived(() => {
+        const current = readCell(shared);
+        readDerived(below);
+        return index % 2 === 0 ? 0 : current;
+      });
+      levels.push(top);
+    }
+    const seen: Array<number> = [];
+    const stop = graph.watch(
+      () => readDerived(top),
+      (value) => seen.push(value),
+    );
+    writeCell(shared, 1);
+    expect(readDerived(top)).toBe(1);
+    expect(seen).toEqual([1]);
+    expect(levels.map((level) => readDerived(level))).toEqual(levels.map((_, index) => index % 2));
+    stop();
+    expectAtRest(graph);
+  });
+
+  test("a cached value suspended on two branches compares its finished result once", () => {
+    const graph = new Graph();
+    const shared = graph.cell(0);
+    const branch = () => {
+      let top = graph.derived(() => 1);
+      for (let index = 0; index < 600; index++) {
+        const below = top;
+        top = graph.derived(() => {
+          readCell(shared);
+          return readDerived(below);
+        });
+      }
+      return top;
+    };
+    const left = branch();
+    const right = branch();
+    let computes = 0;
+    let comparisons = 0;
+    const middle = graph.derived(
+      () => {
+        computes++;
+        readCell(shared);
+        return { value: readDerived(left) + readDerived(right) };
+      },
+      {
+        equals: (previous, current) => {
+          comparisons++;
+          return previous.value === current.value;
+        },
+      },
+    );
+    const top = graph.derived(() => {
+      readCell(shared);
+      return readDerived(middle);
+    });
+    let effects = 0;
+    const stop = graph.watch(
+      () => readDerived(top),
+      () => effects++,
+    );
+    const previous = readDerived(middle);
+    const version = middle.version;
+    computes = comparisons = 0;
+
+    writeCell(shared, 1);
+
+    expect(computes).toBe(3);
+    expect(comparisons).toBe(1);
+    expect(effects).toBe(0);
+    expect(readDerived(middle)).toBe(previous);
+    expect(middle.version).toBe(version);
+    stop();
+    expectAtRest(graph);
+  });
+
+  test("suspended cached errors recover without passing an error to equals", () => {
+    const graph = new Graph();
+    const shared = graph.cell(0);
+    const failure = new Error("bottom failed");
+    let comparisons = 0;
+    let top = graph.derived(() => {
+      if (readCell(shared) % 2 === 0) throw failure;
+      return { value: 1 };
+    });
+    for (let index = 0; index < 600; index++) {
+      const below = top;
+      top = graph.derived(
+        () => {
+          readCell(shared);
+          return { value: readDerived(below).value };
+        },
+        {
+          equals: (previous, current) => {
+            comparisons++;
+            expect(previous).not.toBeInstanceOf(Error);
+            return previous.value === current.value;
+          },
+        },
+      );
+    }
+    expect(() => readDerived(top)).toThrow(failure);
+    for (const value of [1, 2, 3]) {
+      writeCell(shared, value);
+      if (value % 2 === 0) {
+        expect(() => readDerived(top)).toThrow(failure);
+      } else {
+        expect(readDerived(top)).toEqual({ value: 1 });
+      }
+      expectAtRest(graph);
+    }
+    expect(comparisons).toBe(0);
+  });
+
+  test("a suspended volatile compute is not treated as checked in the same walk", () => {
+    const graph = new Graph();
+    const atom = graph.atom();
+    let outside = 1;
+    let top = graph.derived(() => 0);
+    for (let index = 0; index < 600; index++) {
+      const below = top;
+      top = graph.derived(() => {
+        readAtom(atom);
+        return readDerived(below) + outside;
+      });
+    }
+    expect(readDerived(top)).toBe(600);
+    outside = 2;
+    expect(readDerived(top)).toBe(1200);
+    expectAtRest(graph);
+  });
+
   test("a cached cycle longer than the depth limit throws and recovers", () => {
     const graph = new Graph();
     const closes = graph.cell(false);
