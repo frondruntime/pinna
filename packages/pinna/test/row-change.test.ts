@@ -536,6 +536,25 @@ describe("onRowChange's limits", () => {
     );
   });
 
+  test("untracked cannot install a row listener inside a computed value", () => {
+    const realm = createRealm();
+    const rows = collection(realm, { keyOf });
+    let calls = 0;
+    const adds = computed(realm, () =>
+      untracked(realm, () =>
+        onRowChange(rows, () => {
+          calls++;
+        }),
+      ),
+    );
+    expect(() => untracked(realm, (read) => read(adds))).toThrow(
+      "pinna: onRowChange cannot run in a computed value",
+    );
+    update(realm, (_read, write) => write.upsert(rows, a1));
+    expect(calls).toBe(0);
+    expectRealmAtRest(realm);
+  });
+
   test("a listener that returns a value throws", () => {
     const realm = createRealm();
     const rows = collection(realm, { keyOf });

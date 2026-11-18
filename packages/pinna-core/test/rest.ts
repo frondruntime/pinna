@@ -6,6 +6,9 @@ export const expectAtRest = (graph: Graph): void => {
   expect({
     active: graph.active,
     deriving: graph.deriving,
+    untrackedActive: graph.untrackedActive,
+    computeDepth: graph.computeDepth,
+    suspended: graph.suspended,
     depth: graph.depth,
     openBatches: graph.openBatches,
     walkDepth: graph.walkDepth,
@@ -14,6 +17,9 @@ export const expectAtRest = (graph: Graph): void => {
   }).toEqual({
     active: undefined,
     deriving: undefined,
+    untrackedActive: undefined,
+    computeDepth: 0,
+    suspended: undefined,
     depth: 0,
     openBatches: 0,
     walkDepth: 0,

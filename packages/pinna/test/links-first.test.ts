@@ -633,7 +633,7 @@ describe("memo making an entry inside a compute that a read outside an update ru
 });
 
 describe("a read outside an update settles once it is over", () => {
-  test("an update inside the compute does not evict a memo entry made earlier in it", () => {
+  test("a refused update inside the compute does not evict a memo entry made earlier in it", () => {
     const realm = createRealm();
     let computes = 0;
     const square = computedFunction(realm, (_read, n: number) => {
@@ -642,14 +642,16 @@ describe("a read outside an update settles once it is over", () => {
     });
     const $d = computed(realm, (read) => {
       const first = read(square(2));
-      untracked(realm, () => update(realm, () => undefined));
+      expect(() => untracked(realm, () => update(realm, () => undefined))).toThrow(
+        "update cannot run in a computed value",
+      );
       return first + read(square(2));
     });
     expect(untracked(realm, (read) => read($d))).toBe(8);
     expect(computes).toBe(1);
   });
 
-  test("an update inside the compute does not run a cleanup removed earlier in it", () => {
+  test("a refused update inside the compute does not run a cleanup removed earlier in it", () => {
     const errors: Array<unknown> = [];
     const realm = createRealm({ onError: (error) => errors.push(error) });
     const $x = box(realm, 0);
@@ -666,7 +668,9 @@ describe("a read outside an update settles once it is over", () => {
     const $d = computed(realm, () => {
       computing = true;
       remove();
-      untracked(realm, () => update(realm, () => undefined));
+      expect(() => untracked(realm, () => update(realm, () => undefined))).toThrow(
+        "update cannot run in a computed value",
+      );
       computing = false;
       return 1;
     });
@@ -698,7 +702,7 @@ describe("a read outside an update settles once it is over", () => {
     expect(computes).toBe(1);
   });
 
-  test("an update inside the compute does not rerun, mid-compute, a watcher that reads the computing value", () => {
+  test("a refused update inside the compute does not rerun, mid-compute, a watcher that reads the computing value", () => {
     const errors: Array<unknown> = [];
     const realm = createRealm({ onError: (error) => errors.push(error) });
     const $x = box(realm, 0);
@@ -715,7 +719,9 @@ describe("a read outside an update settles once it is over", () => {
     });
     const $d = computed(realm, () => {
       remove();
-      untracked(realm, () => update(realm, () => undefined));
+      expect(() => untracked(realm, () => update(realm, () => undefined))).toThrow(
+        "update cannot run in a computed value",
+      );
       return 9;
     });
     const seen: Array<number> = [];
@@ -1048,7 +1054,7 @@ describe("a computed value's equals is part of its compute", () => {
     });
 
     expect(() => untracked(realm, (read) => read($value))).toThrow(
-      "cannot write while it computes",
+      "update cannot run in a computed value",
     );
     expect(untracked(realm, (read) => read($source))).toBe(1);
   });

@@ -1620,13 +1620,16 @@ const disposeWatch = (graph: Graph, watch: Node): void => {
 const runHook = (graph: Graph, hook: () => void): void => {
   const outerActive = graph.active;
   const outerDeriving = graph.deriving;
+  const outerUntracked = graph.untrackedActive;
   graph.active = undefined;
   graph.deriving = undefined;
+  graph.untrackedActive = undefined;
   try {
     graph.batch(hook);
   } finally {
     graph.active = outerActive;
     graph.deriving = outerDeriving;
+    graph.untrackedActive = outerUntracked;
   }
 };
 
@@ -2441,6 +2444,8 @@ export class Graph {
   /** The run that met a cycle last: `meetCycle`. */
   cycleRun = 0;
   active: Node | undefined = undefined;
+  /** The enclosing execution whose reads `untracked` suppresses; hooks set it aside. */
+  untrackedActive: Node | undefined = undefined;
   /**
    * Handed to every compute and select as its one argument, so a host can
    * give each run what it reads with, without a closure per node.
@@ -2606,11 +2611,14 @@ export class Graph {
 
   untracked<Result>(read: (argument: never) => Result): Result {
     const outerActive = this.active;
+    const outerUntracked = this.untrackedActive;
+    this.untrackedActive = outerActive ?? outerUntracked;
     this.active = undefined;
     try {
       return (read as (argument: unknown) => Result)(this.argument);
     } finally {
       this.active = outerActive;
+      this.untrackedActive = outerUntracked;
     }
   }
 
