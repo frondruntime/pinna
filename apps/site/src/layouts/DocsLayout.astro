@@ -74,7 +74,8 @@ const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
       </div>
     </nav>
 
-    <main class="content" transition:animate="fade">
+    {/* Named so one docs page's content fades into the next's: generated names differ per page. */}
+    <main class="content" transition:name="docs-content" transition:animate="fade">
       <h1 class="page-title">{title}</h1>
       <div class="prose">
         <slot />
