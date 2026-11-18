@@ -658,6 +658,58 @@ describe("write.modify", () => {
     expect(untracked(realm, (read) => read($node).items[0])).toBe(cyclic);
   });
 
+  test("finalizing an appended frozen object preserves its identity", () => {
+    const frozen = Object.freeze({ price: 3 });
+    const $rows = box<ReadonlyArray<{ readonly price: number }>>(realm, []);
+    update(realm, (_read, write) => {
+      write.modify($rows, (rows) => {
+        rows.push(frozen);
+      });
+    });
+    expect(untracked(realm, (read) => read($rows)[0])).toBe(frozen);
+  });
+
+  test("a finalized draft self-reference points to its result", () => {
+    interface Row {
+      readonly child: Row | null;
+    }
+    const before: Row = { child: null };
+    const $row = box(realm, before);
+    update(realm, (_read, write) => {
+      write.modify($row, (row) => {
+        row.child = row;
+      });
+    });
+    const result = untracked(realm, (read) => read($row));
+    expect(result.child).toBe(result);
+    expect(before.child).toBeNull();
+  });
+
+  test("finalization copies supplied containers only to replace nested drafts", () => {
+    const unchanged = Object.freeze({ price: 3 });
+    const $row = box<{ readonly price: number; readonly child: unknown }>(realm, {
+      price: 1,
+      child: null,
+    });
+    let supplied: { self?: unknown; row: unknown; unchanged: unknown } | undefined;
+    update(realm, (_read, write) => {
+      write.modify($row, (row) => {
+        supplied = { self: undefined, row, unchanged };
+        supplied.self = supplied;
+        Object.freeze(supplied);
+        row.child = supplied;
+      });
+    });
+    const result = untracked(realm, (read) => read($row));
+    const child = result.child as NonNullable<typeof supplied>;
+    expect(child).not.toBe(supplied);
+    expect(child.self).toBe(child);
+    expect(child.row).toBe(result);
+    expect(child.unchanged).toBe(unchanged);
+    expect(supplied?.self).toBe(supplied);
+    expect(supplied?.row).not.toBe(result);
+  });
+
   test("filter on a draft keeps the kept items", () => {
     const $todos = box<{ readonly items: ReadonlyArray<Todo> }>(realm, {
       items: [
