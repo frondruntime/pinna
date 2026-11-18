@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as Plain from "@frondruntime/pinna";
 import { equalKey, hashKey, schemaKey } from "@frondruntime/pinna/internal";
 import { record } from "@frondruntime/pinna/testing";
-import { Equal, Hash, HashSet, Schema } from "effect";
+import { Equal, Hash, HashSet, Schema, SchemaIssue } from "effect";
 import {
   atom,
   autorun,
@@ -451,6 +451,36 @@ describe("unknown boxes", () => {
 });
 
 describe("incremental checks", () => {
+  for (const [name, element, initial, next, path] of [
+    ["primitive", Schema.Number, [1], [1, "bad"], [1]],
+    [
+      "nested",
+      Schema.Struct({ price: Schema.Number }),
+      [{ price: 1 }],
+      [{ price: 1 }, { price: "bad" }],
+      [1, "price"],
+    ],
+  ] as const) {
+    test(`a rejected ${name} array element keeps its structured error path`, () => {
+      const $values = schemaBox(realm, Schema.Array(element), initial);
+      let cause: unknown;
+      try {
+        update(realm, (_read, write) => write($values, next as unknown as typeof initial));
+      } catch (error) {
+        cause = (error as Error).cause;
+      }
+      expect(Schema.isSchemaError(cause)).toBe(true);
+      if (!Schema.isSchemaError(cause)) {
+        throw new Error("expected a schema error");
+      }
+      expect(SchemaIssue.makeFormatterStandardSchemaV1()(cause.issue).issues).toEqual([
+        { path, message: "Expected number" },
+      ]);
+      expect(untracked(realm, (read) => read($values))).toBe(initial);
+      expectRealmAtRest(realm);
+    });
+  }
+
   const counted = (): { readonly schema: Schema.Codec<number>; readonly count: () => number } => {
     let count = 0;
     const schema = Schema.Number.check(
