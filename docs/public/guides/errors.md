@@ -29,7 +29,9 @@ dependency to go further.
 ## Rules
 
 - Errors with a caller throw to it: every misuse throws from the call that
-  made it, and an update that throws rolls back.
+  made it, and an update that throws rolls back. An `onError` that throws
+  while a write's watchers run throws to the writer, with the writes in
+  place.
 - Errors without one go to `onError`: a watch effect's, an autorun's after
   its first run, an `onObserved` hook's or cleanup's, and watchers that never
   settle. The first run of a `watch` or `autorun` throws to the caller, and
@@ -130,7 +132,9 @@ A schema adds errors with a caller, and a program has a place for defects.
   [collection field](../effect/collections.md) refuses throws the same error.
 - `decode` throws `Schema.SchemaError` for input that does not fit the schema.
 - A [program's](../effect/programs.md) defect is logged at the error level
-  through Effect's logger, and the watch or stream keeps running.
+  through Effect's logger. A `watchScoped` watch keeps running; a
+  `fromStream` stream or a `whileObserved` run ends, and the next
+  observation starts it again.
 
 | Error | Answers |
 | --- | --- |

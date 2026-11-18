@@ -113,6 +113,7 @@ const apiPackages: ReadonlyArray<{
       "atom",
       "box",
       "collection",
+      "onRowChange",
       "computed",
       "computedFunction",
       "Model",
@@ -140,6 +141,7 @@ const apiPackages: ReadonlyArray<{
       "SchemaModel",
       "BoxField",
       "CollectionField",
+      "schemaCollection",
       "FromContext",
       "decode",
       "reconcileSchema",
@@ -148,6 +150,7 @@ const apiPackages: ReadonlyArray<{
       "changes",
       "observeScoped",
       "fromStream",
+      "whileObserved",
     ],
   },
 ];
@@ -173,7 +176,7 @@ const effectPoints: ReadonlyArray<{
   },
   {
     title: "Programs stop with their scope.",
-    body: "`watchScoped` runs an effect for each change, `changes` streams a value's changes, `observeScoped` keeps a value observed, and `fromStream` turns a stream into a value.",
+    body: "`watchScoped` runs an effect on each change and interrupts the one still running, `changes` streams a value's changes, `observeScoped` keeps a value observed, `fromStream` turns a stream into a value, and `whileObserved` runs a program while a value is observed.",
     test: "packages/pinna-effect/test/effect.test.ts",
   },
 ];
@@ -634,11 +637,8 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                   </span>
                 </li>
                 <li>
-                  <strong>Quick runs</strong>
-                  <span>
-                    The Node and Hermes columns print pinna-bench's rough tier, one launch per cell, not its
-                    publish tier. The app ran on a simulator, not a device.
-                  </span>
+                  <strong>A simulator</strong>
+                  <span>The app ran on a simulator, not a device.</span>
                 </li>
               </ul>
             </div>
@@ -742,7 +742,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
             <section class="pinna-bench-notes-row" aria-labelledby="bench-notes-where">
               <header>
                 <h3 id="bench-notes-where">Where they ran</h3>
-                <p>All three on 2026-11-16.</p>
+                <p>The app on 2026-11-16, the graph on 2026-11-18.</p>
               </header>
               <dl class="pinna-bench-terms">
                 <div class="pinna-bench-term">
@@ -755,9 +755,14 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                 <div class="pinna-bench-term">
                   <dt>The graph on Node and Hermes</dt>
                   <dd>
-                    pinna-bench's rough tier on Node <code>26.13.1</code> and on hermes-ios{" "}
-                    <code>0.5</code> from the command line. Each launch is a process of its own
-                    that makes the library's instance once. The machine's load average was 8 to 10.
+                    pinna-bench's publish tier on Node <code>26.13.1</code> and on Hermes{" "}
+                    <code>260318099.0.5</code>, the one React Native <code>0.88.1</code> ships,
+                    from the command line. Five launches a cell, each a process of its own that
+                    makes the library's instance once; a figure is the median of the launches'
+                    medians. The machine's load average was 2.6 to 4.5. On Node, alien-signals'
+                    increment runs in a fast or a slow mode from launch to launch; the increment
+                    row's Node figures come from a rerun of that cell, where most launches took
+                    the fast mode.
                   </dd>
                 </div>
                 <div class="pinna-bench-term">
@@ -902,7 +907,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                 <div class="pinna-bench-term">
                   <dt>Node and Hermes</dt>
                   <dd>
-                    <code class="pinna-bench-command">bun run bench --tier rough</code>
+                    <code class="pinna-bench-command">bun run bench --tier publish</code>
                     In{" "}
                     <a href={sourceUrl("packages/pinna-bench")} target="_blank" rel="noopener noreferrer">packages/pinna-bench</a>.
                     Hermes needs a hermes-ios release, given with <code>--hermes</code> or{" "}

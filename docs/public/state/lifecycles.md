@@ -26,7 +26,7 @@ An atom stands for state kept outside Pinna. `read($atom)` subscribes;
   observed is in place, before that call returns. Inside an update, hooks
   start and stop once the recipe returns, never in the middle of it.
 - An observer holds what it read until it stops: a watch or an autorun until
-  its stop function runs, `observe` until its release runs, `useValue` and
+  its stop function runs or its next run stops reading the value, `observe` until its release runs, `useValue` and
   `useValues` until the component unmounts, `watchScoped`, `observeScoped`,
   and `changes` until the scope closes or the stream stops, and an observed
   computed value until it is no longer observed or a recompute stops reading

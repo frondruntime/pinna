@@ -37,8 +37,8 @@ element arrives. `fetchRate` stands for the application's own effect.
 
 `whileObserved` runs a program while an observable is observed: from the
 start when the first observer arrives, interrupted when the last one leaves.
-It is how a feed writes the rows of a collection only while something reads
-them. `fromStream` is the same lifetime around a single value. A row checked
+It is how a feed writes the rows of a collection only while a list shows
+them: a list reads `keys`, and a reader of one present row does not. `fromStream` is the same lifetime around a single value. A row checked
 against a schema lands in a `schemaCollection`
 ([Collection fields](./collections.md)). `fetchTrades` and `tradeUpdates`
 stand for the application's own snapshot and updates.
@@ -90,9 +90,10 @@ Each of them stops when its scope closes.
 - Whether a feed has loaded is the application's own box. Pinna cannot tell
   when a snapshot is complete. The program writes the flag in the same
   update as the rows, so no reader sees it loaded with the rows missing.
-- `watchScoped`, `changes`, and `fromStream` compare with `Object.is` unless
-  given `{ equals }`, as the core's `watch` and `box` do: a value from a
-  stream or a select has no schema to compare by, unlike a `schemaBox`.
+- `watchScoped` and `fromStream` compare with `Object.is` unless given
+  `{ equals }`, as the core's `watch` and `box` do: a value from a stream or
+  a select has no schema to compare by, unlike a `schemaBox`. `changes`
+  takes no options and compares with `Object.is`.
 - Stop a program by closing its scope, not by keeping stop functions.
 
 ## Answers

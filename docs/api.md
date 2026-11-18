@@ -5,8 +5,6 @@ the site, whose source is `docs/public`; this page holds the reasons. Ruling
 numbers are stable, because tests, `design.md`, and `performance.md` cite
 them: a replaced ruling keeps its number and names what replaced it. Each
 ruling carries the date it was first written down, and uses today's names.
-Each ruling's full text, with the cases and reasons left out here, is in
-`git show 8fe7c18:docs/api.md`.
 
 ## Settled
 
@@ -231,9 +229,8 @@ Each ruling's full text, with the cases and reasons left out here, is in
     a box is never shared with another instance; `extend`, `mapFields`,
     `makeOption`, and `makeEffect` throw. `pinna` adds `Model`. Amends 44
     and 45.
-48. **`read.row` looks a row up without a cell** (proposed 2026-11-15,
-    recorded as not yet ruled; `read.row` is built). In a tracked place it
-    is `read(collection.row(key))`; where nothing tracks, it reads the held
+48. **`read.row` looks a row up without a cell** (2026-11-15). In a
+    tracked place it is `read(collection.row(key))`; where nothing tracks, it reads the held
     row and makes no computed value and no cell. The use is a write by key: in the React
     Native app's 60 ticks, 3,000 lookups over 2,159 keys allocated 1.01 MB
     on Hermes 0.14.1 for `row(key)` alone and 1.84 MB with the read; through

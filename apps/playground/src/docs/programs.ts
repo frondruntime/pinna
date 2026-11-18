@@ -86,7 +86,8 @@ const $trades = schemaCollection(realm, Trade, { keyOf: (trade) => trade.id });
 // Only the app knows when its snapshot is complete, so the flag is its own.
 const $loaded = box(realm, false);
 
-// Every reader of the collection observes its keys: a list, a row, or rows.
+// A list observes the keys; a reader of one present row does not, so this
+// feed runs while a list shows the trades.
 const tradeFeed = whileObserved(
   $trades.keys,
   Effect.gen(function* () {

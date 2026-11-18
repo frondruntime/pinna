@@ -40,8 +40,7 @@ to whatever needs it.
 ## A write has one place
 
 A box changes only inside `update`, through the `write` it hands out. A box
-field has no setter, values are `readonly` in the types, and a `write` kept
-past its update throws. So every write in an application sits inside an
+field has no setter, and a `write` kept past its update throws. So every write in an application sits inside an
 `update`.
 
 An update is atomic. An error thrown from the recipe, such as the
@@ -109,9 +108,9 @@ of alien-signals and the graph core within 1.6×. The measurements are in
 [performance.md](https://github.com/frondruntime/pinna/blob/main/docs/performance.md).
 
 That makes Pinna a library for domain state: models, forms, lists loaded from
-a server, totals derived from them. Per-frame work — a game loop, drawing,
-animation — opts out, computes with plain arrays and objects, and writes the
-result once.
+a server, totals derived from them, and the charts and canvases that draw
+them once a frame. Per-entity simulation state, such as particles or physics,
+stays in plain arrays and objects, and writes what the UI shows once a frame.
 
 ## Hermes first
 

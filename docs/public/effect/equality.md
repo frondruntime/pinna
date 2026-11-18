@@ -61,8 +61,8 @@ refetched rate under a held pair is merged, and its box takes the new bid.
   shape, and a structural compare would hash the whole value on every
   write. An `Unknown` field inside a struct compares structurally.
 - `{ equals }` replaces the schema's equivalence: `Object.is` counts every
-  write as a change, and a function by id counts a row with a new price as
-  unchanged.
+  new array or object as a change, even one equal part by part, and a
+  function by id counts a row with a new price as unchanged.
 - A `SchemaModel` instance without its own `Equal` compares its plain fields
   by value and its boxes and its realm by identity. Every `decode` makes new
   boxes, so a refetched instance with a `$` field is not equal to the one

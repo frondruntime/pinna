@@ -20,7 +20,16 @@ export const siteAuthor = {
 export const projectOrganizationUrl = "https://github.com/frondruntime";
 export const projectRepositoryUrl = "https://github.com/frondruntime/pinna";
 export const projectIdentityLinks = [projectOrganizationUrl, projectRepositoryUrl] as const;
-export const projectOrganizationId = `${siteUrl}/#organization`;
+/**
+ * The publisher both Pinna's and Frond's sites name. The `@id` and its facts
+ * match Frond's site, so the two graphs describe one organization.
+ */
+export const projectOrganization = {
+  id: "https://frondruntime.dev/#organization",
+  name: "Frond",
+  url: "https://frondruntime.dev",
+} as const;
+export const projectLicenseUrl = "https://opensource.org/licenses/MIT";
 
 interface JsonLdInput {
   title: string;
@@ -43,10 +52,10 @@ export function createJsonLd({ title, description, url }: JsonLdInput) {
       },
       {
         "@type": "Organization",
-        "@id": projectOrganizationId,
-        name: siteName,
-        url: siteUrl,
-        sameAs: [...projectIdentityLinks],
+        "@id": projectOrganization.id,
+        name: projectOrganization.name,
+        url: projectOrganization.url,
+        sameAs: [projectOrganizationUrl],
       },
       {
         "@type": "WebSite",
@@ -56,7 +65,7 @@ export function createJsonLd({ title, description, url }: JsonLdInput) {
         description: siteDescription,
         inLanguage: "en-US",
         author: { "@id": siteAuthor.id },
-        publisher: { "@id": projectOrganizationId },
+        publisher: { "@id": projectOrganization.id },
       },
       {
         "@type": "SoftwareSourceCode",
@@ -66,9 +75,11 @@ export function createJsonLd({ title, description, url }: JsonLdInput) {
         description: siteDescription,
         programmingLanguage: "TypeScript",
         codeRepository: projectRepositoryUrl,
+        license: projectLicenseUrl,
+        sameAs: [projectRepositoryUrl],
         image: ogImage,
         author: { "@id": siteAuthor.id },
-        publisher: { "@id": projectOrganizationId },
+        publisher: { "@id": projectOrganization.id },
       },
       {
         "@type": "WebPage",

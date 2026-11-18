@@ -46,7 +46,8 @@ does, inside `untracked`.
 
 - An observable has no read or write methods. Every place that reads hands out
   `read`; `update` alone also hands out `write`.
-- An update that throws is undone: every write before the throw is taken back.
+- An update that throws is undone: every write before the throw is taken
+  back, except a `write.changed` on an atom, whose watchers still run.
 - There is no default realm. Batches, tracking, watchers, and errors stay
   inside the realm that made them, so a test with a realm of its own shares
   nothing with the next.

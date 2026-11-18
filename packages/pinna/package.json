@@ -1,7 +1,7 @@
 {
   "name": "@frondruntime/pinna",
   "version": "0.0.1",
-  "description": "Glitch-free observable state.",
+  "description": "Glitch-free reactive state: boxes, computed values, keyed collections, and updates.",
   "license": "MIT",
   "author": {
     "name": "Roman Dubinin",

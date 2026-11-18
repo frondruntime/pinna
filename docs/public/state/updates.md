@@ -37,7 +37,7 @@ through `untracked`.
   place that handed it out: outside every place of its realm a `read` throws,
   outside every update a `write` throws, and inside some other place a kept
   `read` acts as that place's own. Pass `read` down as an argument instead.
-- Values are plain data, `readonly` in the types. Change them with `write` or
+- Values are plain data. Change them with `write` or
   `write.modify`, never in place: a value is not a proxy, so a change made in
   place is seen by no watcher.
 - An update is synchronous. A recipe that returns a promise throws at once and

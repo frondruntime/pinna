@@ -1,7 +1,7 @@
 {
   "name": "Pinna — Reactive state",
   "short_name": "Pinna",
-  "description": "Pinna — reactive state that’s hard to get wrong. Synchronous state for domain models.",
+  "description": "Pinna — reactive state that’s hard to get wrong. Synchronous state for domain models, built so the usual state bugs cannot happen and the rest fail where you, or your agent, can see them.",
   "start_url": "/",
   "display": "minimal-ui",
   "background_color": "#090d12",

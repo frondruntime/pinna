@@ -2,7 +2,7 @@
   "name": "pinna-workspace",
   "version": "0.0.0",
   "private": true,
-  "description": "Experiment: a small, glitch-free observable layer on Effect Schema. Not published.",
+  "description": "Pinna: glitch-free reactive state, with Effect Schema classes for checked data.",
   "type": "module",
   "workspaces": [
     "packages/*",

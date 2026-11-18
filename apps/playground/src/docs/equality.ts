@@ -109,7 +109,7 @@ const receiveRates = (json: unknown) => {
 // #region choosing
 const Row = Schema.Struct({ id: Schema.String, price: Schema.Number });
 
-// Every write is a change, even of an equal array.
+// Every new array is a change, even one equal part by part.
 const $log = schemaBox(realm, Schema.Array(Schema.String), [], { equals: Object.is });
 
 // The same row while the id is the same, whatever the price.

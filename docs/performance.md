@@ -1,8 +1,10 @@
 # Pinna performance: direction and findings
 
 `design.md` "Benchmarks" holds the reference table; this file holds where
-performance work goes next and why. "Where 1.0 stands" is the current state;
-"Measurements, in order" is the dated log behind it.
+performance work goes next and why. "Where 1.0 stands" is the state on
+2026-11-13; "Measurements, in order" is the dated log behind it, and its
+entries after that date, through "The graph tables at the publish tier"
+(2026-11-18), are newer than the summary.
 
 ## Direction (owner, 2026-11-04)
 
@@ -40,7 +42,7 @@ of its own.
 
 ## Where 1.0 stands (2026-11-13)
 
-`bench:hermes-graph` on `main` at dda3e17, ms minimum of 18 runs over two
+`bench:hermes-graph` on `main` on 2026-11-13, ms minimum of 18 runs over two
 runs of the bench (KB allocated by one run). The baseline for what comes
 next; the black-box scenarios, the store against MobX, and the hooks are in
 "Baseline after the second round (2026-11-13)".
@@ -141,7 +143,7 @@ about 0.3 ms then, the whole new array checked against its schema.
 | memory, 10k observed | 52 MB, 58 obj/row | 22 MB, 43 obj/row | 22 MB, 43 obj/row |
 | memory, 10k decoded | 16.6 MB, 28 obj/row | 14.1 MB, 29 obj/row | 5.6 MB, 8 obj/row |
 
-### Graph alone (the spike's `bench/spike-graph.ts`, minimum of 15 runs, ms)
+### Graph alone (the spike's graph bench, minimum of 15 runs, ms)
 
 | | Pinna | Pinna, no check or journal | alien-signals | MobX |
 | --- | --- | --- | --- | --- |
@@ -479,8 +481,8 @@ Before and after, back to back on Hermes, ms minimum (KB per run):
 writes it), or a plain `useSyncExternalStore` store per row. Bun 1.4.2,
 React 19.3.1's production build, happy-dom; each operation in `flushSync`, and
 each one checks the rows it rendered and the text it left. ms minimum of 7
-runs. "Before" is the hook of 20f0bde (`track` on every render) on today's
-core, whose `track` is unchanged; "after" is 72d3282 (`trackPending`, then
+runs. "Before" is the previous hook (`track` on every render) on today's
+core, whose `track` is unchanged; "after" is the fixed hook (`trackPending`, then
 `adopt` in a layout effect). The before column is a separate run; the MobX
 and plain columns of that run were within 0.6 ms of these.
 
@@ -543,10 +545,10 @@ no realm context, no reaction work in the render. The function form moves to
 `useTracked`, which keeps the `trackPending` and `adopt` hook unchanged.
 This is how tldraw's `useValue` and Zustand subscribe; the track-in-render
 hooks (MobX `useObserver`, Legend-State, Preact signals) skip the discarded
-render's cost and carry the staleness 72d3282 fixed.
+render's cost and carry the staleness the discarded-render fix removed.
 
 The same `pinna-react` bench, which reads through `useValue`. ms, the lower
-minimum of two runs of 7 each; "before" is 2877e3a, "after" the slice. The
+minimum of two runs of 7 each; "before" is the hook before this change, "after" the slice. The
 MobX and plain columns are the lowest of all four runs.
 
 | | Pinna before | Pinna after | MobX observer | plain store | after ÷ before | after ÷ MobX | after ÷ plain |
@@ -586,7 +588,7 @@ reads it in the listener, as `handleStoreChange` does, and again in the
 render that follows. A tick writes `$a` of the ticking rows in one
 `realm.update`, with its schema check, and renders the rows the listeners
 marked. The model checks each tick's marked-row count and rendered total.
-"Before" is the store of 2877e3a, which every form used, given a new read
+"Before" is the store before this change, which every form used, given a new read
 function each render as an inline arrow is; it is `useTracked`'s store
 today. ms minimum of 9 runs, Hermes V1 260318099.0.5.
 
@@ -658,7 +660,7 @@ This closes the two open decisions from the last entry, at the owner's word.
   every render, and the model does not measure it, since its render passes
   the same array.
 
-`bench:hermes-hooks` on main (0ca75a4) and on this change, run back to back,
+`bench:hermes-hooks` on main and on this change, run back to back,
 the model's after subject updated to match. `useValue($box)` did not change,
 so it is the control: its times moved by 3% or less. ms minimum of 9 runs,
 Hermes V1 260318099.0.5:
@@ -719,7 +721,7 @@ The first point is on the read path. Checked there, it cost 4 to 7% on
 fan-out, diamond, and conditional reads; the check that remains is one
 comparison, and the rest runs in a method `hermesc` does not inline.
 
-`bench:hermes-graph` on main (14cc106) and on this change, alternating,
+`bench:hermes-graph` on main and on this change, alternating,
 two runs of each. ms minimum of 18 runs, Hermes V1 260318099.0.5:
 
 | Hermes | main | this | this ÷ main | KB main | KB this |
@@ -746,7 +748,7 @@ two runs of each. ms minimum of 18 runs, Hermes V1 260318099.0.5:
 
 ### A watch over cells only, checked without the walk: rejected (2026-11-07)
 
-Tried on main (3a68bf1): before entering the walk, a watch or reaction whose
+Tried on main on 2026-11-07: before entering the walk, a watch or reaction whose
 sources are all cells compares their versions in place and returns the first
 that changed, with the walk's stamps when none did. A root that reads anything
 else, or a derived root, takes the walk as before. The core's tests passed.
@@ -772,7 +774,7 @@ the rest 1.01 to 1.04×. Allocation was the same in every row.
 
 - **It diagnoses the write of 1000 sources** ("Edges reused in place"): most
   of what that scenario lost is entering the walk once per watch. On
-  14cc106 the same scenario is 77.3 ms.
+  that section's main the same scenario is 77.3 ms.
 - **It costs every watch that reads a computed value**, which scans its first
   edge and then walks anyway; fan-out goes from 1.59× to 1.68× alien-signals,
   over the core's 1.6× budget. A write of 1000 sources is already 1.16×.
@@ -793,8 +795,8 @@ and "settle" runs until three frames pass with no render. `bun run ios`
 builds it, and `bun run bench` drives it on the booted simulator, one app
 launch per job.
 
-One round, 10,000 rows, iPhone 16 Pro simulator, before the changes below
-(7ea1d73). ms, store / settle:
+One round, 10,000 rows, iPhone 16 Pro simulator, before the changes below.
+ms, store / settle:
 
 | Scenario | MobX | Pinna, `useSelect` | Pinna, cells |
 | --- | --- | --- | --- |
@@ -821,7 +823,7 @@ line
 (`packages/pinna/bench/hermes-toolchain.ts`, Hermes V1 260318099.0.5,
 10,000 rows, ms; one run each, "—" where none ran):
 
-| Hermes, store only | 7ea1d73 | 4e5444b | b1c256b | eb6530a |
+| Hermes, store only | before | step 1 | step 2 | step 3 |
 | --- | --- | --- | --- | --- |
 | `realm.decode`, µs per row | — | 221 | 202 | 162 |
 | load | — | 2,284 | 2,067 | 1,630 |
@@ -830,23 +832,23 @@ line
 | remove 100, one at a time | 67 | 15 | — | — |
 | 60 ticks, no observers (MobX 41 to 45) | 70 | 46 | 49 | 53 |
 
-- **4e5444b**: schema equality is built once per schema and compares dates
+- **Step 1**: schema equality is built once per schema and compares dates
   by time; a collection returns the same row for a key and edits its order
   with native array calls; a box a decode built does not check its value
   again.
-- **b1c256b**: a `SchemaModel` decode parses and checks each field once;
+- **Step 2**: a `SchemaModel` decode parses and checks each field once;
   `Schema.encodeKeys` ran every check twice.
-- **eb6530a**: a class builds its boxes after one realm lookup per row,
+- **Step 3**: a class builds its boxes after one realm lookup per row,
   not one effectful transformation per box, about 5 µs each.
 - **What is left is Effect's decode.** The same class with no boxes takes
   155 µs per row, a plain `Struct` of the same fields 141, and a
   hand-written decode to plain objects 71. A synchronous decode
   (`design.md`, "Leads") is the next step there.
 - **The tick moved between runs** with no change to it, 46 to 53 ms against
-  MobX's 41 to 45; it is within noise of where 4e5444b left it.
+  MobX's 41 to 45; it is within noise of where step 1 left it.
 
-The device again, one round, 10,000 rows, at c01e849 (the store code of
-eb6530a). ms, store / settle; "—" where the store has no such operation:
+The device again, one round, 10,000 rows, with the store code of
+step 3. ms, store / settle; "—" where the store has no such operation:
 
 | Scenario | MobX | Pinna, `useSelect` | Pinna, cells |
 | --- | --- | --- | --- |
@@ -864,7 +866,7 @@ eb6530a). ms, store / settle; "—" where the store has no such operation:
 After load, MobX holds 568 MB resident and 397 MB of Hermes heap; Pinna,
 `useSelect`, 334 and 98; Pinna, cells, 271 and 100.
 
-- **The command line's gains held on the device.** Against 7ea1d73, Pinna's
+- **The command line's gains held on the device.** Against the round before the changes, Pinna's
   load is 28% faster and merge 33%. It now beats MobX by 43% on load, 33% on
   merge, 34% on deep merge, and 49% on replace, and ties insert.
 - **Removals did not move**: 60 ms against MobX's 20. The 67 to 15 above
@@ -897,7 +899,7 @@ Hermes command line, the app's store, 10,000 rows, ms, one run each:
 - **Remove each** copies the 10,000 keys once per removal, 100 copies;
   that is plan item 5's copy, not the write.
 
-One device round at 7e2ce99 against the c01e849 run above, iPhone 16 Pro
+One device round with this change against the step 3 run above, iPhone 16 Pro
 simulator, 10,000 rows, store ms, settle ms in parentheses:
 
 | Scenario | MobX | Pinna select, before | after | Pinna cells, before | after |
@@ -920,14 +922,14 @@ simulator, 10,000 rows, store ms, settle ms in parentheses:
 is a real call, about 40 to 60 ns each in the interpreter. The bytecode
 showed which calls make and dispose and increment paid, and these went:
 
-- **A box write inside an update** (29005fe): a four-slot journal entry,
+- **A box write inside an update**: a four-slot journal entry,
   a first-write path, and one `try` per update.
-- **The core** (0b6d95a): `watch` and `disposeWatch` ask `checkObserving`
+- **The core**: `watch` and `disposeWatch` ask `checkObserving`
   only inside a run, and check for due work before calling the settle;
   `subscribe` and `unsubscribe` handle the source without the stack;
   `reconcile` takes whether the node is observed from its caller; a walk's
   entry and exit are written out where they happen.
-- **The public layer** (701bbef): a read inside a run checks `canRead`
+- **The public layer**: a read inside a run checks `canRead`
   without a call; `realm.watch` without options and an unnamed computed
   value skip the name check, and the second shares one options object.
 
@@ -1348,7 +1350,7 @@ the package's 1,277:
 | all five | 0.92 | 0.95 | 0.92 | 0.91 | 0.92 |
 | the last two (second run) | 0.93 | 0.93 | 0.91 | 0.92 | 0.92 |
 | no `try` in the flush (a bound) | 0.98 | 0.99 | 0.99 | 0.99 | 1.00 |
-| 14cc106's graph | 0.92 | 0.81 | 0.93 | 1.13 | 0.98 |
+| the graph of 2026-11-07 | 0.92 | 0.81 | 0.93 | 1.13 | 0.98 |
 | alien-signals | 0.59 | 0.79 | 0.59 | 0.61 | 0.58 |
 
 - **No candidate passes.** Error handling costs 0 to 2% (dropping every
@@ -1357,7 +1359,7 @@ the package's 1,277:
   `finishRun`'s common case is the one gain, 7 to 9% of the flush and 5 to
   8% of the total with nothing slower, and it misses the gate. That pair was
   picked after the first run.
-- **14cc106's graph flushes a write of 1000 sources 19% faster** and
+- **The graph of 2026-11-07 flushes a write of 1000 sources 19% faster** and
   fan-out 8%, a diamond 13% slower. Its writes are slower, so in totals it
   is 0.90×, 0.97× and 1.11×: a trade. Not bisected.
 - **What is left is structure, not bookkeeping:** the same calls each cost
@@ -1390,7 +1392,7 @@ places and `finishRun`'s case in three.
 
 ### Baseline after the second round (2026-11-13)
 
-`main` at dda3e17, the Hermes host in the
+`main` on 2026-11-13, the Hermes host in the
 `hermes-ios-260318099.0.5-release` `destroot`, every bench run twice back to back; load average 6 to 24 over
 the 35 minutes. Minimum of the two runs' minimums unless named. The graph
 alone is in "Where 1.0 stands".
@@ -1464,9 +1466,9 @@ unobserved), with 6.8 MB and 8 objects a row decoded against MobX's
 
 ### Reading and writing through the verbs costs nothing on the device (2026-11-13)
 
-`apps/rn-bench` on `spike/read-write-verbs` at c0fb1f6, where every
+`apps/rn-bench` on a trial branch, where every
 compute, select, and update reads through `read` and writes through
-`write` (ruling 43 in `api.md`), against `main` at e69b4ae.
+`write` (ruling 43 in `api.md`), against `main` of the same day.
 Release builds on the iPhone 17 Pro simulator (iOS 26.3), so not
 comparable with the iPhone 16 Pro tables above; three rounds of 10,000
 rows each, run one after the other. Median store ms, branch / main, and
@@ -1537,10 +1539,10 @@ this, and the build without the methods.
 
 ### The verbs alone on the device (2026-11-13)
 
-`apps/rn-bench` at 732bfce, the build without the methods, one round of
+`apps/rn-bench` on the build without the methods, one round of
 10,000 rows on the same iPhone 17 Pro simulator as the table two sections
-up. Store ms, then the change from that table's branch (c0fb1f6) and main
-(e69b4ae) medians:
+up. Store ms, then the change from that table's branch and main
+medians:
 
 | Scenario | MobX | Pinna, `useSelect` | Pinna, cells |
 | --- | --- | --- | --- |
@@ -1611,7 +1613,7 @@ library's write alone; for Pinna on Effect Schema it includes the decode.
 MobX lost serializr: its classes take plain values in their constructors.
 Every store merges by one rule, keeping a row whose other fields match and
 writing each of its three tick fields only when it changed, and every
-component formats in its read. `test/stores.test.ts` checks that the five
+component formats in its read. `apps/rn-bench/test/conformance.test.ts` checks that the
 stores hold the same ids after each write and rerender the same rows, with
 one exception: Legend State rerenders 30 rows on a replace, not 500,
 because its `set` compares the new value with the old field by field. The
@@ -1814,7 +1816,7 @@ same build with the fix, medians of launch medians in ms:
 ### What the site prints (2026-11-15)
 
 The landing page's Node and Hermes columns come from one run of
-pinna-bench's rough tier at 02f3e31: every library, one launch per cell,
+pinna-bench's rough tier on 2026-11-15: every library, one launch per cell,
 343 seconds, load average 2.2 to 3.7. Pinna against alien-signals:
 
 | Scenario | Node ms: Pinna | alien-signals | Hermes ms: Pinna | alien-signals | Node KB: Pinna | alien-signals | Hermes KB: Pinna | alien-signals |
@@ -1969,7 +1971,7 @@ earlier this day, came from inlined helpers, which the app does not use, and
 are withdrawn.
 
 Since the previous run the store also hoists its `equals` options, Pinna
-makes a collection's cell on its first read (`8af7a7f`), and Legend State
+makes a collection's cell on its first read, and Legend State
 loads in one `rows$.set`.
 
 `bun run bench --mode full --sizes 1000,10000`, three rounds, the median,
@@ -2116,7 +2118,7 @@ run.
   Closing the gap to 1.6× is a node layout with fewer fields per kind, and
   that layout has to be measured against the cost of a second shape that
   the watch node met.
-- **The site's make and dispose row is remeasured** at c9436e3 with
+- **The site's make and dispose row is remeasured** with
   pinna-bench's rough tier, every library, on Node and Hermes: Pinna 24.6 ms
   on Hermes against alien-signals' 13.4 (1.84×), and 2.38 against 0.948 on
   Node; two runs agree within 2% on Hermes. Its Hermes memory is unchanged to
@@ -2137,7 +2139,7 @@ ship. Legend State stays on 3.0.0-beta.48, labeled as a beta on the site.
 The site's graph tables and app table are all remeasured on this date.
 
 - **The graph tables:** pinna-bench's rough tier on Node 26.13.1 and
-  hermes-ios 0.5 at de35190, at a load average of 8 to 10, and
+  hermes-ios 0.5, at a load average of 8 to 10, and
   `bench:graph` on Bun 1.4.4, median of 9 runs. The Bun column, last
   measured 2026-11-14, is remeasured with the rest.
 - **The app, `apps/rn-bench`**, full mode, 10,000 rows, median of three
@@ -2186,7 +2188,7 @@ across the nine scenarios of `packages/pinna-bench` found that a source's
 `value`, `version`, `readBy`, `graph`, and `kind` take about 80% of its
 accesses; an observer's most read are `cursor`, `kind`, `status`,
 `volatile`, and `checkedAt`. The spike put those five first in each
-literal, on 4fd6ff8 (local branch `spike/field-order`, 8642e91).
+literal, on a trial branch.
 
 `packages/pinna-bench` on Hermes, publish tier, Pinna alone, five
 alternating pairs, median of each pair's ratio (reordered ÷ before):
@@ -2216,12 +2218,11 @@ pinna-core node. The spike makes each the node: one object per
 observable. A node carries what the handle did: the read of its kind,
 Effect's identity keys, and, on a cell, the host's check and what an update
 recorded of it. The label and `onObserved` hooks move to a part made on
-the first of either. On 4fd6ff8, local branch
-`spike/one-object-on-read-row`, 28250a8; not rebased over the first-run
+the first of either. On a trial branch, not rebased over the first-run
 linking above. `bun run check` passes, and 100,000 fuzz seeds match
-4fd6ff8.
+the `main` it branched from.
 
-Bytes allocated per item on Hermes (`hermes-sizes`):
+Bytes allocated per item on Hermes:
 
 | Item | Before | One object |
 | --- | --- | --- |
@@ -2282,14 +2283,68 @@ built app, median of twelve rounds:
   describe the app's load: before the change, load allocated about 890
   bytes a row, less than the 912 that three boxes take in that bench.
 - **Decided: parked until after 1.0.** 1.0 ships at 1.94× on make and
-  dispose. The node layout is weighed after 1.0 (above), starting from this
-  branch and these figures.
+  dispose. The node layout is weighed after 1.0 (above), starting from these
+  figures.
+
+### The graph tables at the publish tier (2026-11-18)
+
+The site's graph tables are remeasured at pinna-bench's publish tier, which
+replaces the rough tier's one launch per cell with five: 2,385 seconds with
+every package clean. Before the run, Safari, the ChatGPT app,
+Monosnap, and the iOS simulator were closed; the load average was 2.6 at
+the start and 4.5 at the end, against 8 to 10 for the rough run of
+2026-11-16. The app table is unchanged, from 2026-11-16.
+
+- **Runtimes:** Node 26.13.1, the Active LTS and the latest release;
+  Hermes 260318099.0.5, the Hermes V1 build React Native 0.88.1 ships and
+  the one already measured (0.88.0 shipped 260318099.0.4; `latest-v1` on
+  npm is 260318099.0.8, which no stable React Native ships yet); Bun
+  1.4.4, `bench:graph`, median of 9 runs.
+- **Libraries:** alien-signals 3.2.1, MobX 7.1.7, Legend State
+  3.0.0-beta.48, the latest of each that the benches already ran.
+
+Pinna's median divided by alien-signals':
+
+| Scenario | Node | Hermes | Bun |
+| --- | --- | --- | --- |
+| deep chain | 1.18 | 1.74 | 1.28 |
+| fan-out | 1.37 | 1.44 | 1.37 |
+| diamond | 1.22 | 1.57 | 1.40 |
+| conditional reads | 1.62 | 1.66 | 1.28 |
+| make and dispose | 2.48 | 1.85 | 1.35 |
+| write 1,000 sources | 1.91 | 1.46 | 1.42 |
+| bursty fan-out | 0.10 | 0.29 | 0.15 |
+| increment ×100k | 1.74 | 1.47 | 1.36 |
+| one write among 10k | 1.36 | 1.49 | 1.33 |
+
+- **alien-signals' increment on Node is bimodal, and the site takes its
+  fast mode.** In the full run its launch medians were 7.80 and 7.91 ms
+  against 10.65 to 10.86 ms in the other three, a median of 10.6 ms. Two
+  reruns of that cell alone for Pinna and alien-signals, at a load average
+  of 1.8 to 2.6, put 8 of 10 launches at 7.81 to 8.33 ms and 2 at 9.92 and
+  10.57 ms, so the slow mode is not the load. Over all 15 launches the
+  median is 7.91 ms; Pinna's is 13.58 ms, with 3 of its 15 launches at
+  15.1 to 15.5 ms. The site's Node increment figures, speed and memory,
+  are the first rerun's: Pinna 13.7 ms, alien-signals 7.87 ms. Why a
+  launch lands in one mode or the other is not investigated.
+- **The five launches' medians agree within 5% on Hermes for every cell
+  of Pinna and alien-signals.** On Node, 16 of those 18 cells agree within
+  9%; the rest are Pinna's conditional reads (11%) and increment (15%).
+- **Against the previous figures, Pinna and alien-signals moved within
+  6% in most cells, and down more often than up**, as the lower load
+  predicts. The exceptions: one write among 10k, down 11 to 14% for both
+  on Hermes and for alien-signals on Node; Pinna's increment on Node, down
+  10%; its conditional reads on Node, up 8%. Legend State moved the most,
+  2 to 18% down.
+- **Bursty fan-out on Node allocates 261 KB for Pinna**, inside the 97 to
+  493 KB range one build read from launch to launch on 2026-11-15.
+- **Raw results:** `packages/pinna-bench/results/` is ignored by git; the
+  site's figures are in `apps/site/src/lib/benchResults.ts`.
 
 ## Spike findings
 
-The spike ran on the local branch `spike/core-without-effect`, at 687c152,
-which was never merged and was deleted on 2026-11-07. Its two benches,
-`bench/spike.ts` and `bench/spike-graph.ts`, went with it; `bench/graph.ts`
+The spike ran on a branch that was never merged and was deleted on
+2026-11-07. Its two benches went with it; `bench/graph.ts`
 and the Hermes benches cover the graph since. Its variants that dropped the
 check or the journal patched instances, not the source.
 

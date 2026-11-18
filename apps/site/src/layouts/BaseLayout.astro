@@ -2,7 +2,10 @@
 import "../styles/design-system.css";
 import { Font } from "astro:assets";
 import { ClientRouter } from "astro:transitions";
+import GoogleAnalytics from "../components/GoogleAnalytics.astro";
 import SiteBackground from "../components/SiteBackground.astro";
+import VercelAnalytics from "../components/VercelAnalytics.astro";
+import { analyticsEnabled } from "../lib/analytics";
 import { palette } from "../lib/palette";
 import {
   createJsonLd,
@@ -79,10 +82,12 @@ const jsonLdSchema = createJsonLd({ title, description, url: canonicalUrl });
     <link rel="manifest" href="/manifest.json" />
     <Font cssVariable="--font-plex-mono" preload={[{ weight: "400" }, { weight: "700" }]} />
     <slot name="head" />
+    <GoogleAnalytics />
     <ClientRouter fallback="swap" />
   </head>
   <body class={bodyClass}>
     <SiteBackground />
+    {analyticsEnabled && <VercelAnalytics />}
     <slot />
   </body>
 </html>

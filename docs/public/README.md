@@ -1,4 +1,4 @@
-# Public docs
+# Public documentation
 
 The pages `apps/site` publishes under `/docs`, one per file, at
 `docs/public/<section>/<name>.md`. `bun run --cwd apps/site sync` copies them

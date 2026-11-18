@@ -35,9 +35,11 @@ calls `update`.
 
 ## Rules
 
-- A box holds plain data: numbers, strings, arrays, and plain objects,
-  `readonly` in the types. A box is written whole, so a finer-grained update
-  is more boxes, or a [collection](./collections.md) of rows by key.
+- A box holds plain data: numbers, strings, arrays, and plain objects. Its
+  type is the value's own, not made `readonly`, so a change in place
+  type-checks and reaches no watcher. A box is written whole, so a
+  finer-grained update is more boxes, or a [collection](./collections.md) of
+  rows by key.
 - A computed value only reads. A write, a `watch`, an `autorun`, an
   `observe`, or a release throws while it computes. Its `equals` is part of
   the compute and never does any of them either.

@@ -73,10 +73,13 @@ and rolls back with the row.
   `pinna: the collection key <key> appears twice`, and nothing is written.
 - A list that renders one row per key reads `keys` and `row(key)`. `rows`
   reruns its reader when any row or the order changes.
-- `keys` is observed while anything reads the collection: `keys`, `rows`, or
-  `row(key)`. A feed that writes the rows only while they are read starts
-  and stops with `keys`, through `onObserved` or, with Effect,
-  `whileObserved`.
+- `keys` is observed while something reads `keys` or `rows`, or reads
+  `row(key)` for a missing key. `row(key)` of a present key tracks that row
+  alone, so a hook on `keys` misses a reader of one row. A feed that writes
+  the rows only while any of them is read hangs on a private atom that every
+  public reader reads ([Live data](../guides/live-data.md)); a feed for a
+  list alone starts and stops with `keys`, through `onObserved` or, with
+  Effect, `whileObserved`.
 - `row(key)` returns the same computed value for a present key on every call;
   for a missing key, only while something observes it.
 - A lookup where nothing tracks reads through `read.row($items, key)`.

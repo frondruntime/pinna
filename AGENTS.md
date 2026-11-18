@@ -41,7 +41,8 @@ Frond and imports nothing from it.
 - `apps/site`: the site, built from `docs/public`, `bun run site`.
 - `apps/desk`: a trading desk built on Pinna.
 - `design/brief.md`: the site's design brief, where it departs from the Frond
-  family's look (the `frond-look` skill) and why.
+  family's look (`frond-look`, the family's house style, which is not
+  published) and why.
 - `apps/rn-bench`: a React Native app that measures Pinna against MobX on
   iOS; `bun run --cwd apps/rn-bench ios`, then `bench`
   (`docs/performance.md`, "A React Native app against MobX").
@@ -76,15 +77,30 @@ Frond and imports nothing from it.
    A node of pinna-core's dependency graph is the graph's own term, not
    Frond's, and stays.
 7. No API is added until a use needs it.
-8. Pinna is for domain state, not per-frame work such as games, drawing, or
-   animation (`README.md`, "What it is for"). Do not weaken a schema box's
-   check or its tracking for speed. Trusted data that is written often takes
-   a plain `box` or `Model`, which checks nothing; per-frame work opts out
-   with plain code and writes once.
+8. Pinna is for domain state, including what a chart or canvas draws each
+   frame; per-entity simulation state, such as particles or physics, stays in
+   plain code and writes what the UI shows once a frame (`README.md`, "What
+   it is for"). Do not weaken a schema box's check or its tracking for speed.
+   Trusted data that is written often takes a plain `box` or `Model`, which
+   checks nothing.
 9. Every code sample shows the imports it uses. A sample is a region of a file
    that `bun run typecheck` compiles; the site prints the region's imports
    above it through `apps/site/src/lib/sampleImports.ts`, so write them once,
    at the top of that file.
-10. Documentation follows the `documentation-voice` skill: the pages under
-    `docs/public` take its reference register, and a page that explains why
-    takes its explanation register.
+10. Documentation is written for an agent that acts on it and a person who
+    reviews the result, so it states exact facts and the reason behind each
+    rule.
+    - No "you", "we", or "I": the subject of a sentence is the thing. An
+      imperative is fine for a rule.
+    - The conclusion comes first, in a paragraph and in a rule.
+    - One term per concept, the same on every page.
+    - Name the call, the error, or the number; a sentence that cannot is cut.
+    - No hedges ("generally", "should usually") and no filler ("simply",
+      "just", "it is worth noting", a sentence announcing the next one).
+    - A rewrite keeps every fact, and a reason it adds is checked against the
+      code first.
+    - The pages under `docs/public` are reference: short and impersonal, and
+      each rule carries its reason or what breaks without it. A page that
+      explains why, such as `docs/design.md`, opens on the claim it defends,
+      names the mechanism, states what the decision cost, and ends on the
+      decision.

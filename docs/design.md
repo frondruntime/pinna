@@ -13,7 +13,7 @@ MobX solves the right problem with too many surfaces: `observable`,
 `when`, `onBecomeObserved`, and mutable proxies whose behavior changes with
 subclassing and field redeclaration. Pinna keeps the semantics people rely on
 (granular reads and updates, getters that cache, watchers, observation-driven
-lifecycles, a React `observer`) and draws hard edges around them: one way to
+lifecycles, React hooks that rerender on what a component read) and draws hard edges around them: one way to
 declare a model, one way to write, and errors instead of silent misuse.
 
 Effect's `Atom` was considered as the base. Its recompute is eager and
@@ -97,7 +97,8 @@ The question is closed unless `Atom` changes on a write.
   marked; a watcher's writes run in the next round. A watcher's error is
   passed to the realm's `onError`, the host's `reportError` by default, and
   the other watchers still run: the write has
-  landed, so `update` never throws for it. Watchers that keep writing are
+  landed, so `update` throws for it only when `onError` itself throws, and
+  then with the writes in place. Watchers that keep writing are
   stopped after 100 rounds, reported the same way. Watchers that the
   realm's `onError` sets writing while it handles that report are stopped
   after 100 rounds too, without a second report. `onObserved` hooks count
@@ -171,8 +172,8 @@ lists the whole surface.
 `packages/pinna/src/observable.ts`, and `packages/pinna-effect/src/box.ts`
 and `src/class.ts`.
 
-- **A box replaces its value.** `set` writes a new value; `update` hands the
-  recipe a draft of the current array or plain object and writes the result.
+- **A box replaces its value.** `write` writes a new value; `write.modify`
+  hands the recipe a draft of the current array or plain object and writes the result.
   The box keeps its identity, the value gets a new one exactly when it
   changed, so a memoized child or the React Compiler sees the change.
   Values are not frozen: freezing makes large arrays slow to build and to
@@ -218,8 +219,8 @@ and `src/class.ts`.
   when its item changed, and a refetch that changed nothing notifies nobody.
   A refetched `SchemaModel` row with equal plain fields is merged: the held
   instance stays and each box takes the refetched value, so only the readers
-  of a changed box rerun. `reconcileSchema` and a `CollectionField`'s
-  `replaceAll` and `upsert` merge; the merge hook is internal, not API.
+  of a changed box rerun. `reconcileSchema` and `write.replaceAll` and
+  `write.upsert` on a `CollectionField` merge; the merge hook is internal, not API.
 - **Keyed collections.** `collection(realm, { keyOf, equals? })`, in
   `packages/pinna/src/collection.ts`, holds its rows in a map, a box for
   each key a reader reads, and one box for the order of the keys, so a write
@@ -273,8 +274,10 @@ everywhere.
 
 ## Atomic updates
 
-An update that throws leaves no trace: every box it wrote gets its old value
-back before the error leaves `update`.
+An update whose recipe throws leaves no trace: every box it wrote gets its old
+value back before the error leaves `update`. The one error that leaves
+`update` with the writes in place is an `onError` that throws while the
+write's watchers run.
 
 - The first write to a box in an update records the box's old value. A
   rollback writes the old values back, newest first.
@@ -299,8 +302,8 @@ back before the error leaves `update`.
 
 A `box` checks nothing. A `schemaBox` or a `BoxField` always holds a
 value that matches its schema: making the box checks the initial
-value, and every write is checked before it is applied, `set` and `update`
-alike, on the schema's type side with `Schema.is`; the message comes from
+value, and every write is checked before it is applied, `write` and
+`write.modify` alike, on the schema's type side with `Schema.is`; the message comes from
 decoding only when a check fails.
 
 - A box of a plain `Schema.Array(X)` checks only the elements a write put in
@@ -589,8 +592,9 @@ Reading the table:
   Batching adds into one `update` is MobX's speed.
 - Toggling one row was 1.5× MobX until graph nodes stopped allocating:
   each recompute made a new dependency array and relinked its sources.
-  Nodes now keep their methods on the prototype, make a second observer's
-  `Set` and their `onObserved` hooks on first use, and reuse a run's
+  Nodes then kept their methods on the prototype (since replaced by plain
+  object literals with no prototype, `graph.ts`), made a second observer's
+  `Set` and their `onObserved` hooks on first use, and reused a run's
   dependency array when it read what the last run read. That took toggle
   from 987 to 463 ms and decoded memory from 25.6 to 17.2 MB.
 - Boxes then stopped making closures: `get` and `peek` are prototype
@@ -681,7 +685,7 @@ and now, with boxes making no closures either:
   as on Bun; one `update` for all adds beats MobX.
 - Decode with Effect Schema is about 6× bare: Effect's price.
 
-`bun run bench` checks the diamond: Pinna computes the join once with no
+`bun run --cwd packages/pinna bench` checks the diamond: Pinna computes the join once with no
 mixed value; Effect's `Atom` computes it twice and shows one glitch.
 
 ### Leads
@@ -700,10 +704,6 @@ trades a check or tracking.
   a field when it builds the decode, so an Effect decode nested inside one
   that provided its own value read the outer one. A realm held this way
   meets the same case.
-- **One check per schema.** `schemaBox` builds its schema's check on every
-  call: 1.7 of the 2.7 ms that 10,000 `schemaBox(realm, Schema.Boolean, ...)`
-  calls take on Bun. A `BoxField` already builds its check once. A cache
-  keyed by schema would drop most of that cost for boxes made in a loop.
 
 Considered and left out, because the cost is in user code or the gain needs
 a non-plain value: writing an array in place when nobody read it since the
@@ -772,7 +772,7 @@ after.
 
 | Kind | States |
 | --- | --- |
-| Cell | unobserved, observed; a version issued by `set`, `touch`, and `restore` (which puts back an earlier one) |
+| Cell | unobserved, observed; a version issued by `writeCell`, `touchSource`, and `restoreCell` (which puts back an earlier one) |
 | Atom | unobserved and volatile (version bumped once per outermost walk), observed and not volatile |
 | Derived | empty, computing, walking, current, stale, volatile, errored; observed or not alongside |
 | Watch | created (linked, empty), live, scheduled, disposed (terminal) |
@@ -794,8 +794,8 @@ that reaches one counts it as changed.
   runs. A compute sets it and only a hook's run clears it, so nothing
   inside a compute writes, observes, or releases, however deep the call:
   a nested `untracked`, a reaction's `track` or `trackPending`, or an
-  `untracked` inside `equals`. `restore` throws there too, as `set` and
-  `touch` do; a rollback never runs inside a compute, since no write there
+  `untracked` inside `equals`. `restoreCell` throws there too, as
+  `writeCell` and `touchSource` do; a rollback never runs inside a compute, since no write there
   is journaled. `active` says only what a read records.
 - `beginBatch` and `endBatch` are public and counted: an `endBatch` with no
   open `beginBatch` throws, so `depth` never goes below 0. The one caller
@@ -836,7 +836,7 @@ surprising to a reader, and a test pins each.
   when the select of the run in progress called it.
 - When `watch()`'s first run throws, the watch is unlinked before the
   settle, so its sources' hooks neither begin nor end.
-- An `endBatch` with no open `beginBatch` throws, and `restore` throws
+- An `endBatch` with no open `beginBatch` throws, and `restoreCell` throws
   inside a compute.
 - `track` leaves a pending run in place: `adopt` follows it even when a
   `track` ran in between, since the pending run is the render the renderer
@@ -893,10 +893,11 @@ and `setImmediate` exist on some hosts and not others, and a server or a
 test has no frame at all (`api.md`, "Planned for 1.x"). Two hooks wait for a use:
 
 - **A `notify` hook in pinna-core**, for a host that embeds the graph and
-  decides when observers run. Propagation queues a reached watcher in one
-  place (`graph.scheduled.push` in `graph.ts`), and `settle` drains that
-  queue in one place; the hook goes at the push. Keep the queue in one
-  place, or adding the hook stops being local.
+  decides when observers run. A reached watcher is appended to the due
+  queue, a list linked through `nextDue` and `graph.dueTail` in `graph.ts`,
+  in two places, `mark` and `runWatch`, and `settle` drains that queue in
+  one place; the hook goes at the appends. Keep them few, or adding the hook
+  stops being local.
 - **A schedule option on the `pinna-react` hooks**, for many components
   that each want at most one render per frame from a source with many
   writers, where neither a buffer at the source nor one read loop fits. It

@@ -1,8 +1,10 @@
 # Pinna design brief
 
-The Pinna site follows the Frond family's look, the `frond-look` skill,
-and departs from it where this file says. Where the two disagree, this file
-wins for Pinna.
+The Pinna site follows the Frond family's look, `frond-look`, a house
+style kept with Frond and not published, and departs from it where this
+file says. Where the two disagree, this file wins for Pinna. Each departure
+below gives Pinna's own value, so this file and the stylesheets describe
+the site without `frond-look`.
 
 Pinna leads. The Frond site takes these changes later, and the parts
 both sites share move into reusable components then.
@@ -47,7 +49,7 @@ that are still literals are listed after the alpha table.
   64rem, 16px under 40rem), `--header-h` 4rem, and `--grid`, the
   background grid's 64px pitch. The docs count space in `--u`, 0.25rem.
 
-A frame, a line, or a fill in the lit color takes one of six alphas:
+A frame, a line, or a fill in the lit color takes one of seven alphas:
 
 | Token | Alpha | Use |
 | --- | --- | --- |
