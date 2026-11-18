@@ -1688,12 +1688,17 @@ const settleHook = (graph: Graph, hooks: Hooks, start: Start, hasObservers: bool
 /**
  * Starts the hooks of a source observed at the settle, ending those removed
  * inside a compute; stops every hook of one no longer observed. One that
- * throws does not stop the rest: the first error is thrown once all have
- * run, and each later one goes to the reporter. An earlier hook that
+ * throws does not stop the rest: every error reaches the settle's reporter,
+ * and only its first failure is kept. An earlier hook that
  * observes or releases the source only makes it due again: the next pass
  * settles what this one did.
  */
-const settleHooksOf = (graph: Graph, node: Node): void => {
+const settleHooksOf = (
+  graph: Graph,
+  node: Node,
+  observing: boolean,
+  owner: Node | undefined,
+): unknown => {
   const hooks = node.hooks as Hooks;
   hooks.due = false;
   const hasObservers = node.observers > 0;
@@ -1704,27 +1709,22 @@ const settleHooksOf = (graph: Graph, node: Node): void => {
       : hooks.begun.length === 0
   ) {
     hooks.endsDue = false;
-    return;
+    return noFailure;
   }
   hooks.endsDue = false;
   const each = hasObservers ? [...hooks.begun, ...hooks.starts] : [...hooks.begun];
-  let failed = false;
-  let firstError: unknown;
+  let firstFailure = noFailure;
   for (let index = 0; index < each.length; index++) {
     try {
       settleHook(graph, hooks, each[index] as Start, hasObservers);
     } catch (error) {
-      if (!failed) {
-        failed = true;
-        firstError = error;
-      } else {
-        graph.reportAside(error);
+      const failure = reportSettling(graph, error, undefined, observing, owner);
+      if (firstFailure === noFailure) {
+        firstFailure = failure;
       }
     }
   }
-  if (failed) {
-    throw firstError;
-  }
+  return firstFailure;
 };
 
 /**
@@ -1819,13 +1819,9 @@ const settleHooksDue = (graph: Graph, observing: boolean, owner: Node | undefine
   let first = noFailure;
   try {
     for (let index = 0; index < due.length; index++) {
-      try {
-        settleHooksOf(graph, due[index] as Node);
-      } catch (error) {
-        const failure = reportSettling(graph, error, undefined, observing, owner);
-        if (first === noFailure) {
-          first = failure;
-        }
+      const failure = settleHooksOf(graph, due[index] as Node, observing, owner);
+      if (first === noFailure) {
+        first = failure;
       }
     }
   } finally {

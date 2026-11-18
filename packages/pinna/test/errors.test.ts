@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Graph, readCell, writeCell } from "@frondruntime/pinna-core";
-import { atom, box, createRealm, untracked, update, watch } from "../src/index.ts";
+import {
+  atom,
+  box,
+  createRealm,
+  observe,
+  onObserved,
+  untracked,
+  update,
+  watch,
+} from "../src/index.ts";
 import { expectRealmAtRest } from "./rest.ts";
 
 /**
@@ -22,6 +31,48 @@ const failGlobal = (): void => {
 };
 
 describe("createRealm({ onError })", () => {
+  for (const cleanup of [false, true]) {
+    for (const failedRecipe of [false, true]) {
+      test(`two failing ${cleanup ? "cleanups" : "starts"} on one source share a ${failedRecipe ? "failed" : "successful"} recipe's error accumulator`, () => {
+        const errors: Array<string> = [];
+        const host: Array<string> = [];
+        globalThis.reportError = (error: unknown) => host.push((error as Error).message);
+        const realm = createRealm({
+          onError: (error) => {
+            const message = (error as Error).message;
+            errors.push(message);
+            throw new Error(`sink ${message}`);
+          },
+        });
+        const source = box(realm, 0);
+        for (const message of ["A", "B"]) {
+          const fail = () => {
+            throw new Error(message);
+          };
+          onObserved(source, cleanup ? () => fail : fail);
+        }
+        let stop: (() => void) | undefined = cleanup ? observe(source) : undefined;
+        let caught: unknown;
+        try {
+          update(realm, () => {
+            if (cleanup) stop?.();
+            else stop = observe(source);
+            if (failedRecipe) throw new Error("recipe failed");
+          });
+        } catch (error) {
+          caught = error;
+        }
+        expect(errors.toSorted()).toEqual(["A", "B"]);
+        expect((caught as Error).message).toBe(
+          failedRecipe ? "recipe failed" : `sink ${errors[0]}`,
+        );
+        expect(host).toEqual(failedRecipe ? [`sink ${errors[0]}`] : []);
+        stop?.();
+        expectRealmAtRest(realm);
+      });
+    }
+  }
+
   test("a watch effect's error goes to the realm's onError, not the global", () => {
     failGlobal();
     const reported: Array<unknown> = [];
