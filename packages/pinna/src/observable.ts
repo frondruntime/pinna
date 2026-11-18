@@ -306,6 +306,8 @@ interface DraftSession {
 interface DraftState {
   readonly base: Record<PropertyKey, unknown>;
   copy: Record<PropertyKey, unknown> | undefined;
+  /** Read children stay here until a write needs the parent copy. */
+  children: Map<PropertyKey, Record<PropertyKey, unknown>> | undefined;
   readonly parent: DraftState | undefined;
   readonly session: DraftSession;
   modified: boolean;
@@ -326,6 +328,12 @@ const ensureCopy = (state: DraftState): Record<PropertyKey, unknown> => {
     state.copy = Array.isArray(state.base)
       ? (state.base.slice() as unknown as Record<PropertyKey, unknown>)
       : { ...state.base };
+    if (state.children !== undefined) {
+      for (const [key, child] of state.children) {
+        state.copy[key] = child;
+      }
+      state.children = undefined;
+    }
   }
   return state.copy;
 };
@@ -349,13 +357,6 @@ const draftStateOf = (value: unknown): DraftState | undefined =>
     ? (value as { [draftKey]?: DraftState })[draftKey]
     : undefined;
 
-/**
- * Whether reading `key` drafts `value`: an element of the base, or one at a
- * key nothing wrote or drafted, which can only hold an element of the base.
- */
-const readsAsDraft = (state: DraftState, key: PropertyKey, value: unknown): boolean =>
-  isDraftable(value) && (value === state.base[key] || !state.touched.has(key));
-
 const indexOfKey = (key: PropertyKey): number | undefined =>
   typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key) ? Number(key) : undefined;
 
@@ -375,7 +376,7 @@ const moveElements = (
   const copy = ensureCopy(state) as unknown as Array<unknown>;
   const removedAsDrafts: Array<boolean> = [];
   for (let index = start; index < start + removed; index++) {
-    removedAsDrafts.push(readsAsDraft(state, String(index), copy[index]));
+    removedAsDrafts.push(isDraftable(copy[index]));
   }
   const out = move(copy);
   const touched = [...state.touched];
@@ -471,9 +472,18 @@ const draftHandler: ProxyHandler<object> = {
       return Reflect.get(source, key);
     }
     const value = source[key];
-    if (readsAsDraft(state, key, value)) {
-      const child = createDraft(value as Record<PropertyKey, unknown>, state, state.session);
-      ensureCopy(state)[key] = child;
+    if (isDraftable(value)) {
+      const cached = state.children?.get(key);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const child = createDraft(value, state, state.session);
+      if (state.copy === undefined) {
+        state.children ??= new Map();
+        state.children.set(key, child);
+      } else {
+        state.copy[key] = child;
+      }
       state.touched.add(key);
       return child;
     }
@@ -543,6 +553,7 @@ const createDraft = (
   const state: DraftState = {
     base,
     copy: undefined,
+    children: undefined,
     parent,
     session,
     modified: false,
