@@ -6,7 +6,7 @@
 
 import type { Equals } from "@frondruntime/pinna";
 import { acceptAll, type Check, type Rejection } from "@frondruntime/pinna/internal";
-import { Schema, SchemaAST } from "effect";
+import { Schema, SchemaAST, SchemaIssue } from "effect";
 
 const wholeCheckOf = (schema: Schema.Top): ((value: unknown) => Rejection | undefined) => {
   const is = Schema.is(schema);
@@ -105,7 +105,10 @@ const buildCheck = (schema: Schema.Top): Check => {
       }
       const problem = checkElement(item);
       if (problem !== undefined) {
-        return { message: `at [${index}]: ${problem.message}`, cause: problem.cause };
+        const cause = Schema.isSchemaError(problem.cause)
+          ? new Schema.SchemaError(new SchemaIssue.Pointer([index], problem.cause.issue))
+          : problem.cause;
+        return { message: `at [${index}]: ${problem.message}`, cause };
       }
     }
     return undefined;
