@@ -97,10 +97,10 @@ const buildCheck = (schema: Schema.Top): Check => {
     for (let index = 0; index < value.length; index++) {
       const item: unknown = value[index];
       const was = index + shift;
-      if (was >= 0 && was < previous.length && item === previous[was]) {
+      if (was >= 0 && was < previous.length && Object.is(item, previous[was])) {
         continue;
       }
-      if (shift !== 0 && index < previous.length && item === previous[index]) {
+      if (shift !== 0 && index < previous.length && Object.is(item, previous[index])) {
         continue;
       }
       const problem = checkElement(item);
