@@ -128,6 +128,29 @@ describe("two graphs", () => {
 });
 
 describe("hooks added while a derived links or unlinks", () => {
+  test("a hook added twice while observed begins once and its cleanup runs once", () => {
+    const graph = new Graph();
+    const cell = graph.cell(1);
+    const stop = graph.watch(() => readCell(cell));
+    let starts = 0;
+    let cleanups = 0;
+    const start = () => {
+      starts++;
+      return () => {
+        cleanups++;
+      };
+    };
+    const first = graph.onObserved(cell, start);
+    const second = graph.onObserved(cell, start);
+    expect(starts).toBe(1);
+    stop();
+    expect(cleanups).toBe(1);
+    first();
+    second();
+    expect([starts, cleanups]).toEqual([1, 1]);
+    expectAtRest(graph);
+  });
+
   test("a hook added to a derived while it links starts once", () => {
     const graph = new Graph();
     const cell = graph.cell(1);

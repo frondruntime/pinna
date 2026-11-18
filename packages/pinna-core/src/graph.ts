@@ -1637,18 +1637,18 @@ const runHook = (graph: Graph, hook: () => void): void => {
  * the placeholder is gone, and the cleanup this run returns runs at once.
  */
 const beginHook = (graph: Graph, hooks: Hooks, start: Start): void => {
-  const placeholder = (): void => {};
-  const index = hooks.begun.indexOf(start);
-  if (index === -1) {
-    hooks.begun.push(start);
-    hooks.cleanups.push(placeholder);
-  } else {
-    hooks.cleanups[index] = placeholder;
+  // A hook added again while begun keeps its one begin: a second would
+  // replace, and so leak, the cleanup of the first.
+  if (hooks.begun.indexOf(start) !== -1) {
+    return;
   }
+  const placeholder = (): void => {};
+  hooks.begun.push(start);
+  hooks.cleanups.push(placeholder);
   runHook(graph, () => {
     const cleanup = start();
-    const at = hooks.begun.indexOf(start);
-    if (at !== -1 && hooks.cleanups[at] === placeholder) {
+    const at = hooks.cleanups.indexOf(placeholder);
+    if (at !== -1) {
       hooks.cleanups[at] = cleanup;
     } else if (cleanup !== undefined) {
       cleanup();
