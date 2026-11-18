@@ -43,6 +43,42 @@ beforeEach(() => {
 });
 
 describe("SchemaModel", () => {
+  for (const first of ["parent", "child"] as const) {
+    test(`decode caches each subclass schema separately after ${first}-first lookup`, () => {
+      class Row extends SchemaModel<Row>("Row")({ $value: BoxField(Schema.Number) }) {}
+      class Child extends Row {
+        child(): boolean {
+          return true;
+        }
+      }
+      const parentRealm = createRealm();
+      const childRealm = createRealm();
+      const makeParent = () => decode(parentRealm, Row)({ value: 1 });
+      const makeChild = () => decode(childRealm, Child)({ value: 2 }) as Child;
+      let parent: Row;
+      let child: Child;
+      if (first === "parent") {
+        parent = makeParent();
+        child = makeChild();
+      } else {
+        child = makeChild();
+        parent = makeParent();
+      }
+      expect(parent.constructor).toBe(Row);
+      expect(parent).not.toBeInstanceOf(Child);
+      expect(child.constructor).toBe(Child);
+      expect(child).toBeInstanceOf(Child);
+      expect(typeof child.child).toBe("function");
+      expect(child.child()).toBe(true);
+      expect(parent.realm).toBe(parentRealm);
+      expect(child.realm).toBe(childRealm);
+      expect(parentRealm).toBe(realmOf(parent.$value));
+      expect(childRealm).toBe(realmOf(child.$value));
+      expect(untracked(parentRealm, (read) => read(parent.$value))).toBe(1);
+      expect(untracked(childRealm, (read) => read(child.$value))).toBe(2);
+    });
+  }
+
   test("a $ field decodes from its wire key into a box and encodes back", () => {
     const realm = createRealm();
     const json = positionsJson(2);

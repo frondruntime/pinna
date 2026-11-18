@@ -373,16 +373,22 @@ export const SchemaModel =
       Object.keys(plainFields).length === 0 ? () => true : equalsOf(Schema.Struct(plainFields));
     const allFields = { ...fields, realm: realmField };
     // The fields' equivalence compares the struct type, and Self extends it.
-    const Base = Schema.Class<Self>(identifier)(Schema.Struct(allFields), {
-      toEquivalence: ownEqualOr as never,
-    });
+    const baseFields = Schema.Struct(allFields);
+    const makeBase = () =>
+      Schema.Class<Self>(identifier)(baseFields, {
+        toEquivalence: ownEqualOr as never,
+      });
+    const Base = makeBase();
     // Replaces Effect's class schema to decode from the wire keys and add the realm; see docs/design.md, known limits.
-    const baseAstGetter = Object.getOwnPropertyDescriptor(Base, "ast")?.get;
-    if (baseAstGetter === undefined) {
-      throw new Error("pinna: Schema.Class no longer exposes its ast as a getter");
-    }
-    const baseAst: (self: object) => Schema.Top["ast"] = (self) => baseAstGetter.call(self);
-    let ast: Schema.Top["ast"] | undefined;
+    const baseAst = (self: object): Schema.Top["ast"] => {
+      // Effect also caches one AST per Schema.Class factory, capturing its first receiver.
+      const getter = Object.getOwnPropertyDescriptor(makeBase(), "ast")?.get;
+      if (getter === undefined) {
+        throw new Error("pinna: Schema.Class no longer exposes its ast as a getter");
+      }
+      return getter.call(self);
+    };
+    const astsByConstructor = new WeakMap<object, Schema.Top["ast"]>();
     const BaseConstructor = Base as unknown as new (
       input: unknown,
       options?: Schema.MakeOptions,
@@ -501,8 +507,10 @@ export const SchemaModel =
         return sealed("makeEffect", makeInstead);
       }
       static get ast(): Schema.Top["ast"] {
+        // biome-ignore lint/complexity/noThisInStatic: `this` is the subclass the application declared.
+        let ast = astsByConstructor.get(this);
         if (ast === undefined) {
-          // biome-ignore lint/complexity/noThisInStatic: `this` is the subclass the application declared, whose ast Effect built.
+          // biome-ignore lint/complexity/noThisInStatic: `this` is the subclass whose schema is being built.
           const base = baseAst(this);
           // Effect's class schema decodes its struct, then builds the instance without checking it again.
           const trusted = base.encoding?.[0]?.transformation;
@@ -525,6 +533,8 @@ export const SchemaModel =
             .pipe(Schema.decodeTo(Schema.Struct(wireFields), noRealm as never))
             .pipe(Schema.decodeTo(wireObject, fromWire as never))
             .pipe(Schema.decodeTo(instance, trusted as never)).ast;
+          // biome-ignore lint/complexity/noThisInStatic: the cache is keyed by the subclass the application declared.
+          astsByConstructor.set(this, ast);
         }
         return ast;
       }
