@@ -1563,6 +1563,11 @@ class ComputedValue<Value> implements Computed<Value> {
   }
 }
 
+/** Maps distinguish every argument with `Object.is`, including signed zero. */
+const negativeZeroArgument: unique symbol = Symbol("pinna.negativeZeroArgument");
+const argumentKey = (value: unknown): unknown =>
+  Object.is(value, -0) ? negativeZeroArgument : value;
+
 /**
  * The observed entries of one `computedFunction`: a map keyed by argument count,
  * then one map per argument, the last holding the entry. An entry goes in when
@@ -1575,7 +1580,7 @@ class ComputedFunctionEntries<Value> {
   find(args: ReadonlyArray<unknown>): ComputedValue<Value> | undefined {
     let level: unknown = this.root.get(args.length);
     for (let index = 0; index < args.length && level !== undefined; index++) {
-      level = (level as Map<unknown, unknown>).get(args[index]);
+      level = (level as Map<unknown, unknown>).get(argumentKey(args[index]));
     }
     return level as ComputedValue<Value> | undefined;
   }
@@ -1594,15 +1599,16 @@ class ComputedFunctionEntries<Value> {
         map.set(key, next);
       }
       map = next;
-      key = args[index];
+      key = argumentKey(args[index]);
     }
     map.set(key, entry);
   }
 
   remove(args: ReadonlyArray<unknown>, entry: ComputedValue<Value>): void {
     const maps: Array<Map<unknown, unknown>> = [this.root];
-    const keys: Array<unknown> = [args.length, ...args];
+    const keys: Array<unknown> = [args.length];
     for (let index = 0; index < args.length; index++) {
+      keys.push(argumentKey(args[index]));
       const next = (maps[index] as Map<unknown, unknown>).get(keys[index]);
       if (next === undefined) {
         return;

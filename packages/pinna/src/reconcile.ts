@@ -41,8 +41,8 @@ export const reconcile = <Item, Key>(
     }
     seen.add(key);
     const kept = byKey.get(key) as Item;
-    const chosen = byKey.has(key) && (kept === item || equals(kept, item)) ? kept : item;
-    if (chosen !== previous[index]) {
+    const chosen = byKey.has(key) && (Object.is(kept, item) || equals(kept, item)) ? kept : item;
+    if (!Object.is(chosen, previous[index])) {
       unchanged = false;
     }
     result.push(chosen);

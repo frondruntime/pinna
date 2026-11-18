@@ -16,6 +16,59 @@ import { keptRead } from "./kept.ts";
  */
 
 describe("computedFunction", () => {
+  test("signed-zero arguments stay distinct while observed and after release", () => {
+    const realm = createRealm();
+    const $reciprocal = computedFunction(realm, (_read, value: number) => 1 / value);
+    const positive = $reciprocal(0);
+    const stopPositive = watch(
+      realm,
+      (read) => read(positive),
+      () => {},
+    );
+    expect(untracked(realm, (read) => read($reciprocal(-0)))).toBe(-Infinity);
+    const negative = $reciprocal(-0);
+    const stopNegative = watch(
+      realm,
+      (read) => read(negative),
+      () => {},
+    );
+    expect($reciprocal(0)).toBe(positive);
+    expect($reciprocal(-0)).toBe(negative);
+    stopNegative();
+    expect($reciprocal(-0)).not.toBe(negative);
+    expect($reciprocal(0)).toBe(positive);
+    stopPositive();
+    expect($reciprocal(0)).not.toBe(positive);
+    expect(untracked(realm, (read) => read($reciprocal(-0)))).toBe(-Infinity);
+  });
+
+  test("signed zero is distinct in each argument position and NaN keeps its entry", () => {
+    const realm = createRealm();
+    const $sum = computedFunction(
+      realm,
+      (_read, first: number, second: number) => 1 / first + second,
+    );
+    const positive = $sum(1, 0);
+    const negative = $sum(1, -0);
+    const nan = $sum(NaN, NaN);
+    const stops = [positive, negative, nan].map((entry) =>
+      watch(
+        realm,
+        (read) => read(entry),
+        () => {},
+      ),
+    );
+    expect($sum(1, 0)).toBe(positive);
+    expect($sum(1, -0)).toBe(negative);
+    expect($sum(NaN, NaN)).toBe(nan);
+    for (const stop of stops) {
+      stop();
+    }
+    expect($sum(1, 0)).not.toBe(positive);
+    expect($sum(1, -0)).not.toBe(negative);
+    expect($sum(NaN, NaN)).not.toBe(nan);
+  });
+
   test("a call returns a computed value of the arguments", () => {
     const realm = createRealm();
     const $rate = box(realm, 2);

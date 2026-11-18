@@ -15,6 +15,16 @@ const keyOf = (row: Row): string => row.id;
 const equals = (previous: Row, next: Row): boolean => previous.price === next.price;
 
 describe("reconcile", () => {
+  test("identity shortcuts distinguish signed zero and preserve NaN", () => {
+    const options = { keyOf: () => 1, equals: Object.is };
+    const previous = [0];
+    const result = reconcile(previous, [-0], options);
+    expect(Object.is(result[0], -0)).toBe(true);
+    expect(result).not.toBe(previous);
+    const held = [NaN];
+    expect(reconcile(held, [NaN], options)).toBe(held);
+  });
+
   test("keeps the previous instance where the key matches and equals holds", () => {
     const a = { id: "a", price: 1 };
     const b = { id: "b", price: 2 };
