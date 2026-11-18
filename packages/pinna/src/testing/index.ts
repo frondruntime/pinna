@@ -104,11 +104,14 @@ export const testRealm = (options?: RealmOptions): Realm & Disposable => {
   };
   // The test realm's own graph counts its watches; every other graph keeps
   // the class's `watch`, so the count costs an application nothing.
-  core.watch = ((select, effect, watchOptions) =>
-    count(
-      watchOptions?.label ?? "watch",
-      watchInCore(select, effect, watchOptions),
-    )) as Graph["watch"];
+  core.watch = ((select, effect, watchOptions) => {
+    const stop = watchInCore(select, effect, watchOptions);
+    // Autorun registers its complete stop function, which also runs cleanup.
+    // A watch named "autorun" still has an effect and is counted here.
+    return effect === undefined && watchOptions?.label === "autorun"
+      ? stop
+      : count(watchOptions?.label ?? "watch", stop);
+  }) as Graph["watch"];
   (realm as ObservableRealm).running = count;
   return withDispose(realm, () => {
     const problems = [...running].map((entry) => `${entry.label} still running`);

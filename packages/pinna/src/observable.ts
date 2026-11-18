@@ -1315,7 +1315,7 @@ export const autorun = (
     clean();
     throw error;
   }
-  return stop;
+  return owner.running?.("autorun", stop) ?? stop;
 };
 
 /**
