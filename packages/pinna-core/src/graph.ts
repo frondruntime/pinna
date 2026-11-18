@@ -99,7 +99,7 @@ interface Edge {
   linked: boolean;
 }
 
-/** Membership through `through` in a wide run that added dependencies. */
+/** Membership through `through` in a wide run with nested reads. */
 interface ReadIndex {
   readonly sources: Set<Node>;
   through: Edge;
@@ -221,7 +221,7 @@ export interface Node {
   computing: boolean;
   /** A run that added an edge, so the run end reconciles. */
   added: boolean;
-  /** Allocated only for a wide, changed run's nested-read membership checks. */
+  /** Allocated only for a wide run's nested-read membership checks. */
   readIndex: ReadIndex | undefined;
 
   effect: ((value: unknown, previous: unknown) => void) | undefined;
@@ -585,7 +585,7 @@ const cold = {
     const cursor = observer.cursor;
     const next = cursor === undefined ? observer.dependenciesHead : cursor.nextDependency;
     // Before an insertion, every dependency occurs once: the next edge
-    // cannot be in the prefix. Stable runs need neither a scan nor an index.
+    // cannot be in the prefix. A matching next edge needs no membership check.
     if (!observer.added && next !== undefined && next.source === source) {
       next.version = source.version;
       observer.cursor = next;
@@ -603,7 +603,7 @@ const cold = {
   },
 };
 
-/** Indexes only wide prefixes of runs that already added an edge. */
+/** Indexes wide prefixes only after a nested read needs a long membership scan. */
 const readBeforeIndexed = (observer: Node, source: Node, cursor: Edge | undefined): boolean => {
   if (cursor === undefined) return false;
   let index = observer.readIndex;
@@ -612,7 +612,7 @@ const readBeforeIndexed = (observer: Node, source: Node, cursor: Edge | undefine
     for (let edge = observer.dependenciesHead; edge !== undefined; edge = edge.nextDependency) {
       if (edge.source === source) return true;
       if (edge === cursor) return false;
-      if (++scanned === 32 && observer.added) {
+      if (++scanned === 32) {
         index = { sources: new Set(), through: edge };
         observer.readIndex = index;
         for (let prefix = observer.dependenciesHead; prefix !== edge; ) {
@@ -942,8 +942,8 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
       const stale = last === undefined ? node.dependenciesHead : last.nextDependency;
       if (stale === undefined) {
         node.cursor = undefined;
+        node.readIndex = undefined;
         if (node.added) {
-          node.readIndex = undefined;
           // `reconcile` with nothing stale: link each new edge when observed.
           // A first compute is unobserved and links nothing.
           node.added = false;
@@ -1534,8 +1534,8 @@ const runWatch = (graph: Graph, watch: Node): void => {
       const stale = last === undefined ? watch.dependenciesHead : last.nextDependency;
       if (stale === undefined) {
         watch.cursor = undefined;
+        watch.readIndex = undefined;
         if (watch.added) {
-          watch.readIndex = undefined;
           // `reconcile` with nothing stale: a first run links every edge here.
           watch.added = false;
           if (watch.linked) {

@@ -126,7 +126,11 @@ How the core runs:
 - A run reuses the edge at its cursor when it reads what it read last time,
   and reads it already made are skipped by a run stamp. When the run ends,
   the edges past the cursor are cut, and any links that changed are settled.
-  A run that reads what it read before allocates nothing.
+  A run that reads what it read before allocates nothing unless a nested
+  read needs a wide membership check. After scanning 32 edges for such a
+  check, the run builds a membership index, even when it added no edge;
+  repeated nested reads then take linear work over the run. Every run exit
+  clears the index.
 - A write bumps the source's version and the graph's clock, then marks
   observers with a loop over a reused stack. A read whose node was checked at
   the current clock returns at once. Otherwise it walks down to the first
