@@ -47,6 +47,23 @@ class Rows extends SchemaModel<Rows>("Rows")({
 }) {}
 
 describe("box with a schema", () => {
+  for (const [name, initial, next] of [
+    ["same position", [0, 1], [-0, 2]],
+    ["shifted position", [1, 0, 2], [-0, 2, 3]],
+    ["unshifted fallback", [1, 0, 2], [0, -0, 3]],
+  ] as const) {
+    test(`incremental array validation rejects negative zero at the ${name}`, () => {
+      const schema = Schema.Array(
+        Schema.Number.check(Schema.makeFilter((value) => !Object.is(value, -0) || "negative zero")),
+      );
+      const $values = schemaBox(realm, schema, initial);
+      expect(() => update(realm, (_read, write) => write($values, next))).toThrow("negative zero");
+      expect(untracked(realm, (read) => read($values))).toBe(initial);
+      expect(Schema.is(schema)(untracked(realm, (read) => read($values)))).toBe(true);
+      expectRealmAtRest(realm);
+    });
+  }
+
   test("a value the schema rejects throws and rolls the update back", () => {
     const $count = schemaBox(realm, Schema.Number, 1);
     const $name = schemaBox(realm, Schema.String, "a");
