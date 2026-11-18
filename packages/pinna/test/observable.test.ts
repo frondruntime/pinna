@@ -560,6 +560,63 @@ describe("plain values", () => {
 });
 
 describe("write.modify", () => {
+  test("an assigned child from another box stays isolated through rollback and commit", () => {
+    const original = { name: "old" };
+    const before = { row: { name: "b" }, rows: [] as ReadonlyArray<{ name: string }> };
+    const $source = box(realm, original);
+    const $target = box(realm, before);
+    let notifications = 0;
+    const stop = watch(
+      realm,
+      (read) => read($source).name,
+      () => {
+        notifications++;
+      },
+    );
+    const abort = new Error("rollback");
+    const modify = (): void =>
+      update(realm, (read, write) => {
+        write.modify($target, (draft) => {
+          draft.row = read($source);
+          draft.row.name = "new";
+          draft.rows = [read($source)];
+          draft.rows.push({ name: "added" });
+        });
+      });
+    expect(() =>
+      update(realm, () => {
+        modify();
+        throw abort;
+      }),
+    ).toThrow(abort);
+    expect(original.name).toBe("old");
+    expect(untracked(realm, (read) => read($source))).toBe(original);
+    expect(untracked(realm, (read) => read($target))).toBe(before);
+    expect(before.row.name).toBe("b");
+    expect(notifications).toBe(0);
+    modify();
+    const after = untracked(realm, (read) => read($target));
+    expect(original.name).toBe("old");
+    expect(after.row).toEqual({ name: "new" });
+    expect(after.row).not.toBe(original);
+    expect(after.rows).toEqual([original, { name: "added" }]);
+    expect(notifications).toBe(0);
+    stop();
+  });
+
+  test("an assigned child only read in a draft keeps its supplied identity", () => {
+    const supplied = { name: "supplied" };
+    const $target = box(realm, { row: { name: "before" } });
+    update(realm, (_read, write) => {
+      write.modify($target, (draft) => {
+        draft.row = supplied;
+        expect(draft.row.name).toBe("supplied");
+        expect(draft.row).toBe(draft.row);
+      });
+    });
+    expect(untracked(realm, (read) => read($target).row)).toBe(supplied);
+  });
+
   test("writes through a draft; unchanged items keep their identity", () => {
     const $todos = box<ReadonlyArray<Todo>>(realm, [
       { title: "a", done: false },
@@ -631,6 +688,61 @@ describe("write.modify", () => {
       });
     });
     expect(untracked(realm, (read) => read($todos))).toEqual([{ title: "a", done: true }]);
+  });
+
+  test("a no-op child read has constant indexed reads at 1000 and 10000 rows", () => {
+    const indexedReads = [1000, 10000].map((length) => {
+      let reads = 0;
+      const original = new Proxy(
+        Array.from({ length }, (_, id) => ({ id })),
+        {
+          get(target, key, receiver) {
+            if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
+              reads++;
+            }
+            return Reflect.get(target, key, receiver);
+          },
+        },
+      );
+      const $rows = box(realm, original);
+      update(realm, (_read, write) => {
+        write.modify($rows, (rows) => {
+          expect(rows[0]?.id).toBe(0);
+          expect(rows[0]).toBe(rows[0]);
+        });
+      });
+      expect(untracked(realm, (read) => read($rows))).toBe(original);
+      return reads;
+    });
+    expect(indexedReads[0]).toBeLessThanOrEqual(4);
+    expect(indexedReads[1]).toBe(indexedReads[0]);
+  });
+
+  test("cached child drafts follow shift, unshift, and splice before their first write", () => {
+    const original = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    const $rows = box(realm, original);
+    update(realm, (_read, write) => {
+      write.modify($rows, (rows) => {
+        const second = rows[1];
+        rows.shift();
+        expect(rows[0]).toBe(second);
+        rows.unshift({ id: 4 });
+        expect(rows[1]).toBe(second);
+        rows.splice(0, 1, { id: 5 }, { id: 6 });
+        expect(rows[2]).toBe(second);
+        if (second !== undefined) {
+          second.id = 20;
+        }
+      });
+    });
+    expect(untracked(realm, (read) => read($rows))).toEqual([
+      { id: 5 },
+      { id: 6 },
+      { id: 20 },
+      { id: 3 },
+    ]);
+    expect(original).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    expect(untracked(realm, (read) => read($rows)[3])).toBe(original[2]);
   });
 
   test("items moved by sort, splice, and shift leave no draft behind", () => {
