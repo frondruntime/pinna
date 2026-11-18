@@ -59,7 +59,8 @@ export const reconcileSchema = <Item, Key>(
     equals: (held, fresh) => {
       const writes = planMerge(held, fresh);
       if (writes === false) {
-        return sameValue(held, fresh);
+        // A model that cannot merge requires replacement, even if its own Equal agrees.
+        return realmOfMergeable(held) === undefined && sameValue(held, fresh);
       }
       if (writes !== undefined) {
         const realm = realmOfMergeable(held) as ObservableRealm;
