@@ -98,7 +98,9 @@ and rolls back with the row.
   that keeps a row reports nothing.
 - A listener first hears each row the collection holds, in key order, as
   added, so what it keeps starts in step with the rows. A throw there adds
-  no listener and reaches the caller of `onRowChange`.
+  no listener and reaches the caller of `onRowChange`. If settling watchers
+  throws after replay commits, the listener is removed and the replay's
+  writes stay committed: the caller received no function to remove it.
 - A listener writes other boxes and collections. A write to the collection
   it listens to throws, and so does a listener that returns a value: it
   is synchronous. A listener that throws fails the write, which is put back.
