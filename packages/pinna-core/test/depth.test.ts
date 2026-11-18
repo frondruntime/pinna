@@ -7,6 +7,7 @@ import {
   readDerived,
   writeCell,
 } from "../src/graph.ts";
+import { expectAtRest } from "./rest.ts";
 
 /**
  * How long a chain the graph walks with no recursion of its own. Bun's stack
@@ -87,6 +88,70 @@ const unread = (graph: Graph, length: number, counted?: { computes: number }) =>
 };
 
 describe("a deep chain read first from the top", () => {
+  test("a cached cycle longer than the depth limit throws and recovers", () => {
+    const graph = new Graph();
+    const closes = graph.cell(false);
+    const length = 1000;
+    const values: Array<DerivedNode<number>> = [];
+    for (let index = 0; index < length; index++) {
+      values.push(
+        graph.derived(() => {
+          const closing = readCell(closes);
+          if (index === length - 1 && !closing) return 0;
+          return readDerived(values[(index + 1) % length] as DerivedNode<number>);
+        }),
+      );
+    }
+    const top = values[0] as DerivedNode<number>;
+    expect(readDerived(top)).toBe(0);
+    writeCell(closes, true);
+    expect(() => readDerived(top)).toThrow("cycle");
+    expectAtRest(graph);
+    writeCell(closes, false);
+    expect(readDerived(top)).toBe(0);
+    expectAtRest(graph);
+  });
+
+  for (const length of [15_000, 30_000]) {
+    test(`refreshes ${length} cached levels that read a changed shared source first`, () => {
+      const graph = new Graph();
+      const shared = graph.cell(0);
+      let top = graph.derived(() => 0);
+      for (let index = 0; index < length; index++) {
+        const previous = top;
+        top = graph.derived(() => readCell(shared) + readDerived(previous));
+      }
+      expect(readDerived(top)).toBe(0);
+      writeCell(shared, 1);
+      expect(readDerived(top)).toBe(length);
+      writeCell(shared, 2);
+      expect(readDerived(top)).toBe(2 * length);
+      expectAtRest(graph);
+    });
+  }
+
+  test("a refresh leaves a stale branch unread when the new compute drops it", () => {
+    const graph = new Graph();
+    const shared = graph.cell(0);
+    let bottomRuns = 0;
+    let top = graph.derived(() => {
+      bottomRuns++;
+      return readCell(shared);
+    });
+    for (let index = 0; index < 1000; index++) {
+      const previous = top;
+      top = graph.derived(() => {
+        const current = readCell(shared);
+        return current === 0 ? readDerived(previous) : current;
+      });
+    }
+    expect(readDerived(top)).toBe(0);
+    expect(bottomRuns).toBe(1);
+    writeCell(shared, 1);
+    expect(readDerived(top)).toBe(1);
+    expect(bottomRuns).toBe(1);
+  });
+
   test("computes, and reads a write to the bottom", () => {
     const graph = new Graph();
     const { base, top } = unread(graph, depth);

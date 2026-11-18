@@ -56,21 +56,21 @@ const ERROR = 2;
 const maximumSettleRounds = 100;
 
 /**
- * How many first computes nest before the next one waits. A chain of values
- * no one has read computes through user code, one call stack frame set per
- * value: past this depth the read throws `suspension`, the outermost first
- * compute brings the value it stopped at current from its own shallow stack,
- * and computes again. Well under the depth a stack holds: about 1,000 on
+ * How many stale reads nest before the next one waits. A chain of first
+ * computes or refreshes can recurse through user code, one call stack frame
+ * set per value: past this depth the read throws `suspension`, the outermost
+ * read brings the value it stopped at current from its own shallow stack,
+ * then retries. Well under the depth a stack holds: about 1,000 on
  * Node and 1,100 on Hermes, less what the caller is already inside of.
  */
-const maximumFirstDepth = 256;
+const maximumComputeDepth = 256;
 
 /**
- * Thrown by a first read past `maximumFirstDepth`, and through every compute
+ * Thrown by a stale read past `maximumComputeDepth`, and through every compute
  * above it: each keeps no value, as for a cycle handed on, even one whose
  * compute catches it. Never reaches code outside a compute.
  */
-const suspension = new Error("pinna: a first compute past the depth limit waits (internal)");
+const suspension = new Error("pinna: a compute past the depth limit waits (internal)");
 
 class CycleError extends Error {
   constructor(readonly origin: Node) {
@@ -1182,12 +1182,12 @@ const refreshAll = (graph: Graph, node: Node): boolean => {
 };
 
 /**
- * The outermost first compute: computes `node`, and each value a compute
- * inside it stopped at past `maximumFirstDepth`, deepest first, each from
+ * The outermost stale read: refreshes `node`, and each value a compute
+ * inside it stopped at past `maximumComputeDepth`, deepest first, each from
  * this stack. A value that waits counts as computing, so a cycle longer than
  * the limit still meets itself: the value it closes on keeps the error.
  */
-const computeFirst = (graph: Graph, node: Node): void => {
+const computeBounded = (graph: Graph, node: Node): void => {
   let target = node;
   let waiting: Array<Node> | undefined;
   // One walk for every retry: what a retry finds stamped this walk, such as
@@ -1197,9 +1197,13 @@ const computeFirst = (graph: Graph, node: Node): void => {
   }
   try {
     for (;;) {
-      graph.firstDepth = 1;
+      graph.computeDepth = 1;
       try {
-        recompute(graph, target, undefined);
+        if (target.status === EMPTY) {
+          recompute(graph, target, undefined);
+        } else {
+          refresh(graph, target);
+        }
       } catch (error) {
         if (
           waiting !== undefined &&
@@ -1215,7 +1219,7 @@ const computeFirst = (graph: Graph, node: Node): void => {
           throw error;
         }
       } finally {
-        graph.firstDepth = 0;
+        graph.computeDepth = 0;
       }
       const stopped = graph.suspended;
       graph.suspended = undefined;
@@ -1258,29 +1262,38 @@ const refreshForRead = (graph: Graph, node: Node): void => {
     }
     let failed = true;
     try {
-      if (node.status !== EMPTY) {
-        refresh(graph, node);
-      } else if (node.computing) {
+      if (node.computing || node.cursor !== undefined) {
         throw meetCycle(graph, node);
-      } else if (graph.firstDepth === 0) {
-        computeFirst(graph, node);
+      } else if (
+        node.status !== EMPTY &&
+        graph.computeDepth === 0 &&
+        graph.deriving === undefined
+      ) {
+        // A cached outer read keeps the iterative path. Only a stale read
+        // reached through a compute needs the bounded retry driver.
+        refresh(graph, node);
+      } else if (graph.computeDepth === 0) {
+        computeBounded(graph, node);
       } else {
-        // A first compute inside another. The shortest path, since a chain
-        // of first computes recurses through user code: as few frames per
-        // level as possible.
-        if (graph.firstDepth === maximumFirstDepth) {
+        // Only reads reached through user code nest. The iterative freshness
+        // walk stays lazy: a changed earlier source may drop a later branch.
+        if (graph.computeDepth === maximumComputeDepth) {
           graph.suspended = node;
           throw suspension;
         }
-        graph.firstDepth++;
+        graph.computeDepth++;
         if (graph.walkDepth++ === 0) {
           graph.walk++;
         }
         try {
-          recompute(graph, node, undefined);
+          if (node.status === EMPTY) {
+            recompute(graph, node, undefined);
+          } else {
+            refresh(graph, node);
+          }
         } finally {
           graph.walkDepth--;
-          graph.firstDepth--;
+          graph.computeDepth--;
         }
       }
       failed = false;
@@ -2393,9 +2406,9 @@ export class Graph {
   deriving: Node | undefined = undefined;
   /** Batches, scopes, and the settle: while above zero, nothing settles. */
   depth = 0;
-  /** First computes nested in one another: `maximumFirstDepth`. */
-  firstDepth = 0;
-  /** The value a first compute stopped at past `maximumFirstDepth`, until the outermost computes it. */
+  /** Stale reads nested through user code: `maximumComputeDepth`. */
+  computeDepth = 0;
+  /** The value a compute stopped at past `maximumComputeDepth`, until the outermost reads it. */
   suspended: Node | undefined = undefined;
   /**
    * A computed value marked at or before this clock is walked again by the
