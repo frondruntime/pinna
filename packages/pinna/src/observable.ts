@@ -310,6 +310,8 @@ interface DraftState {
   children: Map<PropertyKey, Record<PropertyKey, unknown>> | undefined;
   readonly parent: DraftState | undefined;
   readonly session: DraftSession;
+  /** Assigned containers can hold drafts even at keys never read or written. */
+  readonly supplied: boolean;
   modified: boolean;
   /** Keys written or drafted in the copy; only these can differ from the base. */
   readonly touched: Set<PropertyKey>;
@@ -374,9 +376,15 @@ const moveElements = (
   move: (copy: Array<unknown>) => Array<unknown>,
 ): Array<unknown> => {
   const copy = ensureCopy(state) as unknown as Array<unknown>;
-  const removedAsDrafts: Array<boolean> = [];
+  const removedOrigins: Array<"base" | "supplied" | undefined> = [];
   for (let index = start; index < start + removed; index++) {
-    removedAsDrafts.push(isDraftable(copy[index]));
+    removedOrigins.push(
+      isDraftable(copy[index])
+        ? state.supplied || state.touched.has(String(index))
+          ? "supplied"
+          : "base"
+        : undefined,
+    );
   }
   const out = move(copy);
   const touched = [...state.touched];
@@ -396,8 +404,13 @@ const moveElements = (
     markModified(state);
   }
   return out.map((value, index) =>
-    removedAsDrafts[index] === true
-      ? createDraft(value as Record<PropertyKey, unknown>, state, state.session)
+    removedOrigins[index] !== undefined
+      ? createDraft(
+          value as Record<PropertyKey, unknown>,
+          state,
+          state.session,
+          removedOrigins[index] === "supplied",
+        )
       : value,
   );
 };
@@ -477,7 +490,12 @@ const draftHandler: ProxyHandler<object> = {
       if (cached !== undefined) {
         return cached;
       }
-      const child = createDraft(value, state, state.session);
+      const child = createDraft(
+        value,
+        state,
+        state.session,
+        state.supplied || state.touched.has(key),
+      );
       if (state.copy === undefined) {
         state.children ??= new Map();
         state.children.set(key, child);
@@ -549,6 +567,7 @@ const createDraft = (
   base: Record<PropertyKey, unknown>,
   parent: DraftState | undefined,
   session: DraftSession,
+  supplied = false,
 ): Record<PropertyKey, unknown> => {
   const state: DraftState = {
     base,
@@ -556,6 +575,7 @@ const createDraft = (
     children: undefined,
     parent,
     session,
+    supplied,
     modified: false,
     touched: new Set(),
   };
@@ -574,6 +594,7 @@ interface FinalizedValue {
  * Replaces drafts with their values, inside supplied arrays and objects too.
  * Draft outputs are recorded before descending, so a back-reference resolves
  * to the output. Supplied containers copy only when a child needs replacing.
+ * Drafts over supplied containers walk every child; base drafts walk touched keys.
  */
 const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unknown => {
   if (typeof value !== "object" || value === null) {
@@ -584,7 +605,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     return previous.value;
   }
   const state = (value as { [draftKey]?: DraftState })[draftKey];
-  if (state !== undefined) {
+  if (state !== undefined && !state.supplied) {
     if (!state.modified) {
       return state.base;
     }
@@ -604,15 +625,22 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     }
     return copy;
   }
-  if (Array.isArray(value) || isPlainObject(value)) {
-    const object = value as Record<PropertyKey, unknown>;
+  const source = state === undefined ? value : state.modified ? ensureCopy(state) : state.base;
+  if (Array.isArray(source) || isPlainObject(source)) {
+    const object = source as Record<PropertyKey, unknown>;
+    const existing = visited.get(object);
+    if (existing !== undefined) {
+      visited.set(value, existing);
+      return existing.value;
+    }
     const entry: FinalizedValue = { value: object, onCopy: [] };
     visited.set(value, entry);
+    visited.set(object, entry);
     const replace = (key: PropertyKey, child: unknown): void => {
       if (Object.is(entry.value[key], child)) {
         return;
       }
-      if (entry.value === object) {
+      if (entry.value === object && state?.modified !== true) {
         entry.value = Array.isArray(object)
           ? (object.slice() as unknown as Record<PropertyKey, unknown>)
           : { ...object };
