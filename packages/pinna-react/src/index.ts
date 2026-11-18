@@ -325,15 +325,18 @@ export function useValues<const Observables extends ReadonlyArray<Computed<unkno
   const store = useRef<SourceStore<ReadonlyArray<unknown>> | null>(null);
   let current = store.current;
   if (!follows(current, observables)) {
+    // Own the list so a caller's mutation cannot change what this store reads
+    // while its subscription still follows the previous observables.
+    const sources = observables.slice();
     let values: ReadonlyArray<unknown> = [];
     current = new SourceStore(
-      observables,
+      sources,
       // Every value is read; a new array starts only at the first that differs
       // (`Object.is`), so a read where nothing changed allocates nothing.
       () => {
         let next: Array<unknown> | undefined;
-        for (let index = 0; index < observables.length; index++) {
-          const value = peek(observables[index] as Computed<unknown>);
+        for (let index = 0; index < sources.length; index++) {
+          const value = peek(sources[index] as Computed<unknown>);
           if (next === undefined) {
             if (index < values.length && Object.is(values[index], value)) {
               continue;
@@ -348,8 +351,8 @@ export function useValues<const Observables extends ReadonlyArray<Computed<unkno
         return values;
       },
       (read) => {
-        for (let index = 0; index < observables.length; index++) {
-          read(observables[index] as Computed<unknown>);
+        for (let index = 0; index < sources.length; index++) {
+          read(sources[index] as Computed<unknown>);
         }
       },
     );

@@ -45,6 +45,10 @@ observables they are handed.
   hooks are the only way in.
 - Prefer `useValue` and `useValues`. `useSelect` costs a layout effect per
   render; a value several components need is a computed value on the model.
+- `useValues` compares the input array's elements on each render and keeps
+  its own copy when they change. Replacing or removing an observable in the
+  same input array takes effect on the next render, so reads and the
+  subscription follow the same observables.
 - To rerender less, move the read into a small component under `memo`. For
   control flow, use plain JSX. `memo` skips a render only when every prop
   is the same as before, so the parent passes values it does not rebuild
