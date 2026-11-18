@@ -148,7 +148,8 @@ const runWhileObserved = <Requirements>(
   context: Context.Context<Exclude<Requirements, Scope.Scope>>,
   died: string,
 ): Effect.Effect<void, never, Scope.Scope> => {
-  let running: Fiber.Fiber<void> | undefined;
+  // An interrupted run still owns its resources until its finalizers finish.
+  const running = new Set<Fiber.Fiber<void>>();
   return Effect.acquireRelease(
     Effect.sync(() =>
       onObserved(observable, () => {
@@ -158,9 +159,9 @@ const runWhileObserved = <Requirements>(
             Effect.catchDefect((defect) => Effect.logError(died, Cause.die(defect))),
           ),
         );
-        running = fiber;
+        running.add(fiber);
+        fiber.addObserver(() => running.delete(fiber));
         return () => {
-          running = undefined;
           try {
             stop();
           } finally {
@@ -171,10 +172,9 @@ const runWhileObserved = <Requirements>(
     ),
     (remove) =>
       Effect.suspend(() => {
-        const fiber = running;
         // Ends the hook, which stops a running program.
         remove();
-        return fiber === undefined ? Effect.void : Effect.asVoid(Fiber.await(fiber));
+        return Effect.asVoid(Fiber.awaitAll(running));
       }),
   ).pipe(Effect.asVoid);
 };

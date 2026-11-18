@@ -67,6 +67,70 @@ const settle = Effect.sleep("5 millis");
 const run = <A>(program: Effect.Effect<A, never, RealmService>, realm = createRealm()) =>
   Effect.runPromise(program.pipe(Effect.provideService(RealmService, realm)));
 
+for (const kind of ["whileObserved", "fromStream"] as const) {
+  for (const restart of [false, true]) {
+    test(`${kind} scope closure awaits released runs${restart ? " while a new run is active" : ""}`, async () => {
+      const realm = createRealm();
+      let runs = 0;
+      let finished = 0;
+      await run(
+        Effect.gen(function* () {
+          const scope = yield* Scope.make();
+          const started = yield* Deferred.make<void>();
+          const restarted = yield* Deferred.make<void>();
+          const cleaning = yield* Deferred.make<void>();
+          const finish = yield* Deferred.make<void>();
+          const program = Effect.gen(function* () {
+            const current = ++runs;
+            yield* Effect.acquireRelease(
+              Deferred.succeed(current === 1 ? started : restarted, undefined),
+              () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(cleaning, undefined);
+                  if (current === 1) {
+                    yield* Deferred.await(finish);
+                  }
+                  finished++;
+                }),
+            );
+            yield* Effect.never;
+          });
+          const observable =
+            kind === "fromStream"
+              ? yield* Scope.provide(scope)(fromStream(Stream.fromEffect(program), undefined))
+              : box(realm, 0);
+          if (kind === "whileObserved") {
+            yield* Scope.provide(scope)(whileObserved(observable, program));
+          }
+          const release = observe(observable);
+          yield* Deferred.await(started);
+          release();
+          yield* Deferred.await(cleaning);
+          const releaseAgain = restart ? observe(observable) : () => undefined;
+          if (restart) {
+            yield* Deferred.await(restarted);
+          }
+          const closer = yield* Effect.forkChild(Scope.close(scope, Exit.void));
+          yield* settle;
+          const pending = closer.pollUnsafe() === undefined;
+          const finishedBeforeRelease = finished;
+          yield* Deferred.succeed(finish, undefined);
+          yield* Fiber.join(closer);
+          releaseAgain();
+          const afterClose = observe(observable);
+          yield* settle;
+          afterClose();
+          expect(pending).toBe(true);
+          expect(finishedBeforeRelease).toBe(restart ? 1 : 0);
+          expect(runs).toBe(restart ? 2 : 1);
+          expect(finished).toBe(runs);
+        }),
+        realm,
+      );
+    });
+  }
+}
+
 describe("watchScoped", () => {
   test("a synchronous callback throw is logged and future delivery survives until scope closure", async () => {
     const realm = createRealm();
