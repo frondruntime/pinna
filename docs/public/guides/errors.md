@@ -36,7 +36,7 @@ dependency to go further.
   its first run, an `onObserved` hook's or cleanup's, and watchers that never
   settle. The first run of a `watch` or `autorun` throws to the caller, and
   nothing is watched.
-- Name what gets debugged: `{ name }` on a box, a computed value, or an atom.
+- Name what gets debugged: `{ name }` on a box or a computed value.
   A named computed value keeps why it last recomputed, and its errors name
   it. An unnamed one costs nothing for names.
 - Pinna has no development mode. Every check runs in every build.
