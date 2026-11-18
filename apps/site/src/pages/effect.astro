@@ -1,0 +1,202 @@
+---
+import effectPageSample from "../../../playground/src/landing/effectPage.ts?raw";
+import InlineCode from "../components/InlineCode.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import SiteHeader from "../components/SiteHeader.astro";
+import { docsPath } from "../config/sidebar";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { highlightSample } from "../lib/landingSamples";
+import { projectRepositoryUrl } from "../lib/siteMetadata";
+import "../styles/landing.css";
+
+// /effect: Pinna for an application already written on Effect. Its samples are the regions of
+// apps/playground/src/landing/effectPage.ts, which `bun run typecheck` compiles.
+const title = "Pinna for Effect";
+const description =
+  "Pinna for Effect users: models on Effect Schema whose fields are checked boxes, and programs that stop with their scope.";
+
+const sourceUrl = (path: string) => `${projectRepositoryUrl}/tree/main/${path}`;
+
+const modelHtml = await highlightSample(effectPageSample, "model");
+const programsHtml = await highlightSample(effectPageSample, "programs");
+
+// A body marks its identifiers with backticks; the page renders them as `<code>`.
+type Point = { readonly title: string; readonly body: string; readonly test: string };
+
+const modelPoints: ReadonlyArray<Point> = [
+  {
+    title: "A model is a Schema.Class.",
+    body: "`SchemaModel` is an Effect `Schema.Class` whose `$` fields hold state: a `BoxField` is a box, a `CollectionField` holds rows by key. Plain fields stay plain.",
+    test: "packages/pinna-effect/test/class.test.ts",
+  },
+  {
+    title: "Every write is checked.",
+    body: "A write the field's schema refuses throws to the caller, with the `Schema.SchemaError` as its cause, and the whole `update` is undone.",
+    test: "packages/pinna-effect/test/box.test.ts",
+  },
+  {
+    title: "The wire is the schema.",
+    body: "`decode` takes JSON to a model in a realm and throws `Schema.SchemaError` on input that does not fit; `Schema.encodeSync` takes the model back to JSON with the boxes' current values.",
+    test: "packages/pinna-effect/test/mix.test.ts",
+  },
+];
+
+const programPoints: ReadonlyArray<Point> = [
+  {
+    title: "The realm is a service.",
+    body: "`RealmService` carries the realm. `Layer.succeed(RealmService, realm)` provides it to the programs, and a test provides its own realm.",
+    test: "packages/pinna-effect/test/effect.test.ts",
+  },
+  {
+    title: "Programs stop with their scope.",
+    body: "`watchScoped` runs an effect on each change and interrupts the one still running. `changes` streams a value, starting with the current one. `observeScoped` holds a value observed until the scope closes.",
+    test: "packages/pinna-effect/test/effect.test.ts",
+  },
+  {
+    title: "A stream becomes a value.",
+    body: "`fromStream` runs its stream while the value is observed and resets the value to `initial` when the last observer leaves. `whileObserved` runs a program on the same lifetime, to fill a collection only while a list shows it.",
+    test: "packages/pinna-effect/test/effect.test.ts",
+  },
+];
+
+const referenceLinks: ReadonlyArray<{ readonly href: string; readonly text: string }> = [
+  { href: docsPath("effect/boxes"), text: "Schema-checked boxes" },
+  { href: docsPath("effect/classes"), text: "Classes" },
+  { href: docsPath("effect/collections"), text: "Collection fields" },
+  { href: docsPath("effect/equality"), text: "Equality and hashing" },
+  { href: docsPath("effect/programs"), text: "Programs" },
+  { href: `${docsPath("guides/errors")}#with-effect`, text: "Errors with Effect" },
+  { href: docsPath("guides/testing"), text: "Testing" },
+];
+---
+
+<BaseLayout title={title} description={description}>
+  <div class="preview-banner">
+    <span class="preview-banner-label">v0 · Developer Preview</span>
+    <span class="preview-banner-detail">Pinna is under active development. APIs may change between releases.</span>
+  </div>
+  <SiteHeader />
+  <main>
+    <section class="hero effect-hero" aria-labelledby="hero-title">
+      <div class="hero-content">
+        <h1 id="hero-title" class="hero-title">
+          <span class="hero-line">Pinna for</span>
+          <span class="hero-line"><span class="lede-c-effect">Effect</span>.</span>
+        </h1>
+
+        <p class="lede">
+          <code>@frondruntime/pinna-effect</code> puts synchronous domain state on Effect Schema: a
+          model is a <code>Schema.Class</code> whose fields are boxes that check every write, and
+          programs that react to it stop with their scope. It exports every name of{" "}
+          <code>@frondruntime/pinna</code>, so an application imports from one package.
+        </p>
+
+        <div class="code-block code-block-effect effect-install">
+          <div class="code-bar"><span>install; effect 4.1 or a later 4.x is a peer dependency</span></div>
+          <pre class="shiki"><code>bun add @frondruntime/pinna @frondruntime/pinna-effect effect</code></pre>
+        </div>
+
+        <div class="hero-actions">
+          <a href={docsPath("effect/boxes")} class="action btn-primary">Effect documentation</a>
+          <a href={projectRepositoryUrl} class="action btn-secondary" target="_blank" rel="noopener noreferrer">
+            GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="models" aria-labelledby="models-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="models-title">Models on Schema.</h2>
+          <p>
+            One class decodes server data, checks each write to its boxes, derives values from them,
+            and encodes back.
+          </p>
+          <a href={docsPath("effect/classes")} class="section-doclink">Classes</a>
+        </header>
+
+        <div class="pinna-points">
+          <article class="pinna-point">
+            <ul class="pinna-point-list">
+              {
+                modelPoints.map((item) => (
+                  <li>
+                    <h3>{item.title}</h3>
+                    <p>
+                      <InlineCode text={item.body} />
+                    </p>
+                    <a class="pinna-point-test" href={sourceUrl(item.test)} target="_blank" rel="noopener noreferrer">
+                      {item.test.split("/").pop()}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+            <div class="code-block code-block-effect">
+              <div class="code-bar"><span>an order, its lines, a checked write, and the wire</span></div>
+              <div set:html={modelHtml} />
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="programs" aria-labelledby="programs-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="programs-title">Programs that stop with their scope.</h2>
+          <p>
+            Effect programs react to the state, feed it from streams, and stop when their scope
+            closes, so nothing keeps a stop function.
+          </p>
+          <a href={docsPath("effect/programs")} class="section-doclink">Programs</a>
+        </header>
+
+        <div class="pinna-points">
+          <article class="pinna-point">
+            <ul class="pinna-point-list">
+              {
+                programPoints.map((item) => (
+                  <li>
+                    <h3>{item.title}</h3>
+                    <p>
+                      <InlineCode text={item.body} />
+                    </p>
+                    <a class="pinna-point-test" href={sourceUrl(item.test)} target="_blank" rel="noopener noreferrer">
+                      {item.test.split("/").pop()}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+            <div class="code-block code-block-effect">
+              <div class="code-bar"><span>a save on each change, and a rate from a stream</span></div>
+              <div set:html={programsHtml} />
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="reference" aria-labelledby="reference-title">
+      <div class="section-shell">
+        <header class="section-header">
+          <h2 id="reference-title">Reference.</h2>
+          <p>Each page states the rules for one part of <code>@frondruntime/pinna-effect</code>, with the reason for each.</p>
+        </header>
+        <ul class="effect-reference">
+          {
+            referenceLinks.map((link) => (
+              <li>
+                <a href={link.href} class="section-doclink">{link.text}</a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <SiteFooter />
+</BaseLayout>

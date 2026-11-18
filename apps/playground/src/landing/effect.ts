@@ -11,6 +11,9 @@ import {
 } from "@frondruntime/pinna-effect";
 import { Effect, Layer, Schema } from "effect";
 
+// saveQuantity stands for the application's own request.
+const saveQuantity = (id: string, quantity: number) => Effect.log(`save ${id}: ${quantity}`);
+
 // #region effect
 // One class decodes server data, checks every write to its box fields, and encodes back.
 class Order extends SchemaModel<Order>("Order")({
@@ -19,34 +22,30 @@ class Order extends SchemaModel<Order>("Order")({
 }) {}
 
 const realm = createRealm();
-
-// JSON from the server in: a checked Order with a live box. A field that does not fit throws.
 const order = decode(realm, Order)({ id: "7", quantity: 2 });
 Schema.encodeSync(Order)(order); // { id: "7", quantity: 2 }
 
-// Every write to a box field is checked. A value the schema refuses throws to the caller of
-// update, and the update is undone.
+// A value the schema refuses throws to the caller, with the Schema.SchemaError as its
+// cause, and the update is undone.
 try {
-  update(realm, (read, write) => {
-    write(order.$quantity, read(order.$quantity) - 3); // 2 - 3: the schema refuses it
+  update(realm, (_read, write) => {
+    write(order.$quantity, -1);
   });
 } catch (error) {
-  // "pinna: the box rejects this value: ...", and its cause is the SchemaError with the issue.
-  if (error instanceof Error && Schema.isSchemaError(error.cause)) {
-    console.error(error.cause.issue);
-  }
+  console.error(error);
 }
 
-// The realm is a service, and a program stops with its scope: this one saves each change
-// until the fiber is interrupted. saveQuantity stands for the app's own request.
-const saveQuantity = (id: string, quantity: number) => Effect.log(`save ${id}: ${quantity}`);
-const RealmLive = Layer.succeed(RealmService, realm);
+// A program stops with its scope: this one saves each change until the fiber is interrupted.
 const save = watchScoped(
   (read) => read(order.$quantity),
   (quantity) => saveQuantity(order.id, quantity),
 );
 const fiber = Effect.runFork(
-  save.pipe(Effect.andThen(Effect.never), Effect.scoped, Effect.provide(RealmLive)),
+  save.pipe(
+    Effect.andThen(Effect.never),
+    Effect.scoped,
+    Effect.provide(Layer.succeed(RealmService, realm)),
+  ),
 );
 
 // #endregion

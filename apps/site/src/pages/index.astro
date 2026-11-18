@@ -157,7 +157,7 @@ const apiPackages: ReadonlyArray<{
 const apiCount = (name: ApiPackage) =>
   apiPackages.filter((entry) => entry.name === name).reduce((total, entry) => total + entry.names.length, 0);
 
-// The Effect section: one sample, and what it shows.
+// The Effect section: one sample, and what it shows. The whole story is on /effect.
 const effectHtml = await highlightSample(effectSample, "effect");
 const effectPoints: ReadonlyArray<{
   readonly title: string;
@@ -165,18 +165,18 @@ const effectPoints: ReadonlyArray<{
   readonly test: string;
 }> = [
   {
-    title: "A model can be a SchemaModel.",
-    body: "A `SchemaModel` is an Effect `Schema.Class` whose `$` fields hold boxes and keyed collections: one class decodes server data, checks every write to its box fields, and encodes back.",
+    title: "A model is a SchemaModel.",
+    body: "An Effect `Schema.Class` whose `$` fields are boxes: it decodes server data, checks every write, and encodes back.",
     test: "packages/pinna-effect/test/mix.test.ts",
   },
   {
     title: "The realm is a service.",
-    body: "`decode` hands the realm to what it makes as `RealmService`; programs read the same service.",
+    body: "`decode` hands the realm to what it makes as `RealmService`, and programs read the same service.",
     test: "packages/pinna-effect/test/effect.test.ts",
   },
   {
     title: "Programs stop with their scope.",
-    body: "`watchScoped` runs an effect on each change and interrupts the one still running, `changes` streams a value's changes, `observeScoped` keeps a value observed, `fromStream` turns a stream into a value, and `whileObserved` runs a program while a value is observed.",
+    body: "`watchScoped` runs an effect on each change, `fromStream` turns a stream into a value, and both stop when their scope closes.",
     test: "packages/pinna-effect/test/effect.test.ts",
   },
 ];
@@ -480,7 +480,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
             <code>@frondruntime/pinna-effect</code> puts Pinna on Effect Schema and adds programs
             that stop with their scope.
           </p>
-          <a href={docsPath("effect/classes")} class="section-doclink">Models on Effect Schema</a>
+          <a href="/effect" class="section-doclink">Pinna for Effect</a>
         </header>
 
         <div class="pinna-points">

@@ -1617,3 +1617,40 @@ p {
     transition: color var(--duration-graph) ease-out;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   /EFFECT
+   The page for applications already on Effect (pages/effect.astro). Its hero has no graph, so it
+   is a column: the headline, the lede, the install line, the actions.
+   ═══════════════════════════════════════════════════════════ */
+
+.effect-hero .hero-content {
+  /* A grid item sizes to its widest line, so the install command would widen the page on a phone. */
+  min-width: 0;
+  max-width: 800px;
+}
+
+.effect-hero .lede code {
+  color: var(--ink-bright);
+  font-size: 0.92em;
+}
+
+.effect-install {
+  max-width: 640px;
+}
+
+.effect-install pre {
+  margin: 0;
+  padding: 16px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.effect-reference {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
