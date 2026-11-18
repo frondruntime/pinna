@@ -139,6 +139,76 @@ describe("held", () => {
 });
 
 describe("testRealm", () => {
+  test("disposing a leaked autorun runs its complete cleanup once", () => {
+    const realm = testRealm();
+    const $count = box(realm, 1);
+    let cleanups = 0;
+    let runs = 0;
+    const stop = autorun(realm, (read) => {
+      read($count);
+      runs++;
+      return () => {
+        cleanups++;
+      };
+    });
+    expect(() => realm[Symbol.dispose]()).toThrow(
+      "The test realm is not at rest: autorun still running.",
+    );
+    expect(cleanups).toBe(1);
+    stop();
+    expect(() => realm[Symbol.dispose]()).not.toThrow();
+    update(realm, (_read, write) => write($count, 2));
+    expect(runs).toBe(1);
+    expect(cleanups).toBe(1);
+  });
+
+  test("a leaked autorun cleanup reports errors and leaves the realm stopped", () => {
+    const errors: Array<unknown> = [];
+    const realm = testRealm({ onError: (error) => errors.push(error) });
+    const failure = new Error("cleanup failed");
+    autorun(realm, () => () => {
+      throw failure;
+    });
+    expect(() => realm[Symbol.dispose]()).toThrow(
+      "The test realm is not at rest: autorun still running.",
+    );
+    expect(errors).toEqual([failure]);
+    expect(() => realm[Symbol.dispose]()).not.toThrow();
+  });
+
+  test("an autorun whose stop throws stays tracked with its cleanup", () => {
+    const realm = testRealm();
+    let cleanups = 0;
+    const stop = autorun(realm, () => () => {
+      cleanups++;
+    });
+    const $stopping = computed(realm, () => {
+      stop();
+      return 0;
+    });
+    expect(() => untracked(realm, (read) => read($stopping))).toThrow();
+    expect(cleanups).toBe(0);
+    expect(() => realm[Symbol.dispose]()).toThrow(
+      "The test realm is not at rest: autorun still running.",
+    );
+    expect(cleanups).toBe(1);
+    expect(() => realm[Symbol.dispose]()).not.toThrow();
+  });
+
+  test("a watch named autorun stays counted separately", () => {
+    const realm = testRealm();
+    watch(
+      realm,
+      () => 1,
+      () => undefined,
+      { name: "autorun" },
+    );
+    expect(() => realm[Symbol.dispose]()).toThrow(
+      "The test realm is not at rest: autorun still running.",
+    );
+    expect(() => realm[Symbol.dispose]()).not.toThrow();
+  });
+
   test("disposes quietly when every watch, autorun, and observe was stopped", () => {
     const realm = testRealm();
     const $count = box(realm, 1);
