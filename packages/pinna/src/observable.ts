@@ -95,7 +95,7 @@ export interface Atom {
  * reruns only what read `keys`. Written inside `update`, like a box, through
  * `write.upsert`, `write.remove`, and `write.replaceAll`; a `CollectionField`
  * field checks each row against its schema and is a plain array on the wire,
- * and `collection` checks nothing.
+ * and `collection` rejects `undefined` rows and checks nothing else.
  */
 export interface Collection<Key, Value> {
   /**
