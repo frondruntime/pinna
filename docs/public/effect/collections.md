@@ -57,6 +57,10 @@ writes. It starts empty and checks and compares rows as the field does.
   lands: on `decode`, `write.upsert`, and `write.replaceAll`. A row the schema
   rejects throws from the update, which rolls back. A `schemaCollection`
   checks on `write.upsert` and `write.replaceAll` the same way.
+- An `undefined` row throws `pinna: a collection row cannot be undefined`,
+  even when the row schema accepts it: `row(key)` and `read.row` use
+  `undefined` for a missing key. `decode`, `write.upsert`, and
+  `write.replaceAll` reject that row before changing any row.
 - A row written under a held key is compared with the row schema's
   equivalence, so a refetch of equal rows reruns nothing.
 - A key names one row. A repeated key fails the `decode` and throws from

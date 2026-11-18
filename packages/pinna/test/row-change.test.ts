@@ -14,7 +14,7 @@ import {
   type Write,
   watch,
 } from "../src/index.ts";
-import { testRealm } from "../src/testing/index.ts";
+import { held, record, testRealm } from "../src/testing/index.ts";
 import { expectRealmAtRest } from "./rest.ts";
 
 /**
@@ -88,6 +88,37 @@ const b1 = { id: "b", group: "one" };
 const c2 = { id: "c", group: "two" };
 
 describe("onRowChange", () => {
+  test("removing and re-adding a row reports both changes and keeps the old handle current", () => {
+    using realm = testRealm();
+    const rows = collection<number, number>(realm, { keyOf: () => 1 });
+    update(realm, (_read, write) => {
+      write.upsert(rows, 7);
+    });
+    const handle = rows.row(1);
+    using noticed = record(realm, (read) => read(handle));
+    const changes: Array<RowChange<number, number>> = [];
+    using _listener = held(
+      onRowChange(rows, (change) => {
+        changes.push(change);
+      }),
+    );
+    changes.length = 0;
+
+    update(realm, (_read, write) => {
+      write.remove(rows, 1);
+    });
+    update(realm, (_read, write) => {
+      write.upsert(rows, 7);
+    });
+
+    expect(changes).toEqual([
+      { key: 1, before: 7, after: undefined },
+      { key: 1, before: undefined, after: 7 },
+    ]);
+    expect(noticed.values).toEqual([undefined, 7]);
+    expect(untracked(realm, (read) => read(handle))).toBe(7);
+  });
+
   test("reports an added, a replaced, and a removed row, with the row before and after", () => {
     const realm = createRealm();
     const { rows, changes, counts } = counted(realm);
