@@ -37,7 +37,7 @@ import {
   SchemaTransformation,
 } from "effect";
 import { RealmService } from "./decode.ts";
-import { type MergeWrites, mergeKey, planMerge } from "./merge.ts";
+import { type MergeWrites, mergeKey, planMerge, realmOfMergeable } from "./merge.ts";
 import { checkOf, equalsOf } from "./schema.ts";
 
 /** How a `BoxField` or `CollectionField` goes to and from its wire value. */
@@ -157,7 +157,11 @@ const sameRows = <Key, Value>(
       return false;
     }
     const writes = planMerge(row, next);
-    if (writes === false ? !equals(row, next) : writes !== undefined) {
+    if (
+      writes === false
+        ? realmOfMergeable(row) !== undefined || !equals(row, next)
+        : writes !== undefined
+    ) {
       return false;
     }
   }

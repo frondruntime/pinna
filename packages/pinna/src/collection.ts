@@ -181,11 +181,18 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       check === acceptAll
         ? acceptAll
         : (value, previous) => (value === undefined ? undefined : check(value, previous));
-    this.equals = equals;
+    // A row that can merge with itself must be replaced when its merge
+    // refuses a fresh row. Its equality cannot override that refusal.
+    this.equals =
+      merge === undefined
+        ? equals
+        : (previous, next) =>
+            Object.is(previous, next) ||
+            (merge(previous, previous) === false && equals(previous, next));
     this.cellEquals = (previous, next) =>
       previous === undefined || next === undefined
         ? previous === next
-        : equals(previous as Value, next as Value);
+        : this.equals(previous as Value, next as Value);
     // The values come checked: from a decode, or none at all.
     const held = new Map<Key, Value>();
     const keys = new Array<Key>(values.length);
