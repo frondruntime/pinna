@@ -684,7 +684,7 @@ const finishRun = (graph: Graph, node: Node): void => {
     last.nextDependency = undefined;
   }
   node.cursor = undefined;
-  if (stale !== undefined && stale.linked) {
+  if (stale?.linked) {
     reconcile(graph, node, stale, observed(node));
   } else if (node.added && observed(node)) {
     reconcile(graph, node, stale, true);

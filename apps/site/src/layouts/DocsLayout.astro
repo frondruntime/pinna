@@ -18,6 +18,8 @@ interface Props {
 const { title, description = siteDescription, slug, headings } = Astro.props;
 const { prev, next } = getPagination(slug);
 const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
+// `<main>` takes a fixed transition name so one docs page's content fades into the next's:
+// generated names differ per page.
 ---
 
 <BaseLayout title={`${title} | ${siteName}`} description={description}>
@@ -74,7 +76,6 @@ const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
       </div>
     </nav>
 
-    {/* Named so one docs page's content fades into the next's: generated names differ per page. */}
     <main class="content" transition:name="docs-content" transition:animate="fade">
       <h1 class="page-title">{title}</h1>
       <div class="prose">

@@ -103,7 +103,7 @@ const usedImports = (source: string, code: string): ReadonlyArray<Used> => {
   });
 };
 
-// The width `bun run format` wraps at (biome.json).
+// The width `bun run format` wraps at (biome.jsonc).
 const lineWidth = 100;
 
 const printImport = ({ declaration, defaultName, namespace, named }: Used): string => {

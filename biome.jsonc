@@ -30,7 +30,20 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "complexity": {
+        // `noPropertyAccessFromIndexSignature` in tsconfig.base.json requires `record["key"]` on an
+        // index signature, which this rule rewrites to `record.key`, a type error.
+        "useLiteralKeys": "off"
+      }
     }
-  }
+  },
+  "overrides": [
+    {
+      // The 3D scene indexes fixed-length colors, matrices, and faces, which
+      // `noUncheckedIndexedAccess` types as possibly undefined; each `!` marks an index in range.
+      "includes": ["apps/site/src/lib/frondScene.ts"],
+      "linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }
+    }
+  ]
 }

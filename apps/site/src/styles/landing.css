@@ -1319,6 +1319,7 @@ p {
   }
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: the scripted rule above only hides the drawing; this sets its look, which no other rule does. */
 .frond-graph {
   display: block;
   width: 100%;
@@ -1611,6 +1612,7 @@ p {
 /* The frond in 3D (src/lib/frondScene.ts), where the browser has WebGL2. The canvas draws the pads
    and traces; the names, rows, and remove marks are HTML over it, placed on each pad's projected
    position, so text stays crisp and the controls stay buttons. */
+/* biome-ignore lint/style/noDescendingSpecificity: the hero rule above adds only a mask; this places the scene, which no other rule does. */
 .frond-scene {
   position: absolute;
   inset: 0;
