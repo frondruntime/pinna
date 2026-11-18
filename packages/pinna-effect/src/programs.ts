@@ -78,7 +78,7 @@ export const watchScoped = <Value>(
         const previous = (ranWith as { readonly value: Value }).value;
         ranWith = { value };
         return Stream.fromEffect(
-          effect(value, previous).pipe(
+          Effect.suspend(() => effect(value, previous)).pipe(
             Effect.catchDefect((defect) =>
               Effect.logError("pinna: a watch effect died", Cause.die(defect)),
             ),
