@@ -68,6 +68,52 @@ const run = <A>(program: Effect.Effect<A, never, RealmService>, realm = createRe
   Effect.runPromise(program.pipe(Effect.provideService(RealmService, realm)));
 
 describe("watchScoped", () => {
+  test("a synchronous callback throw is logged and future delivery survives until scope closure", async () => {
+    const realm = createRealm();
+    const $count = box(realm, 0);
+    const seen: Array<number> = [];
+    const { logged, layer } = capture();
+    const failure = new Error("factory");
+    let interrupted = false;
+    await run(
+      Effect.gen(function* () {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* watchScoped(
+              (read) => read($count),
+              (value) => {
+                seen.push(value);
+                if (value === 1) {
+                  throw failure;
+                }
+                return Effect.never.pipe(
+                  Effect.onInterrupt(() =>
+                    Effect.sync(() => {
+                      interrupted = true;
+                    }),
+                  ),
+                );
+              },
+            );
+            update(realm, (_read, write) => write($count, 1));
+            yield* settle;
+            update(realm, (_read, write) => write($count, 2));
+            yield* settle;
+          }),
+        );
+        update(realm, (_read, write) => write($count, 3));
+        yield* settle;
+      }).pipe(Effect.provide(layer)),
+      realm,
+    );
+    expect(seen).toEqual([1, 2]);
+    expect(interrupted).toBe(true);
+    expect(logged.map(({ level, message }) => ({ level, message }))).toEqual([
+      { level: "Error", message: ["pinna: a watch effect died"] },
+    ]);
+    expect(Cause.squash((logged[0] as Logged).cause)).toBe(failure);
+  });
+
   test("runs the effect for each change, not for the current value", async () => {
     const realm = createRealm();
     const $count = schemaBox(realm, Schema.Number, 0);
