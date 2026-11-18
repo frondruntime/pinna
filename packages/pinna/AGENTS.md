@@ -30,8 +30,9 @@ mind while writing code.
    from a `watch`
    (<https://pinna.frondruntime.dev/docs/state/updates#effects-after-the-update>).
 4. **A box with a schema checks every write.** A `schemaBox` or a
-   `BoxField` throws on a value its schema rejects. A `box` or a
-   `collection` checks nothing, from either package. Choose per box: data
+   `BoxField` throws on a value its schema rejects. A `box` checks nothing,
+   from either package. A `collection` rejects `undefined` rows and checks
+   nothing else. Choose per box: data
    from outside the program (the wire, user input) goes through a schema,
    and trusted data that is written often takes a plain `box` or a `Model`.
    Never weaken a schema box's check for speed.
