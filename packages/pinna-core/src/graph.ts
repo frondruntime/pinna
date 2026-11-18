@@ -198,6 +198,8 @@ export interface Node {
   hooks: Hooks | undefined;
 
   checkedAt: number;
+  /** The clock at which a volatile or thrown result was checked in `walkedAt`. */
+  walkedClock: number;
   markedAt: number;
   dependenciesHead: Edge | undefined;
   cursor: Edge | undefined;
@@ -299,6 +301,7 @@ const makeObserver = (
     staleStamp: 0,
     hooks: undefined,
     checkedAt: -1,
+    walkedClock: -1,
     markedAt: -1,
     dependenciesHead: undefined,
     cursor: undefined,
@@ -827,6 +830,7 @@ const keep = (graph: Graph, node: Node, error: unknown, cause: Node | undefined)
   node.status = ERROR;
   node.cause = cause;
   node.walkedAt = graph.walk;
+  node.walkedClock = graph.clock;
 };
 
 /**
@@ -922,6 +926,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
   node.volatile = graph.volatileRun === run || graph.cycleRun >= run;
   if (node.volatile) {
     node.walkedAt = graph.walk;
+    node.walkedClock = clock;
   }
   if (passedOn) {
     node.status = EMPTY;
@@ -995,6 +1000,7 @@ const refresh = (graph: Graph, root: Node): Node | undefined => {
   if (first === undefined) {
     if (root.status === ERROR || root.volatile) {
       root.walkedAt = walk;
+      root.walkedClock = clock;
     } else {
       root.checkedAt = clock;
     }
@@ -1017,7 +1023,10 @@ const refresh = (graph: Graph, root: Node): Node | undefined => {
       if (finished !== undefined) {
         // The edge to the source just finished: one current or checked this
         // walk tells by its version alone, with no second visit.
-        if (finished.checkedAt === clock || finished.walkedAt === walk) {
+        if (
+          finished.checkedAt === clock ||
+          (finished.walkedAt === walk && finished.walkedClock === clock)
+        ) {
           if (finished.volatile) {
             volatile = true;
           }
@@ -1033,7 +1042,10 @@ const refresh = (graph: Graph, root: Node): Node | undefined => {
       while (edge !== undefined) {
         const source = edge.source;
         if (source.kind === DERIVED) {
-          if (source.checkedAt !== clock && source.walkedAt !== walk) {
+          if (
+            source.checkedAt !== clock &&
+            (source.walkedAt !== walk || source.walkedClock !== clock)
+          ) {
             if (source.computing || source.cursor !== undefined) {
               // An edge loops back to a value that computes or that this walk
               // is inside: the run that recorded it read something that reads
@@ -1064,6 +1076,7 @@ const refresh = (graph: Graph, root: Node): Node | undefined => {
               break;
             } else if (source.status === ERROR || source.volatile) {
               source.walkedAt = walk;
+              source.walkedClock = clock;
             } else {
               source.checkedAt = clock;
             }
@@ -1098,6 +1111,7 @@ const refresh = (graph: Graph, root: Node): Node | undefined => {
         node.volatile = volatile;
         if (volatile || node.status === ERROR) {
           node.walkedAt = walk;
+          node.walkedClock = clock;
         } else {
           node.checkedAt = clock;
         }
@@ -1135,7 +1149,10 @@ const refreshAll = (graph: Graph, node: Node): boolean => {
     for (let edge = node.dependenciesHead; edge !== undefined; edge = edge.nextDependency) {
       const source = edge.source;
       if (source.kind === DERIVED) {
-        if (source.checkedAt !== graph.clock && source.walkedAt !== walk) {
+        if (
+          source.checkedAt !== graph.clock &&
+          (source.walkedAt !== walk || source.walkedClock !== graph.clock)
+        ) {
           refresh(graph, source);
         }
       } else if (source.kind === ATOM && source.volatile && source.walkedAt !== walk) {
@@ -1232,7 +1249,7 @@ const computeFirst = (graph: Graph, node: Node): void => {
 /** The slow branch of a derived read: not current. Records the read on the paths that throw, so the reader follows a value that throws. */
 const refreshForRead = (graph: Graph, node: Node): void => {
   // Unless the walk this read is inside of checked it already.
-  if (node.walkedAt !== graph.walk || graph.walkDepth === 0) {
+  if (node.walkedAt !== graph.walk || node.walkedClock !== graph.clock || graph.walkDepth === 0) {
     // The outermost read is a scope: what its computes make due, write, or
     // release settles once the read is over, never in the middle of it.
     const opened = graph.depth === 0;

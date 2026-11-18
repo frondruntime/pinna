@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  atom,
   autorun,
   box,
   computed,
@@ -160,6 +161,66 @@ describe("autorun", () => {
  * an autorun that keeps changing what it read meets the round limit.
  */
 describe("autorun writes", () => {
+  test("a nested update refreshes a volatile value after a write and a rollback", () => {
+    const realm = createRealm();
+    const outside = atom(realm);
+    const source = box(realm, 0);
+    let computes = 0;
+    const derived = computed(realm, (read) => {
+      computes++;
+      read(outside);
+      return read(source);
+    });
+    const seen: Array<number> = [];
+    const abort = new Error("rollback");
+    const stop = autorun(realm, (read) => {
+      if (read(derived) !== 0 || seen.length !== 0) return;
+      expect(read(derived)).toBe(0);
+      expect(computes).toBe(1);
+      expect(() =>
+        update(realm, (read, write) => {
+          write(source, 1);
+          seen.push(read(source), read(derived));
+          expect(read(derived)).toBe(1);
+          expect(computes).toBe(2);
+          throw abort;
+        }),
+      ).toThrow(abort);
+      seen.push(read(derived));
+      expect(computes).toBe(3);
+    });
+    expect(seen).toEqual([1, 1, 0]);
+    stop();
+    expectRealmAtRest(realm);
+  });
+
+  test("a nested update retries a cached error after repairing its input", () => {
+    const realm = createRealm();
+    const source = box(realm, 0);
+    let computes = 0;
+    const derived = computed(realm, (read) => {
+      computes++;
+      if (read(source) === 0) throw new Error("missing");
+      return 1;
+    });
+    const stop = autorun(realm, (read) => {
+      try {
+        read(derived);
+      } catch {
+        expect(() => read(derived)).toThrow("missing");
+        expect(computes).toBe(1);
+        update(realm, (read, write) => {
+          write(source, 1);
+          expect(read(derived)).toBe(1);
+          expect(read(derived)).toBe(1);
+          expect(computes).toBe(2);
+        });
+      }
+    });
+    stop();
+    expectRealmAtRest(realm);
+  });
+
   const unsettled = "pinna: watchers did not settle after 100 rounds";
 
   const reporting = () => {
