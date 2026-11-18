@@ -1104,6 +1104,34 @@ describe("an equals that reads through the update's read", () => {
 });
 
 describe("merging a refetched SchemaModel into the held instance", () => {
+  test("cross-realm reconciliation replaces a model despite its own Equal and honors caller equality", () => {
+    class Quote extends SchemaModel<Quote>("Quote")({
+      pair: Schema.String,
+      $bid: BoxField(Schema.Number),
+    }) {
+      [Equal.symbol](that: unknown): boolean {
+        return that instanceof Quote && this.pair === that.pair;
+      }
+
+      [Hash.symbol](): number {
+        return Hash.string(this.pair);
+      }
+    }
+    const other = createRealm();
+    const held = decode(realm, Quote)({ pair: "BTC", bid: 1 });
+    const fresh = decode(other, Quote)({ pair: "BTC", bid: 2 });
+    const previous = [held];
+    const keyOf = (quote: Quote): string => quote.pair;
+    const next = reconcileSchema(previous, [fresh], { keyOf });
+    expect(next[0]).toBe(fresh);
+    expect(untracked(other, (read) => read((next[0] as Quote).$bid))).toBe(2);
+    expect(untracked(realm, (read) => read(held.$bid))).toBe(1);
+    expect(reconcileSchema(previous, [fresh], { keyOf, equals: () => true })).toBe(previous);
+    expect(reconcileSchema(previous, [fresh], { keyOf, equals: () => false })[0]).toBe(fresh);
+    expectRealmAtRest(realm);
+    expectRealmAtRest(other);
+  });
+
   class Holding extends SchemaModel<Holding>("Holding")({
     id: Schema.String,
     name: Schema.String,
