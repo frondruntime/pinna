@@ -16,8 +16,6 @@ interface Kept {
   readonly observable: IObservableValue<unknown> | IComputedValue<unknown>;
 }
 
-const ignore = (): void => {};
-
 export const mobx: Library<CheckedAdapter> = {
   name: "mobx",
   package: "mobx",
@@ -39,7 +37,7 @@ export const mobx: Library<CheckedAdapter> = {
       };
       return derived;
     },
-    watch: (select, effect) => reaction(select, effect ?? ignore),
+    watch: (select, effect) => reaction(select, effect),
     update: (write) => runInAction(write),
     untracked: (read) => mobxUntracked(read),
     onObserved: (observable, start) => {

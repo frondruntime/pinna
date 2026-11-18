@@ -5,7 +5,9 @@
  * the timing, and returns the run that is timed. `setup` runs once per
  * sample, on the one instance the cell keeps, so it builds a new graph each
  * time and leaves the previous one to the collector. A run checks what its
- * watchers saw, so a library that skips work fails instead of winning.
+ * watchers saw, a value or a count of effect runs, so a library that skips
+ * work fails instead of winning. Every watcher has an effect, so every
+ * library runs the same compare-and-call on each change.
  *
  * Plain code, bundled into the workers: no `effect`.
  */
@@ -54,13 +56,19 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "fan-out 1000 watched, write ×100",
     setup: (library) => {
       const head = library.box(0);
+      let runs = 0;
+      const count = (): void => {
+        runs++;
+      };
       for (let index = 0; index < 1000; index++) {
-        library.watch(library.computed(() => head.get() + index).get);
+        library.watch(library.computed(() => head.get() + index).get, count);
       }
       return () => {
+        runs = 0;
         for (let write = 1; write <= 100; write++) {
           library.update(() => head.set(write));
         }
+        expect(runs, 100 * 1000, "fan-out");
       };
     },
   },
@@ -99,14 +107,22 @@ export const scenarios: ReadonlyArray<Scenario> = [
       const flag = library.box(true);
       const left = library.box(1);
       const right = library.box(2);
+      let runs = 0;
+      const count = (): void => {
+        runs++;
+      };
       for (let index = 0; index < 1000; index++) {
-        library.watch(library.computed(() => (flag.get() ? left.get() : right.get())).get);
+        library.watch(library.computed(() => (flag.get() ? left.get() : right.get())).get, count);
       }
       return () => {
+        runs = 0;
         for (let write = 0; write < 100; write++) {
           library.update(() => flag.set(write % 2 === 1));
           library.update(() => (write % 2 === 0 ? right : left).set(write));
         }
+        // Each flip and each write changes the value, except the first write
+        // to `left`, which writes the 1 it already holds: 199 per watcher.
+        expect(runs, 199 * 1000, "conditional reads");
       };
     },
   },
@@ -115,16 +131,23 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "make and dispose 1000 watched computeds ×10",
     setup: (library) => {
       const head = library.box(0);
+      // Nothing is written, so no effect runs; it is there so that each watch
+      // is made as in every other scenario.
+      let runs = 0;
+      const count = (): void => {
+        runs++;
+      };
       return () => {
         for (let round = 0; round < 10; round++) {
           const stops: Array<() => void> = [];
           for (let index = 0; index < 1000; index++) {
-            stops.push(library.watch(library.computed(() => head.get() + index).get));
+            stops.push(library.watch(library.computed(() => head.get() + index).get, count));
           }
           for (let index = 0; index < stops.length; index++) {
             (stops[index] as () => void)();
           }
         }
+        expect(runs, 0, "make and dispose");
       };
     },
   },
@@ -133,10 +156,15 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "write 1000 sources in one update ×100",
     setup: (library) => {
       const sources = Array.from({ length: 1000 }, () => library.box(0));
+      let runs = 0;
+      const count = (): void => {
+        runs++;
+      };
       for (const source of sources) {
-        library.watch(source.get);
+        library.watch(source.get, count);
       }
       return () => {
+        runs = 0;
         for (let write = 1; write <= 100; write++) {
           library.update(() => {
             for (let index = 0; index < sources.length; index++) {
@@ -144,6 +172,7 @@ export const scenarios: ReadonlyArray<Scenario> = [
             }
           });
         }
+        expect(runs, 100 * 1000, "write sources");
       };
     },
   },
@@ -194,14 +223,22 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "one write among 10k watched rows ×1000",
     setup: (library) => {
       const sources = Array.from({ length: 10_000 }, () => library.box(0));
+      let runs = 0;
+      const count = (): void => {
+        runs++;
+      };
       for (const source of sources) {
-        library.watch(library.computed(() => `row ${source.get()}`).get);
+        library.watch(library.computed(() => `row ${source.get()}`).get, count);
       }
       return () => {
+        runs = 0;
+        // 7919 is prime to 10,000, so the thousand writes hit a thousand
+        // different rows, each from 0 to a new value.
         for (let write = 1; write <= 1000; write++) {
           const source = sources[(write * 7919) % sources.length] as Source<number>;
           library.update(() => source.set(write));
         }
+        expect(runs, 1000, "one write among many");
       };
     },
   },

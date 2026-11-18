@@ -90,11 +90,15 @@ export const measure = (host: Host, request: Request): Response => {
     try {
       const run = scenario.setup(instance);
       host.collect();
+      // Both counter reads sit right around the run, so the bytes counted
+      // are the run's and the clock's, not the arrays' that store them.
       const allocatedBefore = host.allocated?.() ?? 0;
       const start = host.now();
       run();
-      times.push(host.now() - start);
-      bytes.push((host.allocated?.() ?? 0) - allocatedBefore);
+      const end = host.now();
+      const allocatedAfter = host.allocated?.() ?? 0;
+      times.push(end - start);
+      bytes.push(allocatedAfter - allocatedBefore);
     } catch (error) {
       if (overflowed(error)) {
         return { _tag: "Failed", failure: "stack overflow" };

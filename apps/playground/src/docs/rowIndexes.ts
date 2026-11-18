@@ -1,5 +1,5 @@
-// The site's docs print the regions of this file (docs/public/guides/row-indexes.md), so
-// `bun run typecheck` compiles what the page shows.
+// The site's docs print the regions of this file (docs/public/guides/row-indexes.md and
+// docs/public/state/collections.md), so `bun run typecheck` compiles what the pages show.
 import {
   type Box,
   box,

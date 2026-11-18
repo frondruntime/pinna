@@ -22,6 +22,7 @@ import {
   effect as alienEffect,
   signal as alienSignal,
   endBatch,
+  setActiveSub,
   startBatch,
 } from "alien-signals";
 import {
@@ -43,13 +44,15 @@ interface Source<Value> {
 export interface Library {
   readonly source: <Value>(initial: Value) => Source<Value>;
   readonly computed: <Value>(compute: () => Value) => () => Value;
-  /** Watches `read`; `changed`, if given, sees each new value. Returns the stop. */
-  readonly watch: <Value>(read: () => Value, changed?: (value: Value) => undefined) => () => void;
+  /**
+   * Watches `read`; `changed` sees each new value. Returns the stop.
+   * `changed` is required, so every library runs the same reaction: an
+   * optional one let a library skip the comparison and the call.
+   */
+  readonly watch: <Value>(read: () => Value, changed: (value: Value) => undefined) => () => void;
   /** Runs `write` as one update. */
   readonly batch: (write: () => void) => void;
 }
-
-const ignore = (): undefined => undefined;
 
 /**
  * Pinna through the verbs a place hands out, `read` and `write`. The
@@ -83,7 +86,7 @@ const pinna = (): Library => {
       const value = computed(realm, compute);
       return () => read(value);
     },
-    watch: (select, changed) => watch(realm, select, changed ?? ignore),
+    watch: (select, changed) => watch(realm, select, changed),
     batch: (run) =>
       update(realm, () => {
         run();
@@ -96,12 +99,35 @@ const alien = (): Library => ({
     const signal = alienSignal(initial);
     return { get: () => signal(), set: (value) => signal(value) };
   },
-  computed: (compute) => alienComputed(() => compute()),
-  watch: (read, changed) =>
-    alienEffect(() => {
+  // `compute` goes to alien-signals as its getter, with no wrapper closure:
+  // it ignores the previous value the getter receives.
+  computed: (compute) => alienComputed(compute),
+  // alien-signals has no reaction: an effect runs at once. The first run
+  // only records the value, and later runs call `changed` untracked when the
+  // value changed, as Pinna's `watch` and MobX's `reaction` do. The active
+  // subscriber is cleared and restored inline, so a notification makes no
+  // closure.
+  watch: <Value>(read: () => Value, changed: (value: Value) => undefined) => {
+    let started = false;
+    let previous: Value | undefined;
+    return alienEffect(() => {
       const value = read();
-      changed?.(value);
-    }),
+      if (!started) {
+        started = true;
+        previous = value;
+        return;
+      }
+      if (!Object.is(value, previous)) {
+        previous = value;
+        const outer = setActiveSub(undefined);
+        try {
+          changed(value);
+        } finally {
+          setActiveSub(outer);
+        }
+      }
+    });
+  },
   batch: (write) => {
     startBatch();
     try {
@@ -121,7 +147,7 @@ const mobx = (): Library => ({
     const value = mobxComputed(compute);
     return () => value.get();
   },
-  watch: (read, changed) => reaction(read, changed ?? ignore),
+  watch: (read, changed) => reaction(read, changed),
   batch: (write) => runInAction(write),
 });
 
@@ -151,8 +177,9 @@ const timers = (): void => {
 };
 
 /**
- * Legend's `observe` runs at once; the adapter skips that run, so `changed`
- * sees only changes, as MobX's `reaction` and Pinna's `watch` do.
+ * Legend's `observe` runs at once; the adapter skips that run and calls
+ * `changed` only when the value changed, as MobX's `reaction` and Pinna's
+ * `watch` do.
  */
 const legend = (): Library => {
   timers();
@@ -167,15 +194,20 @@ const legend = (): Library => {
       const value = legendObservable(compute);
       return () => value.get() as Value;
     },
-    watch: (read, changed) => {
-      let first = true;
+    watch: <Value>(read: () => Value, changed: (value: Value) => undefined) => {
+      let started = false;
+      let previous: Value | undefined;
       return legendObserve(() => {
         const value = read();
-        if (first) {
-          first = false;
+        if (!started) {
+          started = true;
+          previous = value;
           return;
         }
-        changed?.(value);
+        if (!Object.is(value, previous)) {
+          previous = value;
+          changed(value);
+        }
       });
     },
     batch: (write) => legendBatch(write),
@@ -233,8 +265,11 @@ const measureOne = (host: Host, setup: () => () => void): Measured | undefined =
       const allocatedBefore = host.allocated?.() ?? 0;
       const start = host.now();
       measured();
-      times.push(host.now() - start);
-      bytes.push((host.allocated?.() ?? 0) - allocatedBefore);
+      const end = host.now();
+      // Read before either array grows, so the count leaves out the push.
+      const allocatedAfter = host.allocated?.() ?? 0;
+      times.push(end - start);
+      bytes.push(allocatedAfter - allocatedBefore);
     } catch (error) {
       if (overflowed(error)) {
         return undefined;
@@ -324,14 +359,20 @@ export const measure = (make: () => Library, host: Host, from = 0): Measurement 
   scenario("fan-out 1000 watched, write ×100", () => {
     const library = make();
     const head = library.source(0);
+    let runs = 0;
+    const count = (): undefined => {
+      runs++;
+    };
     for (let index = 0; index < 1000; index++) {
       const derived = library.computed(() => head.get() + index);
-      library.watch(derived);
+      library.watch(derived, count);
     }
     return () => {
+      runs = 0;
       for (let write = 1; write <= 100; write++) {
         library.batch(() => head.set(write));
       }
+      expect(runs, 100 * 1000, "fan-out");
     };
   });
 
@@ -365,42 +406,62 @@ export const measure = (make: () => Library, host: Host, from = 0): Measurement 
     const flag = library.source(true);
     const left = library.source(1);
     const right = library.source(2);
+    let runs = 0;
+    const count = (): undefined => {
+      runs++;
+    };
     for (let index = 0; index < 1000; index++) {
       const derived = library.computed(() => (flag.get() ? left.get() : right.get()));
-      library.watch(derived);
+      library.watch(derived, count);
     }
     return () => {
+      runs = 0;
       for (let write = 0; write < 100; write++) {
         library.batch(() => flag.set(write % 2 === 1));
         library.batch(() => (write % 2 === 0 ? right : left).set(write));
       }
+      // Each flip changes every value, and so does each write but the first
+      // to `left`, which writes the 1 it already holds: 199 changes a watcher.
+      expect(runs, 199 * 1000, "conditional reads");
     };
   });
 
   scenario("make and dispose 1000 watched computeds ×10", () => {
     const library = make();
     const head = library.source(0);
+    let runs = 0;
+    const count = (): undefined => {
+      runs++;
+    };
     return () => {
+      runs = 0;
       for (let round = 0; round < 10; round++) {
         const stops: Array<() => void> = [];
         for (let index = 0; index < 1000; index++) {
           const derived = library.computed(() => head.get() + index);
-          stops.push(library.watch(derived));
+          stops.push(library.watch(derived, count));
         }
         for (let index = 0; index < stops.length; index++) {
           (stops[index] as () => void)();
         }
       }
+      // Nothing is written, so no watcher sees a change.
+      expect(runs, 0, "make and dispose");
     };
   });
 
   scenario("write 1000 sources in one update ×100", () => {
     const library = make();
     const sources = Array.from({ length: 1000 }, () => library.source(0));
+    let runs = 0;
+    const count = (): undefined => {
+      runs++;
+    };
     for (const source of sources) {
-      library.watch(source.get);
+      library.watch(source.get, count);
     }
     return () => {
+      runs = 0;
       for (let write = 1; write <= 100; write++) {
         library.batch(() => {
           for (let index = 0; index < sources.length; index++) {
@@ -408,6 +469,7 @@ export const measure = (make: () => Library, host: Host, from = 0): Measurement 
           }
         });
       }
+      expect(runs, 100 * 1000, "write sources");
     };
   });
 
@@ -455,15 +517,22 @@ export const measure = (make: () => Library, host: Host, from = 0): Measurement 
   scenario("one write among 10k watched rows ×1000", () => {
     const library = make();
     const sources = Array.from({ length: 10_000 }, () => library.source(0));
+    let runs = 0;
+    const count = (): undefined => {
+      runs++;
+    };
     for (const source of sources) {
       const label = library.computed(() => `row ${source.get()}`);
-      library.watch(label);
+      library.watch(label, count);
     }
     return () => {
+      runs = 0;
       for (let write = 1; write <= 1000; write++) {
         const source = sources[(write * 7919) % sources.length] as Source<number>;
         library.batch(() => source.set(write));
       }
+      // 7919 is prime to 10,000, so each write lands on a different row.
+      expect(runs, 1000, "one write among 10k");
     };
   });
 

@@ -298,7 +298,8 @@ const cellx = (layers: number): Shape => ({
       };
     }
     const end = layer;
-    const stops = [end.a, end.b, end.c, end.d].map((cell) => library.watch(cell));
+    const runs = counter();
+    const stops = [end.a, end.b, end.c, end.d].map((cell) => library.watch(cell, runs.bump));
     const expected = (values: { a: number; b: number; c: number; d: number }) => {
       let { a, b, c, d } = values;
       for (let index = 0; index < layers; index++) {

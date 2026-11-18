@@ -235,7 +235,17 @@ const bench = Command.make(
         const started = new Date();
         const loadBefore = loadavg()[0] as number;
         const commit = (yield* output("git", ["rev-parse", "HEAD"])).trim();
-        const dirty = (yield* output("git", ["status", "--porcelain"])).trim() !== "";
+        // Only what a cell runs counts: the packages and the lockfile. An
+        // untracked note or worktree elsewhere does not mark a run dirty.
+        const dirty =
+          (yield* output("git", [
+            "status",
+            "--porcelain",
+            "--",
+            ":/packages",
+            ":/package.json",
+            ":/bun.lock",
+          ])).trim() !== "";
         const directory = yield* fileSystem
           .makeTempDirectoryScoped({ prefix: "pinna-bench-" })
           .pipe(Effect.mapError((error) => new BenchError({ message: error.message })));

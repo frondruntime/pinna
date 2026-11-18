@@ -109,12 +109,17 @@ Each of them stops when its scope closes.
 
 ## Lifetimes
 
-Two owners run an effect, and the owner decides what stops it.
+Three owners run an effect, and the owner decides what stops it.
 
 - Observation owns the stream of a `fromStream` value and a `whileObserved`
   program: each runs from the first observer to the last, and starts again with the next. This fits
   data that matters only while something shows it, such as a rate or a
-  search result: the last observer leaving stops the work.
+  search result: the last observer leaving stops the work, and the value
+  resets to `initial`, so a stale rate never shows as current.
+- A fiber owns a feed whose data is kept whether shown or not, such as the
+  quotes of a board that several screens and watches read from one
+  collection. The feed runs until the fiber is interrupted, with nothing
+  observing it ([Live data](../guides/live-data.md#with-effect)).
 - A scope owns a command, such as an order sent or a file saved. It runs
   to its end whatever the screen does, and only closing the scope
   interrupts it. This fits work a person started and expects finished.
@@ -125,7 +130,7 @@ needs is provided where the value is made, not where it is observed. The
 stream's type lists the services it needs but not the clock, so a stream
 that polls or sleeps keeps the clock of the program that made the value: a
 test on `TestClock` provides it before the value is made
-([Testing](../guides/testing.md#time)).
+([Testing](#testing)).
 
 <!-- region programs.ts#context -->
 
@@ -154,8 +159,49 @@ of one union, and `Stream.catch` turns the failure into the last element.
 The stream ends on the failure, and the value shows it until the last
 observer leaves. The next observer starts the stream again, from `initial`.
 
+## Testing
+
+A program that polls or sleeps is tested on `TestClock`, from
+`effect/testing`, so the test moves time instead of waiting for it. The
+test realm and `RealmService` are as on [Testing](../guides/testing.md).
+
+- Provide `TestClock.layer()` around the program that makes a `fromStream`
+  value, not only around the one that observes it. The value keeps the
+  clock of the program that made it, and a value made on the live clock
+  polls on the live clock whatever the observer provides.
+- Hold the value observed with `observeScoped`. Its stream runs only while
+  something observes the value, so an unobserved poll never runs and the
+  value stays `initial`.
+
+<!-- region testingEffect.test.ts#clock -->
+
+`TestClock.adjust` is not a completion signal. It runs the sleeps that fall
+due and waits for the fibers it woke to suspend; work that no sleep holds,
+such as a load that yields between rows, can still be running when it
+returns, and `TestClock.adjust(0)` wakes nothing at all. A test waits on a
+value the program publishes when its work is done: a `Deferred`, or a box
+read through `changes`.
+
+<!-- region testingEffect.test.ts#barrier -->
+
+A helper that runs a program and declares its realm with `using` is
+`async` and awaits the run before it returns. Returning the promise without
+`await` disposes the realm while the program's scope is still open, and the
+dispose throws `The test realm is not at rest: watch still running.`, one
+entry per watch the program holds. The dispose stops each watch first, so no
+watch reruns in the next test, but a fiber the program forked runs on until
+its scope closes; the fix is `return await`.
+
+<!-- region testingEffect.test.ts#awaited -->
+
+| Call | Answers |
+| --- | --- |
+| `Effect.provide(TestClock.layer())` | A program whose sleeps and schedules wait on the test clock. |
+| `TestClock.adjust(duration)` | Moves the test clock and runs the sleeps that fall due; not a signal that other work finished. |
+
 ## See also
 
 - [Reacting](../state/reacting.md): `watch` and `autorun` without Effect.
 - [Classes](./classes.md): `decode`, JSON in and a checked model out.
 - [Live data](../guides/live-data.md): a WebSocket feed and a refetch as Effect programs.
+- [Testing](../guides/testing.md): a test realm, and a program run in it.

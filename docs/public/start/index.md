@@ -3,10 +3,6 @@ title: Start
 description: Read when starting with Pinna. Make a realm, a box, and a computed value, write in an update, show the value in React, and choose between a plain box and a schema box.
 ---
 
-> [!NOTE]
-> Pinna 0.0.1 is a release before 1.0: any release before 1.0 may change the
-> API, and none promises compatibility with the one before.
-
 ## Example
 
 A realm holds every observable it makes. Make one for the app, in module code.

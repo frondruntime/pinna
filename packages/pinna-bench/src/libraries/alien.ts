@@ -26,21 +26,18 @@ export const alien: Library<CheckedAdapter> = {
       const signal = alienSignal(initial);
       return { get: () => signal(), set: (value) => signal(value) };
     },
+    // `compute` goes to alien-signals as its getter, with no wrapper
+    // closure: it ignores the previous value the getter receives.
     computed: <Value>(compute: () => Value): Derived<Value> => {
-      const value = alienComputed(() => compute());
+      const value = alienComputed(compute);
       return { get: () => value() };
     },
-    // alien-signals has no reaction: an effect runs at once. With no
-    // `effect` to call, a bare effect keeps `select` observed. Otherwise the
-    // first run only records the value, and later runs call `effect`
-    // untracked when the value changed, as Pinna's `watch` and MobX's
-    // `reaction` do.
-    watch: <Value>(select: () => Value, effect?: (value: Value) => void) => {
-      if (effect === undefined) {
-        return alienEffect(() => {
-          select();
-        });
-      }
+    // alien-signals has no reaction: an effect runs at once. The first run
+    // only records the value, and later runs call `effect` untracked when the
+    // value changed, as Pinna's `watch` and MobX's `reaction` do. The active
+    // subscriber is cleared and restored inline, so a notification makes no
+    // closure.
+    watch: <Value>(select: () => Value, effect: (value: Value) => void) => {
       let started = false;
       let previous: Value | undefined;
       return alienEffect(() => {
@@ -52,7 +49,12 @@ export const alien: Library<CheckedAdapter> = {
         }
         if (!Object.is(value, previous)) {
           previous = value;
-          alienUntracked(() => effect(value));
+          const outer = setActiveSub(undefined);
+          try {
+            effect(value);
+          } finally {
+            setActiveSub(outer);
+          }
         }
       });
     },

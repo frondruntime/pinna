@@ -343,7 +343,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
             pass are <a href={`${docsPath("start/principles")}#misuse-is-loud`}>listed</a>. Agents
             get the rules as{" "}
             <a href={fileUrl("packages/pinna/AGENTS.md")} target="_blank" rel="noopener noreferrer">AGENTS.md</a>{" "}
-            and the documentation as <a href="/llms-full.txt">llms-full.txt</a>.
+            and the documentation as <a href="/llms-full.txt" target="_blank" rel="noopener noreferrer">llms-full.txt</a>.
           </p>
         </header>
 
@@ -767,21 +767,19 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                 <div class="pinna-bench-term">
                   <dt>The graph on Node and Hermes</dt>
                   <dd>
-                    pinna-bench's publish tier on Node <code>26.13.1</code> and on Hermes{" "}
+                    pinna-bench's rough tier on Node <code>26.13.1</code> and on Hermes{" "}
                     <code>260318099.0.5</code>, the one React Native <code>0.88.1</code> ships,
-                    from the command line. Five launches a cell, each a process of its own that
-                    makes the library's instance once; a figure is the median of the launches'
-                    medians. The machine's load average was 2.6 to 4.5. On Node, alien-signals'
-                    increment runs in a fast or a slow mode from launch to launch; the increment
-                    row's Node figures come from a rerun of that cell, where most launches took
-                    the fast mode.
+                    from the command line. One launch a cell, a process of its own that makes the
+                    library's instance once; a figure is the median of that launch's samples. The
+                    machine's load average was 3.0 to 3.7. Every library's watchers run the same
+                    effect, which counts its calls, and every bundle is a production build.
                   </dd>
                 </div>
                 <div class="pinna-bench-term">
                   <dt>The graph on Bun</dt>
                   <dd>
                     <code>bench:graph</code> on Bun <code>1.4.4</code>, the median of 9 runs, each
-                    library in a process of its own.
+                    library in a process of its own with <code>NODE_ENV</code> set to production.
                   </dd>
                 </div>
               </dl>

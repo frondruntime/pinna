@@ -53,12 +53,7 @@ export const legend: Library<Adapter> = {
         const value = legendObservable(compute);
         return { get: () => value.get() as Value };
       },
-      watch: <Value>(select: () => Value, effect?: (value: Value) => void) => {
-        if (effect === undefined) {
-          return legendObserve(() => {
-            select();
-          });
-        }
+      watch: <Value>(select: () => Value, effect: (value: Value) => void) => {
         let started = false;
         let previous: Value | undefined;
         return legendObserve(() => {

@@ -17,8 +17,6 @@ interface Kept {
   readonly observable: Box<unknown> | Computed<unknown>;
 }
 
-const ignore = (): undefined => undefined;
-
 /**
  * Pinna through the verbs a place hands out, `read` and `write`. The
  * interface reads through `get` with no verb in hand, so the adapter keeps
@@ -63,16 +61,11 @@ export const pinna: Library<CheckedAdapter> = {
         };
         return derived;
       },
-      watch: (select, effect) =>
-        watch(
-          realm,
-          select,
-          effect === undefined
-            ? ignore
-            : (value) => {
-                effect(value);
-              },
-        ),
+      // `effect` goes to `watch` with no wrapper closure, as MobX's adapter
+      // hands it to `reaction`. Pinna's effect type returns `undefined` and
+      // the adapter's returns anything, so a conformance case may pass
+      // `values.push`; the graph ignores what an effect returns.
+      watch: (select, effect) => watch(realm, select, effect as (value: unknown) => undefined),
       // `run` goes to `update` as its recipe, with no wrapper closure: it
       // ignores the read and write the recipe receives, and every caller's
       // `run` returns nothing.

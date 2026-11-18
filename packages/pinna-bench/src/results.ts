@@ -66,7 +66,10 @@ export const Cell = Schema.Struct({
 export type Cell = typeof Cell.Type;
 
 export const Results = Schema.Struct({
-  /** The commit measured, and whether the working tree differed from it. */
+  /**
+   * The commit measured, and whether the packages, the root `package.json`,
+   * or `bun.lock` differed from it in the working tree.
+   */
   commit: Schema.String,
   dirty: Schema.Boolean,
   /** When the run started, ISO 8601. */

@@ -100,6 +100,15 @@
           "slug": "guides/errors"
         }
       ]
+    },
+    {
+      "label": "Reference",
+      "items": [
+        {
+          "label": "Error messages",
+          "slug": "reference/errors"
+        }
+      ]
     }
   ]
 }

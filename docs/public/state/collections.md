@@ -97,7 +97,8 @@ and rolls back with the row.
   it listens to throws, and so does a listener that returns a value: it
   is synchronous. A listener that throws fails the write, which is put back.
 - What a listener keeps rolls back when it lives in boxes. A plain `Map`
-  the listener fills is not put back when the write fails.
+  of values the listener fills is not put back when the write fails; a
+  `Map` of boxes is, since it holds the boxes and the boxes are put back.
 - A listener sees rows the collection replaces, never a write to a box
   inside a row: a `SchemaModel` row whose box fields alone change is merged
   in place and reports nothing. A sum over a `BoxField` is a `computed`.
@@ -153,10 +154,30 @@ The flag and the row's own computed value live for different spans.
   whether a row reads it or not, and the collection keeps the key's box
   until the key is removed.
 
+## Sorted rows
+
+Rows in sorted order sit in one box, and `onRowChange` places each change by
+binary search. A `computed` that sorts `rows` sorts every row on each
+change. `$orders` and `Order` are the ones from
+[Indexes and sets](../guides/row-indexes.md).
+
+<!-- region rowIndexes.ts#sorted -->
+
+- Give the order a tie-breaker, such as the key. Binary search then finds
+  one place for each row, and removing `before` removes that row and not
+  another with the same amount.
+- Find `before` by the value it was reported with, never by reading the
+  collection: `replaceAll` writes every row before its first report. The
+  box holds the rows as reported for this reason.
+- Each change copies the sorted array. A `replaceAll` that adds n rows
+  reports n adds, so filling the box from empty copies O(n²) rows. Where
+  that cost shows, a persistent balanced tree in the box copies one path,
+  O(log n), per change.
+
 ## See also
 
 - [Updates](./updates.md): the update every write runs in, and `reconcile`.
-- [Indexes and sets](../guides/row-indexes.md): a set of keys, an index by another key, a sum per group, and sorted rows, kept with `onRowChange`.
+- [Indexes and sets](../guides/row-indexes.md): a set of keys, an index by another key, and a sum per group, kept with `onRowChange`.
 - [Hooks](../react/hooks.md): every way a component reads.
 - [Collection fields](../effect/collections.md): a collection as a field of a `SchemaModel`, each row checked against a schema.
 - [Equality and hashing](../effect/equality.md): what `equals` counts as an unchanged row.

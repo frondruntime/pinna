@@ -113,7 +113,12 @@ a {
   color: inherit;
 }
 
+/* The page is not captured in a view transition: only the docs content (`docs-content`) fades,
+   and the rest, background included, renders live and cuts. A captured page is shown as a
+   snapshot for the length of that fade, and Safari draws the snapshot's background differently
+   from the live one, so the background switched on every navigation. */
 html {
+  view-transition-name: none;
   accent-color: var(--accent);
   caret-color: var(--accent);
   scrollbar-color: var(--line-bright) var(--bg);

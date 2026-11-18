@@ -3,7 +3,7 @@
 `design.md` "Benchmarks" holds the reference table; this file holds where
 performance work goes next and why. "Where 1.0 stands" is the state on
 2026-11-13; "Measurements, in order" is the dated log behind it, and its
-entries after that date, through "The graph tables at the publish tier"
+entries after that date, through "The graph tables after the fairness fixes, rough tier"
 (2026-11-18), are newer than the summary.
 
 ## Direction (owner, 2026-11-04)
@@ -2340,6 +2340,56 @@ Pinna's median divided by alien-signals':
   493 KB range one build read from launch to launch on 2026-11-15.
 - **Raw results:** `packages/pinna-bench/results/` is ignored by git; the
   site's figures are in `apps/site/src/lib/benchResults.ts`.
+
+### The graph tables after the fairness fixes, rough tier (2026-11-18)
+
+The site's graph tables are replaced by a rough run made after the
+fairness fixes, which give every library's watchers the same counting
+effect and the Bun bench production builds. Pinna's lead over MobX holds and
+its gap to alien-signals widens; MobX itself moved within 8% on Node and
+Hermes, so the earlier tables did not understate it there.
+
+- **Run:** pinna-bench's rough tier, one launch a cell, on Node 26.13.1 and
+  Hermes 260318099.0.5, 321 seconds with every package clean, load average 3.0 to 3.7; then `bench:graph` on Bun 1.4.4, median
+  of 9 runs. Before it, the headless Android emulator was stopped. A
+  publish-tier run replaces these figures.
+- **Libraries:** unchanged: alien-signals 3.2.1, MobX 7.1.7, Legend State
+  3.0.0-beta.48.
+
+Pinna's median divided by alien-signals':
+
+| Scenario | Node | Hermes | Bun |
+| --- | --- | --- | --- |
+| deep chain | 1.26 | 1.82 | 1.45 |
+| fan-out | 1.75 | 1.35 | 1.42 |
+| diamond | 1.28 | 1.61 | 1.26 |
+| conditional reads | 1.56 | 1.57 | 1.23 |
+| make and dispose | 2.38 | 1.86 | 1.87 |
+| write 1,000 sources | 1.50 | 1.32 | 1.28 |
+| bursty fan-out | 0.10 | 0.29 | 0.15 |
+| increment ×100k | 1.53 | 1.51 | 1.33 |
+| one write among 10k | 1.34 | 1.41 | 1.31 |
+
+- **MobX moved within 8% on Node and Hermes**: from −6% (one write among
+  10k on Node) to +8% (the same on Hermes). On Bun, now on its production
+  build and with the counting effect, its deep chain rose 15% and its
+  diamond 10%; the rest moved within 5%.
+- **Pinna's Node figures rose where its watcher had done less**: fan-out
+  8.36 to 10.6 ms, write 1,000 sources 7.06 to 8.52, increment 13.7 to 15.0.
+  alien-signals' write 1,000 sources rose 3.70 to 5.70 ms, so that ratio
+  fell from 1.91 to 1.50.
+- **alien-signals' increment on Node took 9.81 ms in this launch**, between
+  the fast (7.8 ms) and slow (10.6 ms) modes of the publish run; one launch
+  does not say which mode a cell takes.
+- **The two alien-signals memory cells the old adapter inflated came
+  down**: increment on Node 23,298 to 13,910 KB, bursty fan-out on Node
+  9,690 to 165 KB; on Hermes 47,659 to 36,722 KB and 19,788 to 8,850 KB.
+- **Pinna's fan-out on Node allocated 273 KB a run in this launch**,
+  against 10 KB before. The counting effect does not cause it: the same
+  scenario with a no-op effect measured 0.28 MiB, against 0.20 MiB with the
+  counting effect. Within one launch the 15 counted runs ranged from 39 to
+  577 KB, so a rough launch's median swings across that range; Hermes
+  holds 14 KB. The cause is not yet found.
 
 ## Spike findings
 

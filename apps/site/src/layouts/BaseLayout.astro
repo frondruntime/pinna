@@ -39,13 +39,12 @@ const {
 } = Astro.props;
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site).href;
 const jsonLdSchema = createJsonLd({ title, description, url: canonicalUrl });
-// `<html>` takes a fixed transition name: a generated one is numbered per page, so pages whose
-// numbers differ do not pair and the whole page, background included, cross-fades instead of
-// cutting.
+// `<html>` takes no transition directive: design-system.css keeps the page out of view transitions,
+// and a scoped name from a directive would outrank that rule.
 ---
 
 <!doctype html>
-<html lang="en" transition:name="page" transition:animate="none">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />

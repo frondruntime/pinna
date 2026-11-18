@@ -17,7 +17,9 @@ A reference page has the sections Example, Rules, Answers, and See also, in
 that order. Between Answers and See also it may add sections of its own,
 each on one topic, such as `Transitions` on `react/hooks.md` or `Plain or
 schema boxes` on `start/index.md`, and then a `With Effect` section, last,
-for what `@frondruntime/pinna-effect` changes on that page. A page that
+for what `@frondruntime/pinna-effect` changes on that page. A catalogue
+page, such as `reference/errors.md`, has no Example: it lists what other
+pages name, under Rules, Answers, With Effect, and See also. A page that
 explains why, such as `start/principles.md`, argues one claim per section
 instead and names what each decision costs. The sidebar order is
 `apps/site/src/config/nav.json`.

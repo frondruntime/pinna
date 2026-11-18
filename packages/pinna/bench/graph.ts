@@ -29,13 +29,13 @@ if (requested === undefined) {
     names.map((name) => [
       name,
       measureAll((from) => {
-        const child = Bun.spawnSync([
-          process.execPath,
-          ...process.execArgv,
-          import.meta.path,
-          name,
-          String(from),
-        ]);
+        // Production, as an application ships: MobX and Legend pick their
+        // production builds from `NODE_ENV`, and without it MobX runs its
+        // development checks.
+        const child = Bun.spawnSync(
+          [process.execPath, ...process.execArgv, import.meta.path, name, String(from)],
+          { env: { ...process.env, NODE_ENV: "production" } },
+        );
         if (child.exitCode !== 0) {
           throw new Error(`${name} failed:\n${child.stderr.toString()}`);
         }

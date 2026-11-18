@@ -27,11 +27,13 @@ export interface Adapter {
   readonly box: <Value>(initial: Value) => Source<Value>;
   readonly computed: <Value>(compute: () => Value) => Derived<Value>;
   /**
-   * Keeps `select` observed. With an `effect`, runs it whenever `select`'s
-   * result changes by `Object.is`, not on the first run. Returns the function
-   * that stops watching.
+   * Keeps `select` observed and runs `effect` whenever `select`'s result
+   * changes by `Object.is`, not on the first run. Returns the function that
+   * stops watching. `effect` is required, so every library runs the same
+   * reaction: a bare effect for some and a compare-and-call for others is
+   * not the same work.
    */
-  readonly watch: <Value>(select: () => Value, effect?: (value: Value) => void) => () => void;
+  readonly watch: <Value>(select: () => Value, effect: (value: Value) => void) => () => void;
   /** The write scope. Nested calls join the outermost one. */
   readonly update: (write: () => void) => void;
 }

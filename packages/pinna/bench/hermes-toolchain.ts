@@ -61,6 +61,9 @@ export const lowerForHermes = async (entry: string): Promise<string> => {
     format: "iife",
     target: "browser",
     conditions: ["source"],
+    // A release build sets `NODE_ENV` to production; MobX and Legend pick
+    // their production builds from it.
+    define: { "process.env.NODE_ENV": '"production"' },
   });
   const [output] = bundle.outputs;
   if (!bundle.success || output === undefined) {

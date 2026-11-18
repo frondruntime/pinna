@@ -1,6 +1,7 @@
 /// <reference types="bun" />
-// The site's docs print the regions of this file (docs/public/guides/testing.md), so
-// `bun run typecheck` compiles what the page shows. The core samples are `testing.test.ts`.
+// The site's docs print the regions of this file (docs/public/guides/testing.md and
+// docs/public/effect/programs.md), so `bun run typecheck` compiles what the pages show.
+// The core samples are `testing.test.ts`.
 import { expect, test } from "bun:test";
 import { record, testRealm } from "@frondruntime/pinna/testing";
 import {
