@@ -67,8 +67,9 @@ const maximumComputeDepth = 256;
 
 /**
  * Thrown by a stale read past `maximumComputeDepth`, and through every compute
- * above it: each keeps no value, as for a cycle handed on, even one whose
- * compute catches it. Never reaches code outside a compute.
+ * above it, even one whose compute catches it. Each discards the unfinished
+ * result, retaining a cached value only for the retry's equality check.
+ * Never reaches code outside a compute.
  */
 const suspension = new Error("pinna: a compute past the depth limit waits (internal)");
 
@@ -92,6 +93,7 @@ const meetCycle = (graph: Graph, origin: Node): CycleError => {
 interface Edge {
   source: Node;
   observer: Node;
+  /** The read version, or -1 to retry an interrupted cached compute. */
   version: number;
   nextDependency: Edge | undefined;
   previousObserver: Edge | undefined;
@@ -571,10 +573,36 @@ const record = (graph: Graph, source: Node): void => {
 };
 
 /**
- * Paths kept out of `record`. A method call keeps hermesc from inlining
- * them into the hot path.
+ * Paths kept out of `record` and `recompute`. A method call keeps hermesc
+ * from inlining them into the hot path.
  */
 const cold = {
+  /** Keeps a suspended cached value for equality, but forces its unfinished compute to retry. */
+  passOn(node: Node, value: unknown, cause: Node | undefined): never {
+    if (value !== suspension || node.status !== VALUE) {
+      node.status = EMPTY;
+      node.value = undefined;
+    } else {
+      // The interrupted run already updated its read versions. Force a retry
+      // even if the value it waited for stays equal: its own result is still
+      // unfinished. A cached compute has a source that made it stale; a
+      // failed run retains that edge even if it stopped reading the source.
+      let retry = node.dependenciesHead as Edge;
+      for (let edge: Edge | undefined = retry; edge !== undefined; edge = edge.nextDependency) {
+        if (edge.source === cause) {
+          retry = edge;
+          break;
+        }
+      }
+      retry.version = -1;
+    }
+    if (value === suspension) {
+      // An interrupted volatile run was not checked, even within this walk.
+      node.walkedAt = 0;
+    }
+    node.cause = cause;
+    throw value;
+  },
   /**
    * Records a read of a source that a run begun inside this one read last,
    * so this run may have read it before that run began.
@@ -919,7 +947,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
     }
   } finally {
     // A read inside the run waits: whatever the compute did with that, the
-    // run keeps nothing and hands the wait on.
+    // run discards its unfinished result and hands the wait on.
     if (graph.suspended !== undefined) {
       passedOn = true;
       value = suspension;
@@ -976,10 +1004,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
     node.walkedClock = clock;
   }
   if (passedOn) {
-    node.status = EMPTY;
-    node.value = undefined;
-    node.cause = cause;
-    throw value;
+    cold.passOn(node, value, cause);
   }
   if (thrown) {
     keep(graph, node, value, cause);

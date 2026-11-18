@@ -1048,17 +1048,25 @@ against MobX's 7.4, a change to the last row in 2.2 ms against 7.4, and
 each row holds about 1,500 bytes against MobX's 1,560. The p99 of the
 candle collection is this cost.
 
-**A chain of first computes no longer overflows the stack.** A chain of
+**First computes and reentrant cached refreshes have bounded stack depth.** A chain of
 computed values no one has read, read first from the top, used to fail
 with `RangeError: Maximum call stack size exceeded` between 1,100 and
 1,200 links on the Hermes command line and near 980 on Node 26, since
-each compute reads the next through user code. Past 256 nested first
-computes the read now waits and the value it stopped at computes from a
+each compute reads the next through user code. Past 256 nested stale
+reads the read now waits and the value it stopped at refreshes from a
 shallow stack (`docs/design.md`, "The graph"): a million links compute
 on Node. A chain within the limit computes each value once; a chain of
 1,000 runs 1,768 computes, and longer chains approach twice their length.
-A chain read as it is built, and every later write, walks with no
-recursion and never waited.
+A chain read as it is built, and a later write refreshed by an ordinary
+freshness walk, needs no recursion or wait. A cached compute that reads a
+changed shared source before the next level reenters through user code,
+so it uses the same bound. Suspended cached values retain their value and
+version for equality cutoff, but must finish their compute on retry:
+the interrupted run already updated read versions. With unchanged results,
+the 600-level shared-source case starts 1,112 computes and the 2,000-level
+case starts 3,792, while running no watch selectors or effects again.
+A compute reading separate deep branches can restart for each branch;
+the bound of fewer than twice the length describes a single chain.
 
 **The graph shapes: Pinna is 2.0 to 3.3 times faster than MobX on Hermes,
 and allocates 3 to 1,600 times less.** A step is 100 writes, each its own
