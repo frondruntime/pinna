@@ -753,6 +753,69 @@ describe("useRealm", () => {
 });
 
 describe("useValues", () => {
+  test("resubscribes when a source is replaced in the same input array", () => {
+    const realm = createRealm();
+    const $first = schemaBox(realm, Schema.Number, 1);
+    const $second = schemaBox(realm, Schema.Number, 2);
+    const input = [$first];
+    const seen: Array<ReadonlyArray<number>> = [];
+    function Values() {
+      const values = useValues(input);
+      seen.push(values);
+      return <p>{values.join(",")}</p>;
+    }
+    const view = mount(<Values />);
+    expect(view.textContent).toBe("1");
+    expect([observers($first), observers($second)]).toEqual([1, 0]);
+    act(() => root?.render(<Values />));
+    expect(seen.at(-1)).toBe(seen[0]);
+
+    input[0] = $second;
+    act(() => root?.render(<Values />));
+    expect(view.textContent).toBe("2");
+    expect([observers($first), observers($second)]).toEqual([0, 1]);
+    act(() => update(realm, (_read, write) => write($second, 3)));
+    expect(view.textContent).toBe("3");
+    expect(seen[0]).toEqual([1]);
+
+    input.length = 0;
+    act(() => root?.render(<Values />));
+    expect(view.textContent).toBe("");
+    expect(seen.at(-1)).toEqual([]);
+    expect([observers($first), observers($second)]).toEqual([0, 0]);
+  });
+
+  test("drops cached values when the same input array is truncated", () => {
+    const realm = createRealm();
+    const $value = schemaBox(realm, Schema.Number, 1);
+    const input = [$value];
+    function Values() {
+      return <p>{useValues(input).join(",")}</p>;
+    }
+    const view = mount(<Values />);
+    input.length = 0;
+    act(() => root?.render(<Values />));
+    expect(view.textContent).toBe("");
+    expect(observers($value)).toBe(0);
+  });
+
+  test("checks realms when a source is replaced in the same input array", () => {
+    const portfolio = loaded(1);
+    const other = loaded(1);
+    const input = [portfolio.$currency, portfolio.$currency];
+    function Mixed() {
+      useValues(input);
+      return null;
+    }
+    mount(<Mixed />);
+    input[1] = other.$currency;
+    quietly(() =>
+      expect(() => act(() => root?.render(<Mixed />))).toThrow(
+        "useValues takes observables of one realm",
+      ),
+    );
+  });
+
   test("throws for observables of two realms", () => {
     const portfolio = loaded(1);
     const other = loaded(1);
