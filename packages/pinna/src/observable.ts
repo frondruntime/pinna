@@ -1058,7 +1058,14 @@ const refusedUpdate = (core: CoreGraph, name = "update"): Error =>
  */
 export const assertUpdateCanRun = (realm: ObservableRealm, name: string): void => {
   const core = realm.core;
-  if (core.active !== undefined && core.active !== realm.autorunRun) {
+  const untracked = core.untrackedActive;
+  if (
+    core.deriving !== undefined ||
+    (core.active !== undefined && core.active !== realm.autorunRun) ||
+    (untracked !== undefined &&
+      untracked !== realm.autorunRun &&
+      (untracked.effect !== undefined || untracked.compute === undefined))
+  ) {
     throw refusedUpdate(core, name);
   }
 };
@@ -1092,6 +1099,18 @@ export const update = (realm: Realm, recipe: (read: Read, write: Write) => undef
   // The batch is opened and closed by hand: a closure here would cost
   // every update its scope on Hermes.
   const core = owner.core;
+  // A watch select has an effect, and a renderer's selector has no compute.
+  // An autorun's cleanup runs before `autorunRun` is set, in a watch with
+  // a compute and no separate effect; it retains permission to update.
+  const untracked = core.untrackedActive;
+  if (
+    core.deriving !== undefined ||
+    (untracked !== undefined &&
+      untracked !== owner.autorunRun &&
+      (untracked.effect !== undefined || untracked.compute === undefined))
+  ) {
+    throw refusedUpdate(core);
+  }
   if (core.active !== undefined) {
     if (core.active !== owner.autorunRun) {
       throw refusedUpdate(core);

@@ -16,6 +16,47 @@ import {
  */
 
 describe("read", () => {
+  test("untracked preserves a watch select's update guard before its recipe runs", () => {
+    const realm = createRealm();
+    const value = box(realm, 0);
+    let recipes = 0;
+    expect(() =>
+      watch(
+        realm,
+        () =>
+          untracked(realm, () =>
+            untracked(realm, () =>
+              update(realm, (_read, write) => {
+                recipes++;
+                write(value, 5);
+              }),
+            ),
+          ),
+        () => undefined,
+      ),
+    ).toThrow("pinna: update cannot run in a watch's select or a selector");
+    expect(recipes).toBe(0);
+    expect(untracked(realm, (read) => read(value))).toBe(0);
+    untracked(realm, () => update(realm, (_read, write) => write(value, 1)));
+    expect(untracked(realm, (read) => read(value))).toBe(1);
+  });
+
+  test("untracked preserves a computed update guard before its recipe runs", () => {
+    const realm = createRealm();
+    let recipes = 0;
+    const value = computed(realm, () =>
+      untracked(realm, () => {
+        update(realm, () => {
+          recipes++;
+        });
+      }),
+    );
+    expect(() => untracked(realm, (read) => read(value))).toThrow(
+      "pinna: update cannot run in a computed value",
+    );
+    expect(recipes).toBe(0);
+  });
+
   test("tracks in a computed value, a watch, and an autorun", () => {
     const realm = createRealm();
     const $count = box(realm, 1);
