@@ -938,6 +938,65 @@ describe("watcher errors", () => {
 });
 
 describe("observer links", () => {
+  test("a nested read after reordering does not reuse a stale duplicate edge", () => {
+    const local = new Graph();
+    const left = local.cell(1);
+    const right = local.cell(2);
+    const reversed = local.cell(false);
+    const derived = local.derived(() => readCell(right));
+    const aggregate = local.derived(() => {
+      if (readCell(reversed)) {
+        readCell(right);
+        readCell(left);
+      } else {
+        readCell(left);
+        readCell(right);
+      }
+      return readDerived(derived) + readCell(right);
+    });
+    const stop = local.watch(() => readDerived(aggregate));
+    local.batch(() => {
+      writeCell(right, 3);
+      writeCell(reversed, true);
+    });
+    expect(readDerived(aggregate)).toBe(6);
+    expect(observerCount(right)).toBe(2);
+    stop();
+    expect(observerCount(right)).toBe(0);
+    expectAtRest(local);
+  });
+
+  test("a wide aggregate reads computed-then-source pairs once and releases dropped rows", () => {
+    const local = new Graph();
+    const rows = Array.from({ length: 8000 }, (_, index) => {
+      const source = local.cell(index);
+      return { source, derived: local.derived(() => 2 * readCell(source)) };
+    });
+    const count = local.cell(rows.length);
+    const aggregate = local.derived(() => {
+      let total = 0;
+      for (let index = 0; index < readCell(count); index++) {
+        const row = rows[index] as (typeof rows)[number];
+        total += readDerived(row.derived) + readCell(row.source);
+      }
+      return total;
+    });
+    expect(readDerived(aggregate)).toBe((3 * 8000 * 7999) / 2);
+    const stop = local.watch(() => readDerived(aggregate));
+    const first = rows[0] as (typeof rows)[number];
+    const last = rows[7999] as (typeof rows)[number];
+    expect(observerCount(first.source)).toBe(2);
+    expect(observerCount(last.source)).toBe(2);
+    writeCell(first.source, 10);
+    expect(readDerived(aggregate)).toBe((3 * 8000 * 7999) / 2 + 30);
+    writeCell(count, 1);
+    expect(readDerived(aggregate)).toBe(30);
+    expect(observerCount(last.source)).toBe(0);
+    stop();
+    expect(observerCount(first.source)).toBe(0);
+    expectAtRest(local);
+  });
+
   test("watchers run in link order after the first observer leaves", () => {
     const local = new Graph();
     const cell = local.cell(0);
