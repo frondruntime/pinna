@@ -213,25 +213,29 @@ export const benchTables: ReadonlyArray<BenchTable> = [
  * A figure within the tie limit of the best one is `best` too, so a row can
  * have more than one.
  */
-export type BenchTone = "best" | "near" | "behind" | "far" | "farthest" | "beyond" | "failed";
+export type BenchTone = "best" | "near" | "behind" | "far" | "farthest" | "beyond" | "off-scale";
 
 export interface BenchCell {
   readonly text: string;
   readonly tone?: BenchTone;
-  /** The cell's figure divided by the best one, for the cell's tooltip. */
-  readonly ratio?: string;
+  /** The cell's tooltip: its figure divided by the best one, or why the run gave none. */
+  readonly note?: string;
+  /** The run gave no figure; the cell's text is the failure. */
+  readonly failed?: true;
 }
 
 /**
  * Up to these multiples of the best figure, a cell ties with it, then is
- * near, behind, far, and farthest; past them, beyond. The tie limit is an
- * estimate of the spread between runs.
+ * near, behind, far, farthest, and beyond; past them, off the scale, with a
+ * run that gave no figure. The tie limit is an estimate of the spread between
+ * runs.
  */
 const tieLimit = 1.05;
 const nearLimit = 1.5;
 const behindLimit = 3;
 const farLimit = 10;
 const farthestLimit = 100;
+const beyondLimit = 1000;
 
 const numberFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
@@ -246,7 +250,9 @@ const toneOf = (ratio: number): BenchTone =>
           ? "far"
           : ratio <= farthestLimit
             ? "farthest"
-            : "beyond";
+            : ratio <= beyondLimit
+              ? "beyond"
+              : "off-scale";
 
 /** What each color means, in the order of the limits: the legend above the tables. */
 export const benchLegend: ReadonlyArray<{ readonly tone: BenchTone; readonly text: string }> = [
@@ -255,8 +261,8 @@ export const benchLegend: ReadonlyArray<{ readonly tone: BenchTone; readonly tex
   { tone: "behind", text: `within ${behindLimit}×` },
   { tone: "far", text: `within ${farLimit}×` },
   { tone: "farthest", text: `within ${farthestLimit}×` },
-  { tone: "beyond", text: `more than ${farthestLimit}×` },
-  { tone: "failed", text: "stack overflow" },
+  { tone: "beyond", text: `within ${numberFormat.format(beyondLimit)}×` },
+  { tone: "off-scale", text: `more than ${numberFormat.format(beyondLimit)}×, or stack overflow` },
 ];
 
 /** One cell: its figure, and its color when two or more libraries were measured on that runtime. */
@@ -270,7 +276,7 @@ export const benchCell = (
     return { text: "—" };
   }
   if (typeof result !== "number") {
-    return { text: result.failure, tone: "failed" };
+    return { text: result.failure, tone: "off-scale", note: "stack overflow", failed: true };
   }
   const measured = benchLibraries
     .map(({ key }) => row.results[key]?.[runtime])
@@ -280,5 +286,5 @@ export const benchCell = (
     return { text };
   }
   const ratio = result / Math.min(...measured);
-  return { text, tone: toneOf(ratio), ratio: `${numberFormat.format(ratio)}× the best` };
+  return { text, tone: toneOf(ratio), note: `${numberFormat.format(ratio)}× the best` };
 };

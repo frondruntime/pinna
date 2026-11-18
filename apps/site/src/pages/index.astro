@@ -650,7 +650,15 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
               runtime.
             </p>
             <ul>
-              {benchLegend.map((entry) => <li class={`pinna-bench-swatch is-${entry.tone}`}>{entry.text}</li>)}
+              {benchLegend.map((entry) => (
+                <li class={`pinna-bench-swatch is-${entry.tone}`}>
+                  {entry.tone === "off-scale" ? (
+                    <span class="pinna-bench-glitch" data-text={entry.text}>{entry.text}</span>
+                  ) : (
+                    entry.text
+                  )}
+                </li>
+              ))}
             </ul>
             <p class="pinna-bench-note">Hover a cell for its ratio. A dash is not measured.</p>
           </div>
@@ -716,11 +724,15 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                                     <td
                                       class:list={[
                                         cell.tone !== undefined && `is-${cell.tone}`,
-                                        { "is-last": index === runtimes.length - 1 },
+                                        { "is-failed": cell.failed, "is-last": index === runtimes.length - 1 },
                                       ]}
-                                      title={cell.tone === "failed" ? "stack overflow" : cell.ratio}
+                                      title={cell.note}
                                     >
-                                      {cell.text}
+                                      {cell.tone === "off-scale" ? (
+                                        <span class="pinna-bench-glitch" data-text={cell.text}>{cell.text}</span>
+                                      ) : (
+                                        cell.text
+                                      )}
                                     </td>
                                   );
                                 }),
