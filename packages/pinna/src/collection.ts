@@ -731,7 +731,9 @@ export const collection = <Key, Value>(
  * The listener first hears each row already held, in key order, as added,
  * so what it keeps starts in step with the rows. That runs in an update of
  * its own, nested in the caller's when there is one: a throw from it adds
- * no listener, puts back what it wrote, and reaches the caller.
+ * no listener, puts back what it wrote, and reaches the caller. If settling
+ * watchers throws after replay commits, the listener is removed and the
+ * replay's writes stay committed.
  *
  * The listener sees rows the collection replaces, never a write to a box
  * inside a row: a sum over a `BoxField` is a `computed`. `replaceAll` writes
@@ -757,16 +759,23 @@ export const onRowChange = <Key, Value>(
   const realm = keyed.realm;
   assertUpdateCanRun(realm, "onRowChange");
   let stop: () => void = () => undefined;
-  // One update, nested in the caller's when there is one, so a replay that
-  // throws removes the listener and undoes what it wrote.
-  update(realm, () => {
-    if (keyed.reporting) {
-      throw new Error("pinna: onRowChange on the collection an onRowChange listener is reporting");
-    }
-    const remove = keyed.listen(listener);
-    stop = realm.running?.("onRowChange", remove) ?? remove;
-    realm.recordUndo(stop);
-    keyed.replay(listener);
-  });
+  // A recipe failure undoes replay writes; a settle failure keeps them.
+  // Both remove the listener, since the caller receives no stop function.
+  try {
+    update(realm, () => {
+      if (keyed.reporting) {
+        throw new Error(
+          "pinna: onRowChange on the collection an onRowChange listener is reporting",
+        );
+      }
+      const remove = keyed.listen(listener);
+      stop = realm.running?.("onRowChange", remove) ?? remove;
+      realm.recordUndo(stop);
+      keyed.replay(listener);
+    });
+  } catch (error) {
+    stop();
+    throw error;
+  }
   return stop;
 };

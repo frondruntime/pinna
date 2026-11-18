@@ -88,6 +88,44 @@ const b1 = { id: "b", group: "one" };
 const c2 = { id: "c", group: "two" };
 
 describe("onRowChange", () => {
+  test("a settle failure during registration removes the listener and keeps replay writes", () => {
+    const realm = createRealm({
+      onError: () => {
+        throw new Error("sink");
+      },
+    });
+    const rows = collection(realm, { keyOf: (value: number) => value });
+    const count = box(realm, 0);
+    update(realm, (_read, write) => {
+      write.upsert(rows, 1);
+    });
+    const stop = watch(
+      realm,
+      (read) => read(count),
+      () => {
+        throw new Error("effect");
+      },
+    );
+    using _watcher = held(stop);
+    let calls = 0;
+    expect(() =>
+      onRowChange(rows, (_change, read, write) => {
+        calls++;
+        write(count, read(count) + 1);
+      }),
+    ).toThrow("sink");
+    stop();
+    expect(untracked(realm, (read) => read(count))).toBe(1);
+
+    update(realm, (_read, write) => {
+      write.upsert(rows, 2);
+    });
+
+    expect(calls).toBe(1);
+    expect(untracked(realm, (read) => read(count))).toBe(1);
+    expectRealmAtRest(realm);
+  });
+
   test("removing and re-adding a row reports both changes and keeps the old handle current", () => {
     using realm = testRealm();
     const rows = collection<number, number>(realm, { keyOf: () => 1 });
