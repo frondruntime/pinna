@@ -269,6 +269,17 @@ ruling carries the date it was first written down, and uses today's names.
     watches 28% slower (2.43 ms to 3.1 ms, rough tier, Node,
     `make-and-dispose`). `retainedKeys` joined the entry on 2026-11-17.
 
+53. **A collection row cannot be `undefined`** (2026-11-18).
+    `write.upsert` and `write.replaceAll` reject an `undefined` row in every
+    collection before changing any row, with
+    `pinna: a collection row cannot be undefined`; an uncaught rejection
+    rolls back the update. A `CollectionField` rejects it on decode too,
+    even when the row schema accepts it. `row(key)` and `read.row` return
+    `undefined` for a missing key, so readers cannot distinguish a present
+    `undefined` row from a missing key. The internal absence marker let a
+    row cell skip the schema check; rejecting it at entry keeps that marker
+    internal and checks incoming rows whether or not a cell exists.
+
 ## Build slices
 
 Built in order, each with its tests: 0, housekeeping (Effect 4.1.0, the

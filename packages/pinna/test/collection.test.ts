@@ -18,7 +18,7 @@ import { keptRead, keptWrite } from "./kept.ts";
 import { expectRealmAtRest } from "./rest.ts";
 
 /**
- * The plain `collection` checks nothing and compares rows by `equals`, or by
+ * The plain `collection` has no schema and compares rows by `equals`, or by
  * identity without one. Its tracking is pinna-effect's `CollectionField`'s,
  * tested there in full; these tests cover what the plain entry adds.
  */
@@ -59,6 +59,51 @@ const priceOf = (realm: Realm, rows: Collection<string, Row>, id: string) =>
   untracked(realm, (read) => read(rows.row(id))?.price);
 
 describe("collection", () => {
+  for (const materialized of [false, true]) {
+    for (const operation of ["upsert", "replaceAll"] as const) {
+      test(`${operation} rejects undefined and rolls back with a cell ${materialized}`, () => {
+        const realm = createRealm();
+        const rows = collection<number, number | undefined>(realm, { keyOf: () => 1 });
+        update(realm, (_read, write) => {
+          write.upsert(rows, 7);
+        });
+        if (materialized) {
+          untracked(realm, (read) => read(rows.row(1)));
+        }
+
+        expect(() =>
+          update(realm, (_read, write) => {
+            write.upsert(rows, 8);
+            if (operation === "upsert") {
+              write.upsert(rows, undefined);
+            } else {
+              write.replaceAll(rows, [undefined]);
+            }
+          }),
+        ).toThrow("pinna: a collection row cannot be undefined");
+        expect(untracked(realm, (read) => read(rows.rows))).toEqual([7]);
+        expect(untracked(realm, (read) => read.row(rows, 1))).toBe(7);
+        expectRealmAtRest(realm);
+      });
+    }
+  }
+
+  test("replaceAll rejects undefined before changing rows when caught inside the update", () => {
+    const realm = createRealm();
+    const rows = collection<number, number | undefined>(realm, { keyOf: (value) => value ?? 0 });
+    update(realm, (_read, write) => {
+      write.upsert(rows, 7);
+    });
+    update(realm, (read, write) => {
+      expect(() => write.replaceAll(rows, [8, undefined])).toThrow(
+        "pinna: a collection row cannot be undefined",
+      );
+      expect(read(rows.rows)).toEqual([7]);
+      expect(read(rows.keys)).toEqual([7]);
+    });
+    expectRealmAtRest(realm);
+  });
+
   test("starts empty and takes rows from upsert, remove, and replaceAll", () => {
     const realm = createRealm();
     const rows = collection(realm, { keyOf });

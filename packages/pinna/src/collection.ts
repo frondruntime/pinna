@@ -1,7 +1,7 @@
 /**
  * A keyed collection: a box for each key a reader reads and one for the
  * order of the keys, so a write to one row costs the readers of that row,
- * not the readers of the list. `collection` makes one that checks nothing;
+ * not the readers of the list. `collection` makes one without a schema;
  * pinna-effect's `CollectionField` makes one a `SchemaModel` field, checked
  * by the field's schema.
  *
@@ -174,6 +174,8 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
   ) {
     this.check = check;
     this.merge = merge;
+    // Incoming rows reject undefined before reaching a cell. Only removal
+    // writes undefined here, so the schema checks every incoming row.
     // A check that accepts every value is kept as is: a cell's write skips the call.
     this.cellCheck =
       check === acceptAll
@@ -189,6 +191,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     const keys = new Array<Key>(values.length);
     for (let index = 0; index < values.length; index++) {
       const value = values[index] as Value;
+      if (value === undefined) {
+        throw new Error("pinna: a collection row cannot be undefined");
+      }
       const key = keyOf(value);
       if (held.has(key)) {
         throw new Error(repeatedKeyMessage(key));
@@ -303,6 +308,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     // Checked before the listeners, so a listener that removed itself still
     // cannot write the collection it is reporting.
     this.assertNotReporting("write.upsert");
+    if (value === undefined) {
+      throw new Error("pinna: a collection row cannot be undefined");
+    }
     if (this.listeners === undefined) {
       this.upsertAccepted(value, options);
       return;
@@ -393,6 +401,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     const next = new Map<Key, Value>();
     for (let index = 0; index < count; index++) {
       const value = values[index] as Value;
+      if (value === undefined) {
+        throw new Error("pinna: a collection row cannot be undefined");
+      }
       const key = keyOf(value);
       if (next.has(key)) {
         throw new Error(repeatedKeyMessage(key));
@@ -686,7 +697,8 @@ export interface CollectionOptions<Key, Value> {
 /**
  * An empty keyed collection: a box for each key a reader reads, made on its
  * first read, and one for the order of the keys, so a write to one row reruns the readers of that row, not the readers
- * of the list. It checks nothing; `write.upsert`, `write.remove`, and
+ * of the list. It rejects `undefined` rows and takes no schema;
+ * `write.upsert`, `write.remove`, and
  * `write.replaceAll` change it.
  */
 export const collection = <Key, Value>(

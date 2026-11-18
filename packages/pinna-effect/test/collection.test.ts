@@ -61,6 +61,17 @@ const priceOf = (realm: Realm, rows: Rows, id: string) =>
   untracked(realm, (read) => read(rows.$items.row(id))?.price);
 
 describe("CollectionField", () => {
+  test("decode rejects an undefined row even when the row schema accepts it", () => {
+    class OptionalRows extends SchemaModel<OptionalRows>("OptionalRows")({
+      $items: CollectionField(Schema.Undefined, { keyOf: () => 1 }),
+    }) {}
+    const realm = createRealm();
+    expect(() => decode(realm, OptionalRows)({ items: [undefined] })).toThrow(
+      "pinna: a collection row cannot be undefined",
+    );
+    expectRealmAtRest(realm);
+  });
+
   test("decodes from a plain array under the wire key and encodes back to it", () => {
     const realm = createRealm();
     const json = rowsJson(["a", 1], ["b", 2]);
@@ -613,6 +624,51 @@ describe("decoded boxes", () => {
 });
 
 describe("schemaCollection", () => {
+  for (const materialized of [false, true]) {
+    for (const operation of ["upsert", "replaceAll"] as const) {
+      test(`${operation} rejects undefined and checks incoming rows with a cell ${materialized}`, () => {
+        const realm = createRealm();
+        const rows = schemaCollection(realm, Schema.Number, { keyOf: () => 1 });
+        update(realm, (_read, write) => {
+          write.upsert(rows, 7);
+        });
+        if (materialized) {
+          untracked(realm, (read) => read(rows.row(1)));
+        }
+
+        for (const value of [undefined, "invalid"]) {
+          expect(() =>
+            update(realm, (_read, write) => {
+              if (operation === "upsert") {
+                write.upsert(rows, value as never);
+              } else {
+                write.replaceAll(rows, [value as never]);
+              }
+            }),
+          ).toThrow(
+            value === undefined
+              ? "pinna: a collection row cannot be undefined"
+              : "rejects this value",
+          );
+          expect(untracked(realm, (read) => read(rows.rows))).toEqual([7]);
+        }
+        expectRealmAtRest(realm);
+      });
+    }
+  }
+
+  test("rejects undefined even when the row schema accepts it", () => {
+    const realm = createRealm();
+    const rows = schemaCollection(realm, Schema.Undefined, { keyOf: () => 1 });
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.upsert(rows, undefined);
+      }),
+    ).toThrow("pinna: a collection row cannot be undefined");
+    expect(untracked(realm, (read) => read(rows.rows))).toEqual([]);
+    expectRealmAtRest(realm);
+  });
+
   const Trade = Schema.Struct({
     id: Schema.String,
     amount: Schema.Number.check(Schema.isGreaterThan(0)),

@@ -9,7 +9,8 @@ A collection holds rows by key, a box for each key a reader reads, and one
 box for the order of the keys, so a write to one row reruns the readers of
 that row, not the readers of the list. A key's box is made on the first
 read of `row(key)` and kept while the key is present, so rows nobody reads
-alone cost no box. `collection` makes an empty one that checks nothing.
+alone cost no box. `collection` makes an empty one with no schema;
+`undefined` rows are rejected.
 
 <!-- region collections.tsx#collection -->
 
@@ -57,6 +58,11 @@ and rolls back with the row.
 - A collection is written with `write.upsert`, `write.remove`, and
   `write.replaceAll`, inside an update. An update that throws puts back the
   keys and every row, as it does a box.
+- `write.upsert` and `write.replaceAll` reject an `undefined` row with
+  `pinna: a collection row cannot be undefined`, before changing any row.
+  `row(key)` and `read.row` return `undefined` for a missing key, so a
+  present row cannot use that value. The rule also applies to schema
+  collections, even when the schema accepts `undefined`.
 - `upsert` replaces a held key's row in place and puts a new key first, or
   last with `{ at: "end" }`. `remove` of a missing key changes nothing.
 - Adding or removing a key copies the key order, so its cost grows with the
@@ -124,7 +130,7 @@ and rolls back with the row.
 
 | Call | Answers |
 | --- | --- |
-| `collection(realm, { keyOf, equals? })` | An empty collection that checks nothing. `equals` defaults to `Object.is`. |
+| `collection(realm, { keyOf, equals? })` | An empty collection with no schema; `undefined` rows are rejected. `equals` defaults to `Object.is`. |
 | `$items.row(key)` | A computed value of that row, or `undefined`. |
 | `read.row($items, key)` | That row, or `undefined`: tracked as `read($items.row(key))` in a tracked place, and read without making a box where nothing tracks. |
 | `$items.keys`, `$items.rows` | Computed values of the keys, and of every row, in order. |
