@@ -564,35 +564,72 @@ const createDraft = (
   return new Proxy(target, draftHandler) as Record<PropertyKey, unknown>;
 };
 
+interface FinalizedValue {
+  value: Record<PropertyKey, unknown>;
+  /** Supplied containers notify back-references if finalization copies them. */
+  readonly onCopy?: Array<(copy: Record<PropertyKey, unknown>) => void>;
+}
+
 /**
- * Replaces drafts with their values, inside new arrays and objects too. A
- * draft's copy is walked only at its touched keys, so untouched items cost
- * nothing; `visited` ends a cycle in a new value.
+ * Replaces drafts with their values, inside supplied arrays and objects too.
+ * Draft outputs are recorded before descending, so a back-reference resolves
+ * to the output. Supplied containers copy only when a child needs replacing.
  */
-const finalize = (value: unknown, visited: WeakSet<object>): unknown => {
-  if (typeof value !== "object" || value === null || visited.has(value)) {
+const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unknown => {
+  if (typeof value !== "object" || value === null) {
     return value;
+  }
+  const previous = visited.get(value);
+  if (previous !== undefined) {
+    return previous.value;
   }
   const state = (value as { [draftKey]?: DraftState })[draftKey];
   if (state !== undefined) {
     if (!state.modified) {
       return state.base;
     }
-    const copy = state.copy as Record<PropertyKey, unknown>;
+    const copy = ensureCopy(state);
+    visited.set(value, { value: copy });
     const base = state.base;
     for (const key of state.touched) {
       if (Object.hasOwn(copy, key) && copy[key] !== base[key]) {
-        copy[key] = finalize(copy[key], visited);
+        const child = copy[key];
+        copy[key] = finalize(child, visited);
+        if (typeof child === "object" && child !== null && copy[key] === child) {
+          visited.get(child)?.onCopy?.push((replacement) => {
+            copy[key] = replacement;
+          });
+        }
       }
     }
     return copy;
   }
   if (Array.isArray(value) || isPlainObject(value)) {
-    visited.add(value);
     const object = value as Record<PropertyKey, unknown>;
+    const entry: FinalizedValue = { value: object, onCopy: [] };
+    visited.set(value, entry);
+    const replace = (key: PropertyKey, child: unknown): void => {
+      if (Object.is(entry.value[key], child)) {
+        return;
+      }
+      if (entry.value === object) {
+        entry.value = Array.isArray(object)
+          ? (object.slice() as unknown as Record<PropertyKey, unknown>)
+          : { ...object };
+        for (const notify of entry.onCopy as NonNullable<FinalizedValue["onCopy"]>) {
+          notify(entry.value);
+        }
+      }
+      entry.value[key] = child;
+    };
     forEachKey(object, (key) => {
-      object[key] = finalize(object[key], visited);
+      const child = object[key];
+      replace(key, finalize(child, visited));
+      if (typeof child === "object" && child !== null && entry.value[key] === child) {
+        visited.get(child)?.onCopy?.push((replacement) => replace(key, replacement));
+      }
     });
+    return entry.value;
   }
   return value;
 };
@@ -610,7 +647,7 @@ const produce = <Value>(base: Value, recipe: (draft: Draft<Value>) => undefined)
     if (result !== undefined) {
       throw new Error("pinna: a modify recipe returns nothing; write through the draft");
     }
-    return finalize(draft, new WeakSet()) as Value;
+    return finalize(draft, new WeakMap()) as Value;
   } finally {
     session.open = false;
   }
