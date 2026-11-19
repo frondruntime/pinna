@@ -79,6 +79,13 @@ describe("reconcile", () => {
     ).toThrow("reconcile: the key a appears twice");
   });
 
+  test("names a repeated key with no string form by its type", () => {
+    const key: unknown = Object.create(null);
+    expect(() =>
+      reconcile([], [1, 2], { keyOf: () => key, equals: (left, right) => left === right }),
+    ).toThrow("pinna: reconcile: the key (an unprintable object) appears twice");
+  });
+
   test("equals is required", () => {
     // @ts-expect-error: without a schema there is no comparison to fall back on.
     expect(() => reconcile([], [], { keyOf })).not.toThrow();

@@ -4,6 +4,8 @@
  * notifies nobody and a row's component does not rerender.
  */
 
+import { keyName } from "./collection.ts";
+
 export interface ReconcileOptions<Item, Key> {
   /** The item's identity across fetches; a key repeated in `next` throws. */
   readonly keyOf: (item: Item) => Key;
@@ -37,7 +39,7 @@ export const reconcile = <Item, Key>(
     const item = next[index] as Item;
     const key = keyOf(item);
     if (seen.has(key)) {
-      throw new Error(`pinna: reconcile: the key ${String(key)} appears twice`);
+      throw new Error(`pinna: reconcile: the key ${keyName(key)} appears twice`);
     }
     seen.add(key);
     const kept = byKey.get(key) as Item;

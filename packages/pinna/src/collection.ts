@@ -78,8 +78,22 @@ export const repeatedKey = <Key>(keys: ReadonlyArray<Key>): { readonly key: Key 
   return undefined;
 };
 
+/**
+ * Names a key, or its type when it has no string form, such as an object
+ * with no prototype: the name goes in a message that reports a rejected
+ * key, and a throw while writing it would replace that message, and inside
+ * an Effect schema filter turn a failure into a defect.
+ */
+export const keyName = (key: unknown): string => {
+  try {
+    return String(key);
+  } catch {
+    return `(an unprintable ${typeof key})`;
+  }
+};
+
 export const repeatedKeyMessage = (key: unknown): string =>
-  `pinna: the collection key ${String(key)} appears twice`;
+  `pinna: the collection key ${keyName(key)} appears twice`;
 
 /**
  * Plans the merge of `fresh` into `held` and writes nothing: `false` when
