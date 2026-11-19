@@ -897,14 +897,24 @@ const checkObserving = (graph: Graph): void => {
   }
 };
 
-/** Keeps `error` as `node`'s value until a source changes. */
-const keep = (graph: Graph, node: Node, error: unknown, cause: Node | undefined): void => {
+/**
+ * Keeps `error` as `node`'s value until a source changes. It is current as
+ * of `clock`: a run's error, as of the clock the run began at, so a write a
+ * hook made while it ran leaves the error due for another check.
+ */
+const keep = (
+  graph: Graph,
+  node: Node,
+  error: unknown,
+  cause: Node | undefined,
+  clock: number,
+): void => {
   node.value = error;
   node.version = ++graph.versions;
   node.status = ERROR;
   node.cause = cause;
   node.walkedAt = graph.walk;
-  node.walkedClock = graph.clock;
+  node.walkedClock = clock;
 };
 
 /**
@@ -1007,7 +1017,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
     cold.passOn(node, value, cause);
   }
   if (thrown) {
-    keep(graph, node, value, cause);
+    keep(graph, node, value, cause, clock);
     return;
   }
   if (!same) {
@@ -1196,7 +1206,7 @@ const refresh = (graph: Graph, root: Node): Node | undefined => {
       if (error instanceof CycleError && error.origin === node) {
         // The cycle closed on a value mid-walk: it keeps the error, like one
         // that closed mid-compute.
-        keep(graph, node, error, undefined);
+        keep(graph, node, error, undefined, graph.clock);
       }
     }
     stack.length = base;
@@ -1285,7 +1295,7 @@ const computeBounded = (graph: Graph, node: Node): void => {
           // The cycle closed on a value that waits: it keeps the error, as
           // one that closed mid-compute, and is settled, so it waits no more.
           error.origin.computing = false;
-          keep(graph, error.origin, error, undefined);
+          keep(graph, error.origin, error, undefined, graph.clock);
           waiting.splice(waiting.indexOf(error.origin), 1);
         } else if (error !== suspension) {
           throw error;
