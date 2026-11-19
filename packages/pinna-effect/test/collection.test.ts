@@ -113,6 +113,25 @@ describe("CollectionField", () => {
     });
   });
 
+  test("a repeated key with no string form fails the Effect decode instead of dying", () => {
+    const realm = createRealm();
+    const key: unknown = Object.create(null);
+    class Unprintable extends SchemaModel<Unprintable>("Unprintable")({
+      $items: CollectionField(Schema.Number, { keyOf: () => key }),
+    }) {}
+    const exit = Effect.runSyncExit(
+      Schema.decodeUnknownEffect(Unprintable)({ items: [1, 2] }).pipe(
+        Effect.provideService(RealmService, realm),
+      ),
+    );
+    expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(true);
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
+    expect(Cause.pretty((exit as Exit.Failure<unknown, unknown>).cause)).toContain(
+      "pinna: the collection key (an unprintable object) appears twice",
+    );
+    expectRealmAtRest(realm);
+  });
+
   test("decodes from a plain array under the wire key and encodes back to it", () => {
     const realm = createRealm();
     const json = rowsJson(["a", 1], ["b", 2]);
