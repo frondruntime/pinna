@@ -188,7 +188,10 @@ export const CollectionField = <S extends Schema.Top, Key>(
   const check = checkOf(schema);
   const equals = equalsOf<S["Type"]>(schema);
   const { keyOf } = options;
+  // The undefined row fails here, before `keyOf` runs on it and before
+  // `make` builds the collection, whose constructor would throw a defect.
   const noRepeatedKey = Schema.makeFilter((values: ReadonlyArray<S["Type"]>) => {
+    if (values.includes(undefined)) return "pinna: a collection row cannot be undefined";
     const repeated = repeatedKey(values.map(keyOf));
     return repeated === undefined ? undefined : repeatedKeyMessage(repeated.key);
   });
