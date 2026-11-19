@@ -224,3 +224,111 @@ describe("finalizing assigned containers read through a draft", () => {
     expect(before.removed).toBeUndefined();
   });
 });
+
+describe("an object assigned at two keys of a draft stays one object", () => {
+  interface Shared {
+    n: number;
+    m: number;
+    self: Shared | undefined;
+  }
+  interface State {
+    a: Shared | undefined;
+    b: Shared | undefined;
+    holder: { shared: Shared } | undefined;
+  }
+  const sharedValue = (): Shared => {
+    const shared: Shared = { n: 0, m: 0, self: undefined };
+    shared.self = shared;
+    return shared;
+  };
+  const empty = (): State => ({ a: undefined, b: undefined, holder: undefined });
+
+  test.each([
+    ["a", "b"],
+    ["b", "a"],
+  ] as const)("assigned to %s first, written through a", (first, second) => {
+    using realm = testRealm();
+    const $state = box(realm, empty());
+    const shared = sharedValue();
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft[first] = shared;
+        draft[second] = shared;
+        if (draft.a !== undefined) {
+          draft.a.n = 1;
+        }
+        expect(draft.b?.n).toBe(1);
+        expect(draft.a?.self).toBe(draft.a);
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.a).toBe(result.b);
+    expect(result.a?.self).toBe(result.a);
+    expect(result.a?.n).toBe(1);
+    expect(result.a).not.toBe(shared);
+    expect(shared).toEqual({ n: 0, m: 0, self: shared });
+  });
+
+  test("writes through both keys land in the one object", () => {
+    using realm = testRealm();
+    const $state = box(realm, empty());
+    const shared = sharedValue();
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.a = shared;
+        draft.b = shared;
+        draft.a.n = 1;
+        draft.b.m = 2;
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.a).toBe(result.b);
+    expect(result.a?.n).toBe(1);
+    expect(result.a?.m).toBe(2);
+    expect(result.a?.self).toBe(result.a);
+    expect(shared).toEqual({ n: 0, m: 0, self: shared });
+  });
+
+  test("a container assigned and never read through the draft holds the written object", () => {
+    using realm = testRealm();
+    const $state = box(realm, empty());
+    const shared = sharedValue();
+    const holder = { shared };
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.holder = holder;
+        draft.a = shared;
+        draft.a.n = 1;
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.holder?.shared).toBe(result.a);
+    expect(result.a?.n).toBe(1);
+    expect(result.holder).not.toBe(holder);
+    expect(holder.shared).toBe(shared);
+    expect(shared.n).toBe(0);
+  });
+
+  test("an assigned object moved by splice is the same draft as at its other key", () => {
+    using realm = testRealm();
+    const $list = box<{ list: Array<Shared>; a: Shared | undefined }>(realm, {
+      list: [],
+      a: undefined,
+    });
+    const shared = sharedValue();
+    update(realm, (_read, write) => {
+      write.modify($list, (draft) => {
+        draft.list = [shared];
+        draft.a = shared;
+        const [removed] = draft.list.splice(0, 1);
+        expect(removed).toBe(draft.a);
+        draft.list.push(removed as Shared);
+        draft.a.n = 1;
+      });
+    });
+    const result = untracked(realm, (read) => read($list));
+    expect(result.list[0]).toBe(result.a);
+    expect(result.a?.n).toBe(1);
+    expect(shared.n).toBe(0);
+  });
+});
