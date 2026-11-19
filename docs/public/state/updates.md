@@ -40,6 +40,18 @@ through `untracked`.
 - Values are plain data. Change them with `write` or
   `write.modify`, never in place: a value is not a proxy, so a change made in
   place is seen by no watcher.
+- An array or object a recipe assigns into a draft is never changed in place:
+  a write through the draft copies it, so the caller's object keeps its
+  value. Within one `write.modify` call, every key that holds the assigned
+  object holds one draft and finalizes to one copy, so a write through one
+  key shows at every other. The rule holds per call: a later `write.modify`
+  call that assigns the same object again assigns the original, not the copy
+  the earlier call wrote.
+- The box's value is drafted as a tree: an object it already holds gets a
+  draft per key that reaches it. To hold that object at a second key, assign
+  its draft (`draft.right = draft.left`); assigning the object itself gives the
+  second key a separate draft, and a write through one key does not show at
+  the other.
 - An update is synchronous. A recipe that returns a promise throws at once and
   is undone, because a write after an `await` would land outside the update.
   Await first, then open a new update.

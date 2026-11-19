@@ -193,7 +193,13 @@ and `src/class.ts`.
   untouched items cost nothing. `shift`, `unshift`, and `splice` on a
   draft array move elements in the copy without drafting them; `sort`,
   `reverse`, `fill`, `copyWithin`, and iterating still draft every element
-  they read. A draft used after its recipe returned throws. A `SchemaModel`
+  they read. A draft used after its recipe returned throws. An object the
+  recipe assigns gets one draft per `write.modify` call, shared by every key
+  that holds it, so it finalizes to one copy; the assigned object itself is
+  never written. The base is drafted as a tree, one draft per key: joining
+  an object the base already holds to its other keys would mean scanning
+  the base on every call, so a recipe that wants one object at two keys
+  assigns the draft (`draft.right = draft.left`). A `SchemaModel`
   or `Model` instance, a box, a computed value, a `Date`, a `Map`, or a `Set` inside a
   value is not drafted: the recipe gets the held value itself, so the types
   leave it read-only all the way down, and a recipe replaces it with a new
