@@ -470,6 +470,35 @@ const arrayMoves = {
   },
 };
 
+/**
+ * The value at an own `key` of `source`, the latest of `state`, as the draft
+ * hands it out: an array or plain object as its child draft, made once and
+ * cached, so every read of the key gives the same draft and its writes.
+ */
+const childOf = (
+  state: DraftState,
+  source: Record<PropertyKey, unknown>,
+  key: PropertyKey,
+): unknown => {
+  const value = source[key];
+  if (!isDraftable(value)) {
+    return value;
+  }
+  const cached = state.children?.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const child = createDraft(value, state, state.session, state.supplied || state.touched.has(key));
+  if (state.copy === undefined) {
+    state.children ??= new Map();
+    state.children.set(key, child);
+  } else {
+    state.copy[key] = child;
+  }
+  state.touched.add(key);
+  return child;
+};
+
 const draftHandler: ProxyHandler<object> = {
   get(target, key) {
     const state = (target as { [draftKey]: DraftState })[draftKey];
@@ -484,28 +513,7 @@ const draftHandler: ProxyHandler<object> = {
       }
       return Reflect.get(source, key);
     }
-    const value = source[key];
-    if (isDraftable(value)) {
-      const cached = state.children?.get(key);
-      if (cached !== undefined) {
-        return cached;
-      }
-      const child = createDraft(
-        value,
-        state,
-        state.session,
-        state.supplied || state.touched.has(key),
-      );
-      if (state.copy === undefined) {
-        state.children ??= new Map();
-        state.children.set(key, child);
-      } else {
-        state.copy[key] = child;
-      }
-      state.touched.add(key);
-      return child;
-    }
-    return value;
+    return childOf(state, source, key);
   },
   set(target, key, value) {
     const state = (target as { [draftKey]: DraftState })[draftKey];
@@ -544,8 +552,14 @@ const draftHandler: ProxyHandler<object> = {
       writable: true,
       configurable: !isLength,
       enumerable: descriptor.enumerable ?? false,
-      // A child read before the first write sits in `children`, not the base.
-      value: state.children?.get(key) ?? source[key],
+      // The child a read gives, so a write through the descriptor's value
+      // lands in the draft and rolls back with it. A recipe that returned
+      // gets a draft that refuses writes, never the committed object.
+      value: state.session.open
+        ? childOf(state, source, key)
+        : isDraftable(source[key])
+          ? createDraft(source[key], state, state.session)
+          : source[key],
     };
   },
   defineProperty() {
