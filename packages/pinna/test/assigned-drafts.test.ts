@@ -355,4 +355,30 @@ describe("an object assigned at two keys of a draft stays one object", () => {
     expect(result.wrapper).not.toBe(supplied);
     expect(supplied[key].n).toBe(0);
   });
+
+  test("a draft of an assigned object pushed into its own list finalizes to the object's copy", () => {
+    using realm = testRealm();
+    interface Holder {
+      list: Array<Holder>;
+    }
+    const supplied: Holder = { list: [] };
+    const $state = box(realm, {
+      holder: undefined as Holder | undefined,
+      list: undefined as Array<Holder> | undefined,
+    });
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.holder = supplied;
+        draft.list = supplied.list;
+        // The list holds the holder's draft; the holder copies once its list
+        // finalizes as a copy, and the list's entry follows that copy.
+        draft.list.push(draft.holder);
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.holder).not.toBe(supplied);
+    expect(result.list).toBe(result.holder?.list);
+    expect(result.holder?.list[0]).toBe(result.holder);
+    expect(supplied.list).toEqual([]);
+  });
 });
