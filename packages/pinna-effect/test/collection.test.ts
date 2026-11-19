@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Schema } from "effect";
+import { Cause, Effect, Exit, Schema } from "effect";
 import {
   BoxField,
   CollectionField,
@@ -8,6 +8,7 @@ import {
   observe,
   type Read,
   type Realm,
+  RealmService,
   SchemaModel,
   schemaCollection,
   untracked,
@@ -61,15 +62,55 @@ const priceOf = (realm: Realm, rows: Rows, id: string) =>
   untracked(realm, (read) => read(rows.$items.row(id))?.price);
 
 describe("CollectionField", () => {
-  test("decode rejects an undefined row even when the row schema accepts it", () => {
+  describe("an undefined row is a schema failure, even when the row schema accepts it", () => {
     class OptionalRows extends SchemaModel<OptionalRows>("OptionalRows")({
       $items: CollectionField(Schema.Undefined, { keyOf: () => 1 }),
     }) {}
-    const realm = createRealm();
-    expect(() => decode(realm, OptionalRows)({ items: [undefined] })).toThrow(
-      "pinna: a collection row cannot be undefined",
-    );
-    expectRealmAtRest(realm);
+    // A `keyOf` that reads the row would throw on `undefined` if it ran.
+    class KeyedRows extends SchemaModel<KeyedRows>("KeyedRows")({
+      $items: CollectionField(Schema.UndefinedOr(Row), { keyOf: (row) => (row as Row).id }),
+    }) {}
+
+    test.each([
+      ["OptionalRows", OptionalRows],
+      ["KeyedRows", KeyedRows],
+    ] as const)("decode of %s throws the schema error", (_name, Model) => {
+      const realm = createRealm();
+      const failure = (() => {
+        try {
+          decode(realm, Model)({ items: [undefined] });
+        } catch (error) {
+          return error;
+        }
+        return undefined;
+      })();
+      expect(Schema.isSchemaError(failure)).toBe(true);
+      expect((failure as Error).message).toContain("pinna: a collection row cannot be undefined");
+      expectRealmAtRest(realm);
+    });
+
+    test.each([
+      ["OptionalRows", OptionalRows],
+      ["KeyedRows", KeyedRows],
+    ] as const)("the Effect decode of %s fails instead of dying", (_name, Model) => {
+      const realm = createRealm();
+      const exit = Effect.runSyncExit(
+        Schema.decodeUnknownEffect(Model)({ items: [undefined] }).pipe(
+          Effect.provideService(RealmService, realm),
+        ),
+      );
+      expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(true);
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
+      expectRealmAtRest(realm);
+    });
+
+    test("make throws the schema error and builds no collection", () => {
+      const realm = createRealm();
+      expect(() => OptionalRows.make({ realm, items: [undefined] })).toThrow(
+        "Schema validation failed",
+      );
+      expectRealmAtRest(realm);
+    });
   });
 
   test("decodes from a plain array under the wire key and encodes back to it", () => {
