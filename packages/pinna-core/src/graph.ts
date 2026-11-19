@@ -1360,6 +1360,12 @@ const refreshForRead = (graph: Graph, node: Node): void => {
       } else {
         // Only reads reached through user code nest. The iterative freshness
         // walk stays lazy: a changed earlier source may drop a later branch.
+        // Once a read waits, every stale read after it waits too: a compute
+        // that caught the wait and read on would descend to the limit again,
+        // once per catching compute above it.
+        if (graph.suspended !== undefined) {
+          throw suspension;
+        }
         if (graph.computeDepth === maximumComputeDepth) {
           graph.suspended = node;
           throw suspension;
