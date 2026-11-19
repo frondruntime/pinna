@@ -1256,6 +1256,46 @@ describe("a computed value is current as of the version its check began at", () 
     expect(readDerived(value)).toBe(1);
     stop();
   });
+
+  test("a cycle that closes on it mid-walk, after a hook wrote what it read, leaves it stale", () => {
+    const local = quiet();
+    const gate = local.cell(true);
+    const trigger = local.cell(0);
+    const watched = local.cell(0);
+    const stop = local.watch(() => readCell(watched));
+    let armed = false;
+    let origin: DerivedNode<number> | undefined;
+    const inner = local.derived(() => {
+      const read = readCell(trigger);
+      if (armed && origin !== undefined) {
+        local.onObservedNow(watched, () => {
+          writeCell(gate, false);
+          return undefined;
+        });
+        return readDerived(origin);
+      }
+      return read;
+    });
+    origin = local.derived(() => (readCell(gate) ? readDerived(inner) : 7));
+    const closed = origin;
+    readDerived(closed);
+    armed = true;
+    const attempt = (): unknown => {
+      try {
+        return readDerived(closed);
+      } catch (error) {
+        return (error as Error).message.includes("cycle") ? "cycle" : error;
+      }
+    };
+    const outer = local.derived(() => [attempt(), attempt()]);
+
+    const pair = local.batch(() => {
+      writeCell(trigger, 1);
+      return readDerived(outer);
+    });
+    expect(pair).toEqual(["cycle", 7]);
+    stop();
+  });
 });
 
 describe("a computed value that turns volatile in a run with an equal value", () => {
