@@ -679,8 +679,12 @@ const finalize = (
       if (Object.hasOwn(copy, key) && copy[key] !== base[key]) {
         const child = copy[key];
         copy[key] = finalize(child, visited, assigned);
-        if (typeof child === "object" && child !== null && copy[key] === child) {
-          visited.get(child)?.onCopy?.push((replacement) => {
+        // The child may be a draft that finalized to a supplied container,
+        // which copies later if one of its own children needs replacing.
+        const finalized =
+          typeof child === "object" && child !== null ? visited.get(child) : undefined;
+        if (finalized !== undefined && copy[key] === finalized.value) {
+          finalized.onCopy?.push((replacement) => {
             copy[key] = replacement;
           });
         }
@@ -716,8 +720,10 @@ const finalize = (
     forEachKey(object, (key) => {
       const child = object[key];
       replace(key, finalize(child, visited, assigned));
-      if (typeof child === "object" && child !== null && entry.value[key] === child) {
-        visited.get(child)?.onCopy?.push((replacement) => replace(key, replacement));
+      const finalized =
+        typeof child === "object" && child !== null ? visited.get(child) : undefined;
+      if (finalized !== undefined && entry.value[key] === finalized.value) {
+        finalized.onCopy?.push((replacement) => replace(key, replacement));
       }
     });
     return entry.value;
