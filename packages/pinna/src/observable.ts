@@ -281,7 +281,11 @@ const isPlainObject = (value: object): boolean => {
   return prototype === Object.prototype || prototype === null;
 };
 
-/** Visits each own key. Arrays by index: `Object.keys` on a large array is ten times slower in JavaScriptCore. */
+/**
+ * Visits each own enumerable key, symbols too, as a draft's copy holds
+ * them. Arrays by index: `Object.keys` on a large array is ten times slower
+ * in JavaScriptCore.
+ */
 const forEachKey = (value: object, visit: (key: PropertyKey) => void): void => {
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index++) {
@@ -291,6 +295,11 @@ const forEachKey = (value: object, visit: (key: PropertyKey) => void): void => {
   }
   for (const key of Object.keys(value)) {
     visit(key);
+  }
+  for (const key of Object.getOwnPropertySymbols(value)) {
+    if (Object.prototype.propertyIsEnumerable.call(value, key)) {
+      visit(key);
+    }
   }
 };
 

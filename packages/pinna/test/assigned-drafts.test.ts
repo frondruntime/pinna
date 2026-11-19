@@ -331,4 +331,28 @@ describe("an object assigned at two keys of a draft stays one object", () => {
     expect(result.a?.n).toBe(1);
     expect(shared.n).toBe(0);
   });
+
+  test.each([
+    "get",
+    "descriptor",
+  ])("a child at a symbol key of an assigned object, drafted by %s, finalizes", (path) => {
+    using realm = testRealm();
+    const key = Symbol("row");
+    const supplied = { [key]: { n: 0 } };
+    const $state = box(realm, { wrapper: undefined as typeof supplied | undefined });
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.wrapper = supplied;
+        const child =
+          path === "get"
+            ? draft.wrapper[key]
+            : (Reflect.getOwnPropertyDescriptor(draft.wrapper, key)?.value as { n: number });
+        child.n = 1;
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.wrapper?.[key].n).toBe(1);
+    expect(result.wrapper).not.toBe(supplied);
+    expect(supplied[key].n).toBe(0);
+  });
 });
