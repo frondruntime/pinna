@@ -686,23 +686,29 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
         return;
       }
       if (entry.value === object && state?.modified !== true) {
-        entry.value = Array.isArray(object)
+        const copy = Array.isArray(object)
           ? (object.slice() as unknown as Record<PropertyKey, unknown>)
           : { ...object };
+        copy[key] = child;
+        entry.value = copy;
         for (const notify of entry.onCopy as NonNullable<FinalizedValue["onCopy"]>) {
-          notify(entry.value);
+          notify(copy);
         }
+        return;
       }
       entry.value[key] = child;
     };
     forEachKey(object, (key) => {
       const child = object[key];
-      replace(key, finalize(child, visited));
+      const value = finalize(child, visited);
+      // Registered before the replace, which can copy this very container
+      // when the child is a back-reference to it.
       const finalized =
         typeof child === "object" && child !== null ? visited.get(child) : undefined;
-      if (finalized !== undefined && entry.value[key] === finalized.value) {
+      if (finalized !== undefined && value === finalized.value) {
         finalized.onCopy?.push((replacement) => replace(key, replacement));
       }
+      replace(key, value);
     });
     return entry.value;
   }
