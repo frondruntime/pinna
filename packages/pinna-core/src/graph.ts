@@ -1205,8 +1205,9 @@ const refresh = (graph: Graph, root: Node): Node | undefined => {
       node.cursor = undefined;
       if (error instanceof CycleError && error.origin === node) {
         // The cycle closed on a value mid-walk: it keeps the error, like one
-        // that closed mid-compute.
-        keep(graph, node, error, undefined, graph.clock);
+        // that closed mid-compute, as of the clock the walk began at, so a
+        // write a hook made during the walk leaves it due for another check.
+        keep(graph, node, error, undefined, clock);
       }
     }
     stack.length = base;
