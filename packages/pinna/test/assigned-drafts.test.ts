@@ -444,4 +444,26 @@ describe("a box's value is a tree", () => {
     expect(result.list?.[0]).toBe(supplied);
     expect(supplied.list).toEqual([]);
   });
+
+  test("an unwritten draft held inside its own supplied object follows the object's copy", () => {
+    using realm = testRealm();
+    interface Wrapper {
+      back: Wrapper | undefined;
+      item: { id: number };
+    }
+    const before = { items: [{ id: 1 }], wrapper: undefined as Wrapper | undefined };
+    const $state = box(realm, before);
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        const supplied: Wrapper = { back: undefined, item: draft.items[0] as { id: number } };
+        draft.wrapper = supplied;
+        // The wrapper's draft goes back into the raw object, which copies
+        // later to replace the item's draft; `back` follows that copy.
+        supplied.back = draft.wrapper;
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.wrapper?.item).toBe(before.items[0]);
+    expect(result.wrapper?.back).toBe(result.wrapper);
+  });
 });
