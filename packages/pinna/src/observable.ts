@@ -544,7 +544,8 @@ const draftHandler: ProxyHandler<object> = {
       writable: true,
       configurable: !isLength,
       enumerable: descriptor.enumerable ?? false,
-      value: source[key],
+      // A child read before the first write sits in `children`, not the base.
+      value: state.children?.get(key) ?? source[key],
     };
   },
   defineProperty() {

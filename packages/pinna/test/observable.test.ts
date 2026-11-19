@@ -797,6 +797,22 @@ describe("write.modify", () => {
     expect(untracked(realm, (read) => read($rows)[3])).toBe(original[2]);
   });
 
+  test("a property descriptor gives the cached child draft, with its writes", () => {
+    const original = { row: { id: 1 } };
+    const $state = box(realm, original);
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        const row = draft.row;
+        row.id = 2;
+        const descriptor = Object.getOwnPropertyDescriptor(draft, "row");
+        expect(descriptor?.value).toBe(row);
+        expect(descriptor?.value.id).toBe(2);
+      });
+    });
+    expect(untracked(realm, (read) => read($state))).toEqual({ row: { id: 2 } });
+    expect(original.row.id).toBe(1);
+  });
+
   test("items moved by sort, splice, and shift leave no draft behind", () => {
     const $todos = box<ReadonlyArray<Todo>>(realm, [
       { title: "c", done: false },
