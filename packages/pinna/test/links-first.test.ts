@@ -1223,6 +1223,39 @@ describe("a computed value is current as of the version its check began at", () 
     expect(readDerived(value)).toBe(1);
     stop();
   });
+
+  test("an error it keeps from that run is stale too, for a read later in the same walk", () => {
+    const local = quiet();
+    const source = local.cell(0);
+    const watched = local.cell(0);
+    const stop = local.watch(() => readCell(watched));
+    let runs = 0;
+    const value = local.derived(() => {
+      runs++;
+      const read = readCell(source);
+      if (read === 0) {
+        local.onObservedNow(watched, () => {
+          writeCell(source, 1);
+          return undefined;
+        });
+        throw new Error("zero");
+      }
+      return read;
+    });
+    const attempt = (): unknown => {
+      try {
+        return readDerived(value);
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    const outer = local.derived(() => [attempt(), attempt()]);
+
+    expect(local.batch(() => readDerived(outer))).toEqual(["zero", 1]);
+    expect(runs).toBe(2);
+    expect(readDerived(value)).toBe(1);
+    stop();
+  });
 });
 
 describe("a computed value that turns volatile in a run with an equal value", () => {
