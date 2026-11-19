@@ -340,24 +340,83 @@ describe("a box's value is a tree", () => {
   });
 
   test.each([
-    "the base's object",
-    "an assigned object",
-  ])("a written draft of %s left under two keys throws and the update is undone", (origin) => {
+    ["the base's object", "itself"],
+    ["the base's object", "a nested object"],
+    ["an assigned object", "itself"],
+    ["an assigned object", "a nested object"],
+  ])("a written draft of %s left under two keys throws when the recipe writes %s, and the update is undone", (origin, target) => {
     using realm = testRealm();
-    const before = { left: { n: 0 }, right: undefined as { n: number } | undefined };
+    interface Side {
+      n: number;
+      inner: { n: number };
+    }
+    const before = { left: { n: 0, inner: { n: 0 } }, right: undefined as Side | undefined };
     const $state = box(realm, before);
     expect(() =>
       update(realm, (_read, write) => {
         write.modify($state, (draft) => {
           if (origin === "an assigned object") {
-            draft.left = { n: 0 };
+            draft.left = { n: 0, inner: { n: 0 } };
           }
           draft.right = draft.left;
-          draft.left.n = 1;
+          if (target === "itself") {
+            draft.left.n = 1;
+          } else {
+            draft.left.inner.n = 1;
+          }
         });
       }),
     ).toThrow("pinna: write.modify left an object it wrote under two keys");
     expect(untracked(realm, (read) => read($state))).toBe(before);
+  });
+
+  test("a written draft placed inside itself throws when the recipe writes a nested object", () => {
+    using realm = testRealm();
+    interface Node {
+      inner: { n: number };
+      self?: Node;
+    }
+    const before: { node: Node } = { node: { inner: { n: 0 } } };
+    const $state = box(realm, before);
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.modify($state, (draft) => {
+          draft.node.self = draft.node;
+          draft.node.inner.n = 1;
+        });
+      }),
+    ).toThrow("pinna: write.modify left an object it wrote under two keys");
+    expect(untracked(realm, (read) => read($state))).toBe(before);
+  });
+
+  test("a snapshot read from the box before the write keeps the old value in the history", () => {
+    using realm = testRealm();
+    const before = { present: { count: 0 }, history: [] as Array<{ count: number }> };
+    const $state = box(realm, before);
+    update(realm, (read, write) => {
+      write.modify($state, (draft) => {
+        draft.history.push(read($state).present);
+        draft.present.count++;
+      });
+    });
+    const after = untracked(realm, (read) => read($state));
+    expect(after.history[0]).toBe(before.present);
+    expect(after.present).toEqual({ count: 1 });
+    expect(before.present).toEqual({ count: 0 });
+  });
+
+  test("a written draft moved to another key, with the old key deleted, is one value", () => {
+    using realm = testRealm();
+    const $state = box<{ a?: { n: number }; b?: { n: number } }>(realm, { a: { n: 1 } });
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        const moved = draft.a as { n: number };
+        moved.n++;
+        draft.b = moved;
+        delete draft.a;
+      });
+    });
+    expect(untracked(realm, (read) => read($state))).toEqual({ b: { n: 2 } });
   });
 
   test("a draft pushed into a history and then written throws", () => {
