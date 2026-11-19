@@ -437,6 +437,69 @@ describe("a deep chain read first from the top", () => {
     expect(readDerived(top)).toBe(2000);
   });
 
+  // Each value catches around a read of the value below it, then reads the
+  // one below that. A compute that caught the wait and read on used to
+  // descend to the limit again, once per catching value above the wait: the
+  // computes grew exponentially with the chain's length past the limit.
+  test.each([
+    "first",
+    "after a write",
+  ])("values that catch a read and read on compute a bounded number of times, %s", (when) => {
+    const graph = new Graph();
+    const length = 300;
+    const modulus = 1_000_003;
+    const runaway = new Error("runaway");
+    const base = graph.cell(1);
+    const values: Array<DerivedNode<number>> = [];
+    let computes = 0;
+    for (let index = 0; index < length; index++) {
+      values.push(
+        graph.derived(() => {
+          computes++;
+          if (computes > 100_000) {
+            throw runaway;
+          }
+          let sum = readCell(base);
+          for (const offset of [1, 2]) {
+            const below = values[index - offset];
+            if (below !== undefined) {
+              try {
+                sum += readDerived(below);
+              } catch (error) {
+                if (error === runaway) {
+                  throw error;
+                }
+                sum -= 3;
+              }
+            }
+          }
+          return sum % modulus;
+        }),
+      );
+    }
+    const expected = (bottom: number) => {
+      const sums: Array<number> = [];
+      for (let index = 0; index < length; index++) {
+        sums.push((bottom + (sums[index - 1] ?? 0) + (sums[index - 2] ?? 0)) % modulus);
+      }
+      return sums[length - 1] as number;
+    };
+    const top = values[length - 1] as DerivedNode<number>;
+    if (when === "after a write") {
+      // Warm the chain in steps shallower than the limit, so only the
+      // read after the write nests past it.
+      for (let index = 99; index < length; index += 100) {
+        readDerived(values[index] as DerivedNode<number>);
+      }
+      readDerived(top);
+      writeCell(base, 2);
+      computes = 0;
+    }
+    expect(readDerived(top)).toBe(expected(when === "first" ? 1 : 2));
+    // Fewer than twice the chain: each value above a wait starts once more.
+    expect(computes).toBeLessThan(2 * length);
+  });
+
   test("a cycle longer than the limit meets itself", () => {
     const graph = new Graph();
     const length = 1000;
