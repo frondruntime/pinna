@@ -599,7 +599,8 @@ describe("write.modify", () => {
     expect(original.name).toBe("old");
     expect(after.row).toEqual({ name: "new" });
     expect(after.row).not.toBe(original);
-    expect(after.rows).toEqual([original, { name: "added" }]);
+    expect(after.rows).toEqual([{ name: "new" }, { name: "added" }]);
+    expect(after.rows[0]).toBe(after.row);
     expect(notifications).toBe(0);
     stop();
   });

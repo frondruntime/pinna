@@ -301,6 +301,12 @@ const draftKey: unique symbol = Symbol("pinna.draft");
 /** One recipe's drafts share it; they are revoked when the recipe returns. */
 interface DraftSession {
   open: boolean;
+  /**
+   * The draft of each assigned array or object, by the object: one draft
+   * however many keys hold it, so a write through one key shows at every
+   * other, and the object finalizes once.
+   */
+  readonly assigned: Map<object, Record<PropertyKey, unknown>>;
 }
 
 interface DraftState {
@@ -345,6 +351,28 @@ const markModified = (start: DraftState): void => {
     state.modified = true;
     state = state.parent;
   }
+};
+
+/**
+ * The draft of `value`, a child of `parent`. An assigned value has one draft
+ * per recipe, shared by every key that holds it; a value of the base gets a
+ * draft per key, as the base is a tree.
+ */
+const draftChild = (
+  value: Record<PropertyKey, unknown>,
+  parent: DraftState,
+  assigned: boolean,
+): Record<PropertyKey, unknown> => {
+  if (!assigned) {
+    return createDraft(value, parent, parent.session);
+  }
+  const drafts = parent.session.assigned;
+  let child = drafts.get(value);
+  if (child === undefined) {
+    child = createDraft(value, parent, parent.session, true);
+    drafts.set(value, child);
+  }
+  return child;
 };
 
 const assertDraftOpen = (state: DraftState): void => {
@@ -405,10 +433,9 @@ const moveElements = (
   }
   return out.map((value, index) =>
     removedOrigins[index] !== undefined
-      ? createDraft(
+      ? draftChild(
           value as Record<PropertyKey, unknown>,
           state,
-          state.session,
           removedOrigins[index] === "supplied",
         )
       : value,
@@ -488,7 +515,7 @@ const childOf = (
   if (cached !== undefined) {
     return cached;
   }
-  const child = createDraft(value, state, state.session, state.supplied || state.touched.has(key));
+  const child = draftChild(value, state, state.supplied || state.touched.has(key));
   if (state.copy === undefined) {
     state.children ??= new Map();
     state.children.set(key, child);
@@ -611,7 +638,11 @@ interface FinalizedValue {
  * to the output. Supplied containers copy only when a child needs replacing.
  * Drafts over supplied containers walk every child; base drafts walk touched keys.
  */
-const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unknown => {
+const finalize = (
+  value: unknown,
+  visited: WeakMap<object, FinalizedValue>,
+  assigned: DraftSession["assigned"],
+): unknown => {
   if (typeof value !== "object" || value === null) {
     return value;
   }
@@ -620,6 +651,14 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     return previous.value;
   }
   const state = (value as { [draftKey]?: DraftState })[draftKey];
+  if (state === undefined) {
+    // An assigned object drafted at some key finalizes as its draft, at
+    // every key that holds it, drafted there or not.
+    const drafted = assigned.get(value);
+    if (drafted !== undefined) {
+      return finalize(drafted, visited, assigned);
+    }
+  }
   if (state !== undefined && !state.supplied) {
     if (!state.modified) {
       return state.base;
@@ -630,7 +669,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     for (const key of state.touched) {
       if (Object.hasOwn(copy, key) && copy[key] !== base[key]) {
         const child = copy[key];
-        copy[key] = finalize(child, visited);
+        copy[key] = finalize(child, visited, assigned);
         if (typeof child === "object" && child !== null && copy[key] === child) {
           visited.get(child)?.onCopy?.push((replacement) => {
             copy[key] = replacement;
@@ -667,7 +706,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     };
     forEachKey(object, (key) => {
       const child = object[key];
-      replace(key, finalize(child, visited));
+      replace(key, finalize(child, visited, assigned));
       if (typeof child === "object" && child !== null && entry.value[key] === child) {
         visited.get(child)?.onCopy?.push((replacement) => replace(key, replacement));
       }
@@ -683,14 +722,14 @@ const produce = <Value>(base: Value, recipe: (draft: Draft<Value>) => undefined)
       "pinna: write.modify drafts arrays and plain objects; write other values whole with write($box, value)",
     );
   }
-  const session: DraftSession = { open: true };
+  const session: DraftSession = { open: true, assigned: new Map() };
   const draft = createDraft(base, undefined, session);
   try {
     const result: unknown = recipe(draft as Draft<Value>);
     if (result !== undefined) {
       throw new Error("pinna: a modify recipe returns nothing; write through the draft");
     }
-    return finalize(draft, new WeakMap()) as Value;
+    return finalize(draft, new WeakMap(), session.assigned) as Value;
   } finally {
     session.open = false;
   }
