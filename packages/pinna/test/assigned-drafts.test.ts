@@ -389,6 +389,72 @@ describe("a box's value is a tree", () => {
     expect(untracked(realm, (read) => read($state))).toBe(before);
   });
 
+  test.each([
+    "an object",
+    "an array",
+  ])("%s the recipe builds around a written draft and places at two keys throws", (shape) => {
+    using realm = testRealm();
+    const before: { item?: { n: number }; a?: unknown; b?: unknown } = { item: { n: 0 } };
+    const $state = box(realm, before);
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.modify($state, (draft) => {
+          const item = draft.item as { n: number };
+          item.n = 1;
+          // The written draft keeps no key of its own: only the wrapper,
+          // reached twice, carries it to two places.
+          delete draft.item;
+          const wrapper = shape === "an object" ? { item } : [item];
+          draft.a = wrapper;
+          draft.b = wrapper;
+        });
+      }),
+    ).toThrow("pinna: write.modify left an object it wrote under two keys");
+    expect(untracked(realm, (read) => read($state))).toBe(before);
+  });
+
+  test("a wrapper that reaches itself before the written draft it holds throws", () => {
+    using realm = testRealm();
+    interface Wrapper {
+      back?: Wrapper;
+      item?: { n: number };
+    }
+    const before: { item?: { n: number }; wrapper?: Wrapper } = { item: { n: 0 } };
+    const $state = box(realm, before);
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.modify($state, (draft) => {
+          const item = draft.item as { n: number };
+          item.n = 1;
+          delete draft.item;
+          // `back` is walked before `item`, so the wrapper is reached again
+          // before finalization knows it holds a written draft.
+          const wrapper: Wrapper = {};
+          wrapper.back = wrapper;
+          wrapper.item = item;
+          draft.wrapper = wrapper;
+        });
+      }),
+    ).toThrow("pinna: write.modify left an object it wrote under two keys");
+    expect(untracked(realm, (read) => read($state))).toBe(before);
+  });
+
+  test("a wrapper the recipe builds around unwritten values stays one object at two keys", () => {
+    using realm = testRealm();
+    const before = { item: { n: 0 }, a: undefined as unknown, b: undefined as unknown };
+    const $state = box(realm, before);
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        const wrapper = { item: draft.item, tags: [] as string[] };
+        draft.a = wrapper;
+        draft.b = wrapper;
+      });
+    });
+    const after = untracked(realm, (read) => read($state));
+    expect(after.a).toBe(after.b);
+    expect((after.a as { item: unknown }).item).toBe(before.item);
+  });
+
   test("a snapshot read from the box before the write keeps the old value in the history", () => {
     using realm = testRealm();
     const before = { present: { count: 0 }, history: [] as Array<{ count: number }> };

@@ -200,10 +200,11 @@ and `src/class.ts`.
   never written. Keeping one object at two keys across calls would mean
   scanning the value on every call for the keys that hold it: 12.5 ms per
   call at 100,000 rows, against 0.057 ms for a write that finalizes the
-  touched keys (Bun). A draft the recipe wrote and left at a second key, or
-  inside itself, throws at finalize instead of handing the box a graph that
-  the next call splits; a draft at two keys that the recipe never wrote
-  finalizes to the one object the box held. A `SchemaModel`
+  touched keys (Bun). A draft the recipe wrote and left at a second key,
+  inside itself, or inside an object the recipe placed at two keys, throws
+  at finalize instead of handing the box a graph that the next call
+  splits; a draft at two keys that the recipe never wrote finalizes to the
+  one object the box held. A `SchemaModel`
   or `Model` instance, a box, a computed value, a `Date`, a `Map`, or a `Set` inside a
   value is not drafted: the recipe gets the held value itself, so the types
   leave it read-only all the way down, and a recipe replaces it with a new
