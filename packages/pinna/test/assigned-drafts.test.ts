@@ -154,11 +154,10 @@ describe("finalizing assigned containers read through a draft", () => {
   test.each([
     "raw first",
     "draft first",
-  ])("a shared frozen cycle keeps both aliases: %s", (order) => {
+  ])("an unwritten frozen cycle at two keys finalizes to one copy: %s", (order) => {
     using realm = testRealm();
     interface Wrapper {
       self: Wrapper | undefined;
-      root: object;
       item: { id: number } | undefined;
     }
     const before = {
@@ -172,7 +171,7 @@ describe("finalizing assigned containers read through a draft", () => {
     update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         firstDraft = draft.items[0];
-        supplied = { self: undefined, root: draft, item: firstDraft };
+        supplied = { self: undefined, item: firstDraft };
         supplied.self = supplied;
         Object.freeze(supplied);
         if (order === "raw first") {
@@ -190,7 +189,6 @@ describe("finalizing assigned containers read through a draft", () => {
     expect(result.wrapper).not.toBe(supplied);
     expect(result.wrapper).toBe(result.shared);
     expect(result.wrapper?.self).toBe(result.wrapper);
-    expect(result.wrapper?.root).toBe(result);
     expect(result.wrapper?.item).toBe(before.items[0]);
     expect(supplied?.self).toBe(supplied);
     expect(supplied?.item).toBe(firstDraft);
@@ -225,7 +223,7 @@ describe("finalizing assigned containers read through a draft", () => {
   });
 });
 
-describe("an object assigned at two keys of a draft stays one object", () => {
+describe("a box's value is a tree", () => {
   interface Shared {
     n: number;
     m: number;
@@ -246,7 +244,7 @@ describe("an object assigned at two keys of a draft stays one object", () => {
   test.each([
     ["a", "b"],
     ["b", "a"],
-  ] as const)("assigned to %s first, written through a", (first, second) => {
+  ] as const)("an object assigned to %s and %s, written through a, is two values", (first, second) => {
     using realm = testRealm();
     const $state = box(realm, empty());
     const shared = sharedValue();
@@ -257,19 +255,17 @@ describe("an object assigned at two keys of a draft stays one object", () => {
         if (draft.a !== undefined) {
           draft.a.n = 1;
         }
-        expect(draft.b?.n).toBe(1);
-        expect(draft.a?.self).toBe(draft.a);
+        expect(draft.b?.n).toBe(0);
       });
     });
     const result = untracked(realm, (read) => read($state));
-    expect(result.a).toBe(result.b);
-    expect(result.a?.self).toBe(result.a);
     expect(result.a?.n).toBe(1);
     expect(result.a).not.toBe(shared);
+    expect(result.b).toBe(shared);
     expect(shared).toEqual({ n: 0, m: 0, self: shared });
   });
 
-  test("writes through both keys land in the one object", () => {
+  test("writes through two keys of one assigned object land in two values", () => {
     using realm = testRealm();
     const $state = box(realm, empty());
     const shared = sharedValue();
@@ -282,14 +278,12 @@ describe("an object assigned at two keys of a draft stays one object", () => {
       });
     });
     const result = untracked(realm, (read) => read($state));
-    expect(result.a).toBe(result.b);
-    expect(result.a?.n).toBe(1);
-    expect(result.a?.m).toBe(2);
-    expect(result.a?.self).toBe(result.a);
+    expect([result.a?.n, result.a?.m]).toEqual([1, 0]);
+    expect([result.b?.n, result.b?.m]).toEqual([0, 2]);
     expect(shared).toEqual({ n: 0, m: 0, self: shared });
   });
 
-  test("a container assigned and never read through the draft holds the written object", () => {
+  test("a container assigned and never read through the draft keeps the unwritten object", () => {
     using realm = testRealm();
     const $state = box(realm, empty());
     const shared = sharedValue();
@@ -302,14 +296,13 @@ describe("an object assigned at two keys of a draft stays one object", () => {
       });
     });
     const result = untracked(realm, (read) => read($state));
-    expect(result.holder?.shared).toBe(result.a);
     expect(result.a?.n).toBe(1);
-    expect(result.holder).not.toBe(holder);
+    expect(result.holder).toBe(holder);
     expect(holder.shared).toBe(shared);
     expect(shared.n).toBe(0);
   });
 
-  test("an assigned object moved by splice is the same draft as at its other key", () => {
+  test("an object moved by splice gets a draft of its own", () => {
     using realm = testRealm();
     const $list = box<{ list: Array<Shared>; a: Shared | undefined }>(realm, {
       list: [],
@@ -321,15 +314,85 @@ describe("an object assigned at two keys of a draft stays one object", () => {
         draft.list = [shared];
         draft.a = shared;
         const [removed] = draft.list.splice(0, 1);
-        expect(removed).toBe(draft.a);
+        expect(removed).not.toBe(draft.a);
         draft.list.push(removed as Shared);
         draft.a.n = 1;
       });
     });
     const result = untracked(realm, (read) => read($list));
-    expect(result.list[0]).toBe(result.a);
+    expect(result.list[0]).toBe(shared);
     expect(result.a?.n).toBe(1);
     expect(shared.n).toBe(0);
+  });
+
+  test("an unwritten draft at two keys finalizes to the one object the box held", () => {
+    using realm = testRealm();
+    const before = { left: { n: 0 }, right: undefined as { n: number } | undefined };
+    const $state = box(realm, before);
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.right = draft.left;
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.left).toBe(before.left);
+    expect(result.right).toBe(before.left);
+  });
+
+  test.each([
+    "the base's object",
+    "an assigned object",
+  ])("a written draft of %s left under two keys throws and the update is undone", (origin) => {
+    using realm = testRealm();
+    const before = { left: { n: 0 }, right: undefined as { n: number } | undefined };
+    const $state = box(realm, before);
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.modify($state, (draft) => {
+          if (origin === "an assigned object") {
+            draft.left = { n: 0 };
+          }
+          draft.right = draft.left;
+          draft.left.n = 1;
+        });
+      }),
+    ).toThrow("pinna: write.modify left an object it wrote under two keys");
+    expect(untracked(realm, (read) => read($state))).toBe(before);
+  });
+
+  test("a draft pushed into a history and then written throws", () => {
+    using realm = testRealm();
+    const before = { present: { count: 0 }, history: [] as Array<{ count: number }> };
+    const $state = box(realm, before);
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.modify($state, (draft) => {
+          draft.history.push(draft.present);
+          draft.present.count++;
+        });
+      }),
+    ).toThrow("pinna: write.modify left an object it wrote under two keys");
+    expect(untracked(realm, (read) => read($state))).toBe(before);
+  });
+
+  test("a selection held as a key follows its item across calls", () => {
+    using realm = testRealm();
+    const $state = box(realm, { items: [{ id: 1, n: 0 }], selectedId: 0 });
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.selectedId = 1;
+      });
+    });
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        const item = draft.items.find((entry) => entry.id === draft.selectedId);
+        if (item !== undefined) {
+          item.n = 1;
+        }
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.items.find((entry) => entry.id === result.selectedId)?.n).toBe(1);
   });
 
   test.each([
@@ -356,7 +419,7 @@ describe("an object assigned at two keys of a draft stays one object", () => {
     expect(supplied[key].n).toBe(0);
   });
 
-  test("a draft of an assigned object pushed into its own list finalizes to the object's copy", () => {
+  test("a draft of an assigned object pushed into a second key's list stays the unwritten object", () => {
     using realm = testRealm();
     interface Holder {
       list: Array<Holder>;
@@ -370,15 +433,15 @@ describe("an object assigned at two keys of a draft stays one object", () => {
       write.modify($state, (draft) => {
         draft.holder = supplied;
         draft.list = supplied.list;
-        // The list holds the holder's draft; the holder copies once its list
-        // finalizes as a copy, and the list's entry follows that copy.
+        // `list` is drafted apart from `holder.list`; the holder's draft is
+        // never written, so both keys finalize to the supplied object.
         draft.list.push(draft.holder);
       });
     });
     const result = untracked(realm, (read) => read($state));
-    expect(result.holder).not.toBe(supplied);
-    expect(result.list).toBe(result.holder?.list);
-    expect(result.holder?.list[0]).toBe(result.holder);
+    expect(result.holder).toBe(supplied);
+    expect(result.list).toEqual([supplied]);
+    expect(result.list?.[0]).toBe(supplied);
     expect(supplied.list).toEqual([]);
   });
 });

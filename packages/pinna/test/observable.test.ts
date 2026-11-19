@@ -599,8 +599,10 @@ describe("write.modify", () => {
     expect(original.name).toBe("old");
     expect(after.row).toEqual({ name: "new" });
     expect(after.row).not.toBe(original);
-    expect(after.rows).toEqual([{ name: "new" }, { name: "added" }]);
-    expect(after.rows[0]).toBe(after.row);
+    // The value is a tree: the row written at `row` is a copy of its own, and
+    // `rows` holds the unwritten object.
+    expect(after.rows).toEqual([{ name: "old" }, { name: "added" }]);
+    expect(after.rows[0]).toBe(original);
     expect(notifications).toBe(0);
     stop();
   });
@@ -670,32 +672,36 @@ describe("write.modify", () => {
     expect(untracked(realm, (read) => read($rows)[0])).toBe(frozen);
   });
 
-  test("a finalized draft self-reference points to its result", () => {
+  test("a written draft placed inside itself throws and the update is undone", () => {
     interface Row {
       readonly child: Row | null;
     }
     const before: Row = { child: null };
     const $row = box(realm, before);
-    update(realm, (_read, write) => {
-      write.modify($row, (row) => {
-        row.child = row;
-      });
-    });
-    const result = untracked(realm, (read) => read($row));
-    expect(result.child).toBe(result);
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.modify($row, (row) => {
+          row.child = row;
+        });
+      }),
+    ).toThrow("pinna: write.modify left an object it wrote under two keys");
+    expect(untracked(realm, (read) => read($row))).toBe(before);
     expect(before.child).toBeNull();
   });
 
   test("finalization copies supplied containers only to replace nested drafts", () => {
     const unchanged = Object.freeze({ price: 3 });
-    const $row = box<{ readonly price: number; readonly child: unknown }>(realm, {
-      price: 1,
-      child: null,
-    });
-    let supplied: { self?: unknown; row: unknown; unchanged: unknown } | undefined;
+    const before = { price: 1, child: null as unknown, item: { id: 1 } };
+    const $row = box<{ readonly price: number; readonly child: unknown; readonly item: object }>(
+      realm,
+      before,
+    );
+    let supplied: { self?: unknown; item: unknown; unchanged: unknown } | undefined;
+    let itemDraft: unknown;
     update(realm, (_read, write) => {
       write.modify($row, (row) => {
-        supplied = { self: undefined, row, unchanged };
+        itemDraft = row.item;
+        supplied = { self: undefined, item: itemDraft, unchanged };
         supplied.self = supplied;
         Object.freeze(supplied);
         row.child = supplied;
@@ -705,10 +711,10 @@ describe("write.modify", () => {
     const child = result.child as NonNullable<typeof supplied>;
     expect(child).not.toBe(supplied);
     expect(child.self).toBe(child);
-    expect(child.row).toBe(result);
+    expect(child.item).toBe(before.item);
     expect(child.unchanged).toBe(unchanged);
     expect(supplied?.self).toBe(supplied);
-    expect(supplied?.row).not.toBe(result);
+    expect(supplied?.item).toBe(itemDraft);
   });
 
   test("filter on a draft keeps the kept items", () => {

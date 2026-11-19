@@ -310,12 +310,6 @@ const draftKey: unique symbol = Symbol("pinna.draft");
 /** One recipe's drafts share it; they are revoked when the recipe returns. */
 interface DraftSession {
   open: boolean;
-  /**
-   * The draft of each assigned array or object, by the object: one draft
-   * however many keys hold it, so a write through one key shows at every
-   * other, and the object finalizes once.
-   */
-  readonly assigned: Map<object, Record<PropertyKey, unknown>>;
 }
 
 interface DraftState {
@@ -363,26 +357,15 @@ const markModified = (start: DraftState): void => {
 };
 
 /**
- * The draft of `value`, a child of `parent`. An assigned value has one draft
- * per recipe, shared by every key that holds it; a value of the base gets a
- * draft per key, as the base is a tree.
+ * The draft of `value`, a child of `parent`. The value is a tree, so every key
+ * that reaches an object gets its own draft, whether the base held the object
+ * or the recipe assigned it.
  */
 const draftChild = (
   value: Record<PropertyKey, unknown>,
   parent: DraftState,
-  assigned: boolean,
-): Record<PropertyKey, unknown> => {
-  if (!assigned) {
-    return createDraft(value, parent, parent.session);
-  }
-  const drafts = parent.session.assigned;
-  let child = drafts.get(value);
-  if (child === undefined) {
-    child = createDraft(value, parent, parent.session, true);
-    drafts.set(value, child);
-  }
-  return child;
-};
+  supplied: boolean,
+): Record<PropertyKey, unknown> => createDraft(value, parent, parent.session, supplied);
 
 const assertDraftOpen = (state: DraftState): void => {
   if (!state.session.open) {
@@ -647,26 +630,21 @@ interface FinalizedValue {
  * to the output. Supplied containers copy only when a child needs replacing.
  * Drafts over supplied containers walk every child; base drafts walk touched keys.
  */
-const finalize = (
-  value: unknown,
-  visited: WeakMap<object, FinalizedValue>,
-  assigned: DraftSession["assigned"],
-): unknown => {
+const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unknown => {
   if (typeof value !== "object" || value === null) {
     return value;
   }
+  const state = (value as { [draftKey]?: DraftState })[draftKey];
   const previous = visited.get(value);
   if (previous !== undefined) {
-    return previous.value;
-  }
-  const state = (value as { [draftKey]?: DraftState })[draftKey];
-  if (state === undefined) {
-    // An assigned object drafted at some key finalizes as its draft, at
-    // every key that holds it, drafted there or not.
-    const drafted = assigned.get(value);
-    if (drafted !== undefined) {
-      return finalize(drafted, visited, assigned);
+    // A written draft at a second key, or inside itself, would make the
+    // value a graph: the next call drafts each key apart and splits it.
+    if (state?.modified === true) {
+      throw new Error(
+        "pinna: write.modify left an object it wrote under two keys; a box's value is a tree, so refer to the object by a key instead",
+      );
     }
+    return previous.value;
   }
   if (state !== undefined && !state.supplied) {
     if (!state.modified) {
@@ -678,7 +656,7 @@ const finalize = (
     for (const key of state.touched) {
       if (Object.hasOwn(copy, key) && copy[key] !== base[key]) {
         const child = copy[key];
-        copy[key] = finalize(child, visited, assigned);
+        copy[key] = finalize(child, visited);
         // The child may be a draft that finalized to a supplied container,
         // which copies later if one of its own children needs replacing.
         const finalized =
@@ -719,7 +697,7 @@ const finalize = (
     };
     forEachKey(object, (key) => {
       const child = object[key];
-      replace(key, finalize(child, visited, assigned));
+      replace(key, finalize(child, visited));
       const finalized =
         typeof child === "object" && child !== null ? visited.get(child) : undefined;
       if (finalized !== undefined && entry.value[key] === finalized.value) {
@@ -737,14 +715,14 @@ const produce = <Value>(base: Value, recipe: (draft: Draft<Value>) => undefined)
       "pinna: write.modify drafts arrays and plain objects; write other values whole with write($box, value)",
     );
   }
-  const session: DraftSession = { open: true, assigned: new Map() };
+  const session: DraftSession = { open: true };
   const draft = createDraft(base, undefined, session);
   try {
     const result: unknown = recipe(draft as Draft<Value>);
     if (result !== undefined) {
       throw new Error("pinna: a modify recipe returns nothing; write through the draft");
     }
-    return finalize(draft, new WeakMap(), session.assigned) as Value;
+    return finalize(draft, new WeakMap()) as Value;
   } finally {
     session.open = false;
   }
