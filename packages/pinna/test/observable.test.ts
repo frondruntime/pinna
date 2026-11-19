@@ -813,6 +813,51 @@ describe("write.modify", () => {
     expect(original.row.id).toBe(1);
   });
 
+  test.each([
+    [
+      "a descriptor",
+      (draft: { row: { id: number } }) => Object.getOwnPropertyDescriptor(draft, "row")?.value,
+    ],
+    [
+      "the descriptors",
+      (draft: { row: { id: number } }) => Object.getOwnPropertyDescriptors(draft).row.value,
+    ],
+  ] as const)("a write through %s before any read rolls back with the update", (_name, child) => {
+    const original = { row: { id: 1 } };
+    const $state = box(realm, original);
+    const $id = computed(realm, (read) => read($state).row.id);
+    expect(untracked(realm, (read) => read($id))).toBe(1);
+    expect(() =>
+      update(realm, (_read, write) => {
+        write.modify($state, (draft) => {
+          child(draft).id = 9;
+          throw new Error("undone");
+        });
+      }),
+    ).toThrow("undone");
+    expect(original.row.id).toBe(1);
+    expect(untracked(realm, (read) => read($state)).row.id).toBe(1);
+    expect(untracked(realm, (read) => read($id))).toBe(1);
+  });
+
+  test("a descriptor of a draft kept past its recipe refuses writes", () => {
+    const original = { row: { id: 1 }, count: 1 };
+    const $state = box(realm, original);
+    let kept: typeof original | undefined;
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        kept = draft;
+        draft.count = 2;
+      });
+    });
+    const row = Object.getOwnPropertyDescriptor(kept, "row")?.value as { id: number };
+    expect(() => {
+      row.id = 9;
+    }).toThrow("pinna: a draft is used after its recipe returned");
+    expect(original.row.id).toBe(1);
+    expect(untracked(realm, (read) => read($state))).toEqual({ row: { id: 1 }, count: 2 });
+  });
+
   test("items moved by sort, splice, and shift leave no draft behind", () => {
     const $todos = box<ReadonlyArray<Todo>>(realm, [
       { title: "c", done: false },
