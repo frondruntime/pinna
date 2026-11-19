@@ -48,7 +48,7 @@ how to find why a value recomputed.
 | `pinna: write.modify drafts arrays and plain objects; ...` | `write.modify` on a box holding another kind of value. Write it whole with `write($box, value)`. |
 | `pinna: a modify recipe returns nothing; write through the draft` | A `write.modify` recipe that returned a value. |
 | `pinna: a draft is used after its recipe returned` | A draft kept past its recipe. |
-| `pinna: write.modify left an object it wrote under two keys; ...` | A recipe wrote a draft and left it at a second key or inside itself, such as `draft.history.push(draft.present)` followed by a write to `draft.present`. The update is undone. Refer to the object by a key, or read a snapshot with `read($box)` before the write. |
+| `pinna: write.modify left an object it wrote under two keys; ...` | A recipe wrote a draft and left it at a second key, inside itself, or inside an object the recipe placed at two keys, such as `draft.history.push(draft.present)` followed by a write to `draft.present`. The update is undone. Refer to the object by a key, or read a snapshot with `read($box)` before the write. |
 | `pinna: a draft does not take defineProperty; assign instead` | `Object.defineProperty` on a draft. |
 | `pinna: a draft cannot change its prototype` | `Object.setPrototypeOf` on a draft. |
 

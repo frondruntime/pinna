@@ -47,9 +47,10 @@ through `untracked`.
   a key (`selectedId`), a collection row, or a box, never by holding it
   twice: the next `write.modify` drafts each key apart, so a write through
   one key does not show at the other.
-- A draft the recipe wrote and left at a second key, or inside itself,
-  throws `pinna: write.modify left an object it wrote under two keys`, and
-  the update is undone. `draft.history.push(draft.present)` followed by
+- A draft the recipe wrote and left at a second key, inside itself, or
+  inside an object the recipe placed at two keys, throws
+  `pinna: write.modify left an object it wrote under two keys`, and the
+  update is undone. `draft.history.push(draft.present)` followed by
   `draft.present.count++` throws; a snapshot is read before the write, with
   `read($box).present`, which is the plain value. A draft at two keys that
   the recipe never wrote finalizes to the one object the box held.

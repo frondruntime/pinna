@@ -284,16 +284,17 @@ ruling carries the date it was first written down, and uses today's names.
     object in `write.modify` gets its own draft, whether the base held the
     object or the recipe assigned it; an assigned object is copied on its
     first write and never written itself. A draft the recipe wrote and left
-    at a second key, or inside itself, throws
+    at a second key, inside itself, or inside an object the recipe placed at
+    two keys, throws
     `pinna: write.modify left an object it wrote under two keys` at
     finalize; an unwritten draft at two keys finalizes to the one object the
-    box held. Before it, an assigned object shared one draft per call and
-    the next call split it, and `draft.right = draft.left` held one object
-    at two keys for one call only, so one recipe gave two results depending
-    on whether its write landed in the same call. Joining keys across calls
-    needs a scan of the value per call: 12.5 ms at 100,000 rows, against
-    0.057 ms. Identity that outlives a call is a key, a collection row, or a
-    box.
+    box held. Before it, an assigned object shared one draft per
+    call and the next call split it, and `draft.right = draft.left` held one
+    object at two keys for one call only, so one recipe gave two results
+    depending on whether its write landed in the same call. Joining keys
+    across calls needs a scan of the value per call: 12.5 ms at 100,000
+    rows, against 0.057 ms. Identity that outlives a call is a key, a
+    collection row, or a box.
 
 ## Build slices
 

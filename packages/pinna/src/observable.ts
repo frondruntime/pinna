@@ -620,6 +620,10 @@ const createDraft = (
 
 interface FinalizedValue {
   value: Record<PropertyKey, unknown>;
+  /** The value is, or holds, a draft the recipe wrote. */
+  written: boolean;
+  /** Finalization reached the value again before its walk ended. */
+  revisited?: boolean;
   /** Supplied containers notify back-references if finalization copies them. */
   readonly onCopy?: Array<(copy: Record<PropertyKey, unknown>) => void>;
 }
@@ -630,6 +634,11 @@ interface FinalizedValue {
  * to the output. Supplied containers copy only when a child needs replacing.
  * Drafts over supplied containers walk every child; base drafts walk touched keys.
  */
+const twoKeys = (): Error =>
+  new Error(
+    "pinna: write.modify left an object it wrote under two keys; a box's value is a tree, so refer to the object by a key instead",
+  );
+
 const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unknown => {
   if (typeof value !== "object" || value === null) {
     return value;
@@ -638,12 +647,13 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
   const previous = visited.get(value);
   if (previous !== undefined) {
     // A written draft at a second key, or inside itself, would make the
-    // value a graph: the next call drafts each key apart and splits it.
-    if (state?.modified === true) {
-      throw new Error(
-        "pinna: write.modify left an object it wrote under two keys; a box's value is a tree, so refer to the object by a key instead",
-      );
+    // value a graph: the next call drafts each key apart and splits it. A
+    // supplied container at two keys carries a written draft it holds there
+    // too; one still being walked is checked when its walk ends.
+    if (state?.modified === true || previous.written) {
+      throw twoKeys();
     }
+    previous.revisited = true;
     return previous.value;
   }
   if (state !== undefined && !state.supplied) {
@@ -651,7 +661,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
       return state.base;
     }
     const copy = ensureCopy(state);
-    visited.set(value, { value: copy });
+    visited.set(value, { value: copy, written: true });
     const base = state.base;
     for (const key of state.touched) {
       if (Object.hasOwn(copy, key) && copy[key] !== base[key]) {
@@ -675,10 +685,14 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     const object = source as Record<PropertyKey, unknown>;
     const existing = visited.get(object);
     if (existing !== undefined) {
+      if (existing.written) {
+        throw twoKeys();
+      }
+      existing.revisited = true;
       visited.set(value, existing);
       return existing.value;
     }
-    const entry: FinalizedValue = { value: object, onCopy: [] };
+    const entry: FinalizedValue = { value: object, written: state?.modified === true, onCopy: [] };
     visited.set(value, entry);
     visited.set(object, entry);
     const replace = (key: PropertyKey, child: unknown): void => {
@@ -705,11 +719,17 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
       // when the child is a back-reference to it.
       const finalized =
         typeof child === "object" && child !== null ? visited.get(child) : undefined;
-      if (finalized !== undefined && value === finalized.value) {
-        finalized.onCopy?.push((replacement) => replace(key, replacement));
+      if (finalized !== undefined) {
+        entry.written ||= finalized.written;
+        if (value === finalized.value) {
+          finalized.onCopy?.push((replacement) => replace(key, replacement));
+        }
       }
       replace(key, value);
     });
+    if (entry.written && entry.revisited === true) {
+      throw twoKeys();
+    }
     return entry.value;
   }
   return value;
