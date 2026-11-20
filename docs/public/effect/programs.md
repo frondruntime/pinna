@@ -13,7 +13,7 @@ return a stop function instead.
 
 ## Example
 
-The realm is a service. `watchScoped`, `changes`, and `fromStream` read it from
+The realm is a service. `watchScoped` and `fromStream` read it from
 `RealmService`; a layer provides it once.
 
 <!-- region programs.ts#layer -->
@@ -73,8 +73,9 @@ Each of them stops when its scope closes.
   `update`.
 - `watchScoped` runs for changes, not for the current value. `changes` starts with
   the current value.
-- `observeScoped` and `whileObserved` take the realm from the observable,
-  so they need no `RealmService`.
+- `changes`, `observeScoped`, and `whileObserved` take the realm from the
+  observable, so they need no `RealmService`. A host whose programs require
+  nothing but `Scope` watches a box with `changes` while its work awaits.
 - A `whileObserved` program runs in a scope of its own, closed when the run
   ends, so a fiber it forks into that scope stops with it. A program that
   returns ends its run while the value is still observed, and the next run
@@ -102,7 +103,7 @@ Each of them stops when its scope closes.
 | --- | --- |
 | `RealmService` | The service the functions below read the realm from. |
 | `watchScoped((read) => ..., (value, previous) => effect, { equals?, name? })` | An effect that starts the watch in the caller's scope; needs `RealmService`. A result equal under `equals`, `Object.is` by default, is no change, so it neither runs nor interrupts the effect. `name` names the watch in its errors. |
-| `changes($x)` | A stream of `$x`'s current value, then each change; a slow consumer skips to the newest. Takes a box or a computed value, not an atom; needs `RealmService`. |
+| `changes($x)` | A stream of `$x`'s current value, then each change; a slow consumer skips to the newest. Takes a box or a computed value, not an atom. Needs no `RealmService`. |
 | `observeScoped($x)` | An effect that holds `$x`, a box, a computed value, or an atom, observed until the scope closes. Needs no `RealmService`. |
 | `whileObserved($x, program)` | An effect that runs `program` while `$x`, a box, a computed value, or an atom, is observed, each run in a scope of its own. A defect is logged at the error level, and the next observation starts the program again. Closing the caller's scope interrupts a run and waits for it; later observation does not start it again. Needs no `RealmService`. |
 | `fromStream(stream, initial, { equals?, name? })` | A read-only value: `initial`, then the stream's latest element; needs `RealmService` and the stream's services. The stream runs with the services of the program that made the value, and restarts each time the value is observed again. The value resets to `initial` when the last observer leaves or the scope closes; closing the scope stops the stream for good. An element equal under `equals`, `Object.is` by default, notifies nobody; `name` names the value for `inspect`. |

@@ -319,6 +319,39 @@ write's watchers run.
   wrote before its first `await`: writes after an `await` would land outside
   the update. Await outside, then update.
 
+## Stages
+
+A stage holds the writes of asynchronous work out of the realm until the
+work succeeds, then lands them in one update; a failure drops them and
+leaves nothing to undo (ruling 53).
+
+- A stage is an overlay and a journal. The overlay maps each box the stage
+  wrote to its staged value, and nothing else; the journal lists the
+  recipes that ran without throwing, in order. A stage copies nothing from
+  the realm and makes no graph node.
+- `stageUpdate` runs its recipe at once against a `read` and a `write` of
+  the stage. The `read` returns the overlay's value of a box, or
+  `peekCell` of its node, so it subscribes nothing. The `write` checks the
+  box's realm and its check, against the staged value, and records what it
+  replaced in the overlay, three slots a write. A recipe that throws puts
+  those back, the last first, and is not kept.
+- `applyStage` replays the journal: one `update` whose recipe runs each
+  kept recipe in a nested `update`, so each is held to what `update` holds a
+  recipe to, and an `update` already open is joined as any nested update
+  is. The recipes run over the realm's values at that moment, with the
+  update's own `read` and `write`, so the stage's limits on writes hold at
+  `stageUpdate`, not on replay.
+- The realm and its boxes carry no field for stages, so `update`, `read`,
+  and `write` cost what they did. A test realm learns of an open stage
+  through the realm's `running` hook, which only `testRealm` sets.
+
+What it cost: no conflict detection. A recipe that read a box another
+update changed since reads the new value on replay, so a value read through
+the stage can differ from what lands, and a recipe that branches on a value
+can take another branch. Detecting it would need a version per read box and
+a rule for what a conflict does; no use has asked for either. Staged values
+are not observable either: that would need a second graph per stage.
+
 ## Checked writes
 
 A `box` checks nothing. A `schemaBox` or a `BoxField` always holds a

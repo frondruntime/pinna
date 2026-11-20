@@ -45,7 +45,8 @@ ruling carries the date it was first written down, and uses today's names.
   `computedFunction`; a service that reacts to state as a stream for the
   Effect programs; view-only logic and components that read several values
   for `useSelect` and `useValues`; finding why a value recomputed for
-  `inspect`.
+  `inspect`; a host that runs asynchronous programs over a realm, and the
+  desk's requests that fail and time out, for stages.
 
 ## Rulings
 
@@ -268,6 +269,59 @@ ruling carries the date it was first written down, and uses today's names.
     plain functions: a dispose property on each made creating and stopping
     watches 28% slower (2.43 ms to 3.1 ms, rough tier, Node,
     `make-and-dispose`). `retainedKeys` joined the entry on 2026-11-17.
+53. **Stages** (2026-11-20). `openStage(realm)` makes a stage;
+    `stageUpdate`, `stageRead`, `realmRead`, `applyStage`, and `dropStage`
+    take it first, from the root of `@frondruntime/pinna` (45). The use is a
+    host that runs asynchronous programs over a realm, Frond, whose writes
+    must appear together when a program succeeds and never when it fails or
+    is interrupted, and the desk's requests that fail and time out.
+    - Explicit, like `update(realm, recipe)`: the realm keeps no current
+      stage, and `update` and `readIn` gain no field read and no branch.
+    - A stage is an overlay, a value for each box it wrote, and a journal of
+      its recipes in order. `stageUpdate` runs the recipe at once, against
+      the stage's `read` and `write`, and keeps it. Nothing copies the
+      realm, and a stage makes no graph node, so staged values are not
+      observable.
+    - `stageRead` reads the overlay's value of a box the stage wrote and the
+      realm's current value of any other: not a snapshot. `realmRead` reads
+      the realm's values, ignoring the overlay.
+    - `applyStage` replays the journal in one `update` over the realm's
+      values at that moment, each recipe in a nested update, and joins an
+      open update. It detects no conflict. The accepted cost: a value read
+      through the stage before applying can differ from what applying
+      writes. A recipe that throws on replay, or a write a box's check
+      refuses, throws from `applyStage` and rolls back the update it joined.
+    - A stage closes once, applied or dropped, and `applyStage` closes it
+      even when it throws. Every later call throws, and so does a `read` or
+      a `write` kept past its recipe (43).
+    - Errors follow `update`'s: a throwing recipe puts back its own overlay
+      writes and is not kept; a recipe that returns a promise throws;
+      `stageUpdate` and `applyStage` throw in a derivation through
+      `assertUpdateCanRun`, and `stageRead` and `realmRead` throw there too,
+      since their reads are not tracked. A call on a stage inside one of its
+      own recipes throws.
+    - Boxes only: `write.upsert`, `write.remove`, `write.replaceAll`,
+      `write.changed`, and a `read` of a computed value throw in a stage,
+      each naming the limit, since a computed value over a staged box would
+      return the realm's value with no error. `read.row` reads the realm's
+      row.
+    - A schema box checks a staged write at `stageUpdate`, where the work
+      wrote it, and again at `applyStage`, where it lands.
+    - A stage left open is reported by a test realm's dispose as
+      `stage still running`, through the hook `onRowChange` already uses, so
+      an application's realm keeps no record of its stages and no counter.
+    - The scoped form in `pinna-effect` is not built: a host wires
+      `Effect.acquireUseRelease` over the synchronous calls (7). Nested
+      stages, a stage over two realms, conflict detection, and computed
+      values and collections through a stage stay out until a use needs
+      them.
+54. **`changes` takes its realm from the observable** (2026-11-20).
+    `changes($box)` reads the realm with `realmOf($box)`, as `observeScoped`
+    and `whileObserved` do, and requires nothing: `Stream<Value>`, not
+    `Stream<Value, never, RealmService>`. A host that refuses every
+    requirement but `Scope` watches a box while its work awaits.
+    `watchScoped` and `fromStream` take no observable and still read
+    `RealmService`. Amends 11.
 
 53. **A collection row cannot be `undefined`** (2026-11-18).
     `write.upsert` and `write.replaceAll` reject an `undefined` row in every

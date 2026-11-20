@@ -41,6 +41,20 @@ how to find why a value recomputed.
 | `pinna: an update recipe returns nothing` | A recipe that returned a value other than `undefined` or a promise. The update is undone. |
 | `pinna: <name> cannot write while it computes` | A computed value that wrote, through a `write` kept from an update. |
 
+### Stages
+
+| Error | Answers |
+| --- | --- |
+| `pinna: <call> runs on a stage that was already applied or dropped; ...` | A stage call after `applyStage` or `dropStage`, which close it once. `<call>` is `stageUpdate`, `stageRead`, `realmRead`, `applyStage`, or `dropStage`. A `dropStage` in the `catch` around `applyStage` throws this over the first error: call `applyStage` after the `try`. |
+| `pinna: <verb> of a stage runs after its recipe returned; ...` | A `read` or a `write` a stage handed out, kept past its recipe. `<verb>` is `read`, `read.row`, `write`, `write.modify`, `write.upsert`, `write.remove`, `write.replaceAll`, or `write.changed`. |
+| `pinna: <verb> does not run in a stage, which writes boxes only; ...` | `write.upsert`, `write.remove`, `write.replaceAll`, or `write.changed` in a `stageUpdate` recipe. The recipe's writes to the stage are put back. Write it in `update`, or in a watch after `applyStage`. |
+| `pinna: read(<name>) of a computed value does not run through a stage, ...` | A computed value read through a stage, which would return the realm's value and not one over the staged boxes. Read the boxes, or the realm's value with `realmRead`. |
+| `pinna: <call> runs inside a recipe of the same stage` | `stageUpdate`, `applyStage`, or `dropStage` on a stage inside one of its own recipes. |
+| `pinna: stageUpdate cannot run in a computed value; ...` | As for `update`, with `stageUpdate` or `applyStage` in its place, and the same for a watch's select or a selector. |
+| `pinna: stageRead cannot run in a computed value; ...` | `stageRead` or `realmRead` in a computed value, a watch's select, or a selector: a stage's reads are not tracked, so the derivation would go stale. |
+| `pinna: stageUpdate recipes are synchronous; await outside, then stageUpdate` | A `stageUpdate` recipe that returned a promise. Its writes to the stage are put back. |
+| `pinna: a stageUpdate recipe returns nothing` | A `stageUpdate` recipe that returned a value other than `undefined` or a promise. |
+
 ### Drafts
 
 | Error | Answers |
