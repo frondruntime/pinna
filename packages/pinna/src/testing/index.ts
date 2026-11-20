@@ -2,8 +2,8 @@
  * Helpers for tests of code built on Pinna, for any test runner. `record`
  * keeps each value a select changes to; `held` lets `using` run a stop
  * function; `testRealm` makes a realm that, when disposed, throws if a
- * watch, an autorun, an `observe`, or an `onRowChange` listener is still
- * running; `retainedKeys` names the keys a collection still keeps something
+ * watch, an autorun, an `observe`, an `onRowChange` listener, or a stage is
+ * still running; `retainedKeys` names the keys a collection still keeps something
  * for. None imports a test runner: a failure is a thrown `Error`.
  */
 import type { Graph } from "@frondruntime/pinna-core";
@@ -80,9 +80,9 @@ export const held = (stop: () => void): Disposable => withDispose({}, stop);
 /**
  * Makes a realm whose dispose throws when the test left a watch, an autorun,
  * an `observe`, an `onRowChange` listener, or an Effect program's watch
- * running, naming each by its label (a watch's `name`, or `watch`,
- * `autorun`, or `onRowChange`), and stops each first so
- * nothing runs on into the next test. A React component's subscription is
+ * running, or a stage neither applied nor dropped, naming each by its label
+ * (a watch's `name`, or `watch`, `autorun`, `onRowChange`, or `stage`), and
+ * stops each first, dropping a stage, so nothing runs on into the next test. A React component's subscription is
  * not counted. Dispose also throws when the realm is not at rest, which only
  * a fault in Pinna leaves it.
  */
