@@ -12,9 +12,9 @@
  * runs a program while something observes `$x`, such as a feed that writes
  * the rows of a collection.
  *
- * `watchScoped`, `changes`, and `fromStream` read the realm from
- * `RealmService`; `observeScoped` and `whileObserved` take it from the
- * observable.
+ * `watchScoped` and `fromStream` read the realm from `RealmService`;
+ * `changes`, `observeScoped`, and `whileObserved` take it from the
+ * observable, so they require nothing but what their caller runs in.
  */
 
 import {
@@ -30,7 +30,7 @@ import {
   update,
   watch,
 } from "@frondruntime/pinna";
-import { peek } from "@frondruntime/pinna/internal";
+import { peek, realmOf } from "@frondruntime/pinna/internal";
 import { Cause, type Context, Effect, Fiber, Queue, type Scope, Stream } from "effect";
 import { RealmService } from "./decode.ts";
 
@@ -93,15 +93,14 @@ export const watchScoped = <Value>(
 /**
  * The current value of `observable`, then each change. A consumer that falls
  * behind gets the newest value and skips the ones between; it never misses
- * the last. The stream watches only while it runs.
+ * the last. The stream watches only while it runs, in the realm that made
+ * `observable`, and requires no `RealmService`.
  */
-export const changes = <Value>(
-  observable: Box<Value> | Computed<Value>,
-): Stream.Stream<Value, never, RealmService> =>
-  Stream.callback<Value, never, RealmService>(
+export const changes = <Value>(observable: Box<Value> | Computed<Value>): Stream.Stream<Value> =>
+  Stream.callback<Value>(
     (queue) =>
       Effect.gen(function* () {
-        const realm = yield* RealmService;
+        const realm = realmOf(observable);
         Queue.offerUnsafe(queue, peek(observable));
         yield* Effect.acquireRelease(
           Effect.sync(() =>
