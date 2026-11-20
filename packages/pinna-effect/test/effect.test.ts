@@ -33,9 +33,9 @@ import {
 
 /**
  * The Effect programs: `watchScoped` runs an effect per change, the latest value
- * winning; `changes` streams an observable's values. Both read the realm from
- * `RealmService`. `fromStream` feeds a value from a stream while it is
- * observed.
+ * winning; `changes` streams an observable's values. `watchScoped` reads the
+ * realm from `RealmService`, and `changes` from the observable. `fromStream`
+ * feeds a value from a stream while it is observed.
  */
 
 const original = globalThis.reportError;
@@ -470,6 +470,49 @@ describe("watchScoped", () => {
 });
 
 describe("changes", () => {
+  test("runs with no RealmService provided, and streams the current value, then each change", async () => {
+    const realm = createRealm();
+    const $count = box(realm, 0);
+    // The type says it: a stream that requires nothing.
+    const stream: Stream.Stream<number> = changes($count);
+    const values = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* stream.pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
+        yield* settle;
+        update(realm, (_read, write) => {
+          write($count, 1);
+        });
+        yield* settle;
+        update(realm, (_read, write) => {
+          write($count, 2);
+        });
+        return yield* Fiber.join(fiber);
+      }),
+    );
+    expect([...values]).toEqual([0, 1, 2]);
+  });
+
+  test("watches the realm that made the observable, whatever RealmService holds", async () => {
+    const realm = createRealm();
+    const $count = box(realm, 0);
+    const values = await run(
+      Effect.gen(function* () {
+        const fiber = yield* changes($count).pipe(
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* settle;
+        update(realm, (_read, write) => {
+          write($count, 1);
+        });
+        return yield* Fiber.join(fiber);
+      }),
+      createRealm(),
+    );
+    expect([...values]).toEqual([0, 1]);
+  });
+
   test("emits the current value, then each change", async () => {
     const realm = createRealm();
     const $count = schemaBox(realm, Schema.Number, 0);
