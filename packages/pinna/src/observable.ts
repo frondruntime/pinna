@@ -241,6 +241,12 @@ const checkName = (name: string | undefined): void => {
   }
 };
 
+/** How an error names an observable: its name in quotes, or `$observable`. */
+export const describeSource = (source: Source): string => {
+  const name = names.get(source);
+  return name === undefined ? "$observable" : `"${name}"`;
+};
+
 /** Thrown by a read outside every place of its realm; names the observable when it has a name. */
 const readError = (source: Source): Error => {
   const name = names.get(source);
@@ -261,7 +267,7 @@ export const realmsOf = (theirs: ObservableRealm, ours: ObservableRealm): string
  * when it has a name, and each realm that has one. Realms are told apart by
  * identity, never by name.
  */
-const otherRealmError = (
+export const otherRealmError = (
   verb: string,
   source: Source | undefined,
   theirs: ObservableRealm,
@@ -735,7 +741,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
   return value;
 };
 
-const produce = <Value>(base: Value, recipe: (draft: Draft<Value>) => undefined): Value => {
+export const produce = <Value>(base: Value, recipe: (draft: Draft<Value>) => undefined): Value => {
   if (!isDraftable(base)) {
     throw new Error(
       "pinna: write.modify drafts arrays and plain objects; write other values whole with write($box, value)",
@@ -890,7 +896,8 @@ export class ObservableRealm implements Realm {
   scopes = 0;
   /**
    * Set by `testRealm` only: counts a running listener that no graph watch
-   * stands for, such as `onRowChange`'s, and returns the stop to hand out.
+   * stands for, such as `onRowChange`'s, or a stage left open, and returns
+   * the stop to hand out.
    */
   running: ((label: string, stop: () => void) => () => void) | undefined = undefined;
 
@@ -1615,6 +1622,17 @@ export class BoxCell<Value> implements Box<Value> {
   }
 
   /**
+   * Throws the box's rejection of `value`, which would replace `previous`, a
+   * value the check accepted: for a write that lands elsewhere first, such as
+   * a stage's overlay.
+   */
+  verify(value: Value, previous: Value): void {
+    if (this.check !== acceptAll) {
+      verifyValue(this.realm, this.check, value, previous);
+    }
+  }
+
+  /**
    * Puts back a value and its version from before a failed update, so a
    * reader that saw only that value does not run again. Unchecked: it was
    * checked when it landed.
@@ -1730,7 +1748,7 @@ class ComputedFunctionEntries<Value> {
   }
 }
 
-class AtomCell implements Atom {
+export class AtomCell implements Atom {
   declare readonly [atomKind]: true;
   /** The graph node: what `read` reads. */
   readonly source: AtomNode;

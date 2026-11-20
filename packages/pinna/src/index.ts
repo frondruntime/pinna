@@ -37,3 +37,12 @@ export {
   watch,
 } from "./observable.ts";
 export { type ReconcileOptions, reconcile } from "./reconcile.ts";
+export {
+  applyStage,
+  dropStage,
+  openStage,
+  realmRead,
+  type Stage,
+  stageRead,
+  stageUpdate,
+} from "./stage.ts";
