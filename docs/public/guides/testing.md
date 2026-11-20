@@ -14,8 +14,8 @@ A test makes its own realm with `testRealm` from
 `@frondruntime/pinna/testing` and builds its state in it. It reads through
 `untracked` and writes through the methods that call `update`, as an event
 handler does. Held with `using`, the realm is disposed when the test ends,
-and its dispose throws if a watch, an autorun, an `observe`, or an
-`onRowChange` listener is still running.
+and its dispose throws if a watch, an autorun, an `observe`, an
+`onRowChange` listener, or a stage is still running.
 
 <!-- region testing.test.ts#realm -->
 
@@ -49,10 +49,12 @@ would not show.
 - Declare the realm before the recordings: `using` disposes in reverse
   order, so each recording stops before the realm checks.
 - Stop every watch, autorun, `observe`, and `onRowChange` listener a test
-  starts. One left running keeps its values cached and its `onObserved`
-  hooks started, so the test realm's dispose throws, naming each by its
-  `name`, or `watch`, `autorun`, or `onRowChange`, and stops it so the next
-  test starts clean. A React component's subscription is not counted.
+  starts, and apply or drop every stage. One left running keeps its values
+  cached and its `onObserved` hooks started, and a stage left open holds
+  its overlay, so the test realm's dispose throws, naming each by its
+  `name`, or `watch`, `autorun`, `onRowChange`, or `stage`, and stops it so
+  the next test starts clean; a stage is dropped. A React component's
+  subscription is not counted.
 - Hold each one in `using`: a watch through `record`, the rest through
   `held`, as in `using _ = held(autorun(realm, ...))`. A stop function called
   at the end of the test is skipped when an assertion fails, the dispose
@@ -65,7 +67,7 @@ would not show.
 
 | Call | Answers |
 | --- | --- |
-| `testRealm(options?)` | A realm of the test's own; its dispose throws if a watch, an autorun, an `observe`, or an `onRowChange` listener is still running. |
+| `testRealm(options?)` | A realm of the test's own; its dispose throws if a watch, an autorun, an `observe`, an `onRowChange` listener, or a stage is still running. |
 | `record(realm, select, options?)` | `values`, each value `select` changed to, oldest first; `stop`, which `using` also runs. |
 | `held(stop)` | A `Disposable` that runs `stop` when its `using` scope ends. |
 | `retainedKeys($items)` | A copy of the set of keys `$items` keeps a row, a box, or a computed value for; every one is a present key. Throws for a value that is not a collection Pinna made. |

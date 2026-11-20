@@ -74,7 +74,19 @@ mind while writing code.
    - A list written whole on each refetch stays a box written through
      `reconcile(previous, next, { keyOf, equals })`, which keeps the previous
      object of every item `equals` finds unchanged.
-7. **State from outside starts when it is observed.** `onObserved($x, start)`
+7. **Writes of asynchronous work that must not show early go through a
+   stage.** `openStage(realm)`, then `stageUpdate(stage, (read, write) =>
+   ...)` for each step: no box changes and nothing reruns until
+   `applyStage(stage)` lands every step in one update, and `dropStage(stage)`
+   on a failure leaves nothing to undo. Call `applyStage` after the `try`
+   whose `catch` drops: it closes the stage even when it throws, and a
+   later `dropStage` throws. A stage writes boxes only, reads no computed
+   value, and replays its recipes over the realm's values when applied, with
+   no conflict check; `realmRead(stage, ...)` reads the realm's value to
+   compare first. A write meant to show before the work succeeds, an
+   optimistic one, stays a plain `update` that the application undoes by
+   hand.
+8. **State from outside starts when it is observed.** `onObserved($x, start)`
    runs `start` on the first observer and its cleanup after the last; an
    `atom(realm)` stands for outside state, and `write.changed($atom)` reruns
    what read it. With Effect, `whileObserved($x, program)` runs a feed while
