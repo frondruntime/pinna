@@ -868,6 +868,23 @@ export const dropStage = (stage: Stage): void => {
 /** Where the stage is in its life: `"open"`, `"applied"`, or `"dropped"`. */
 export const stageStatus = (stage: Stage): StageStatus => (stage as StageState).status;
 
+/**
+ * What the stage read and `applyStage` checks, by name, once per box or
+ * collection: a collection records two boxes, and two unnamed boxes are two
+ * entries.
+ */
+const readNames = (state: StageState): ReadonlyArray<string> => {
+  const names: Array<string> = [];
+  const seen = new Set<object>();
+  for (const [box, read] of state.reads ?? []) {
+    if (!seen.has(read.observable)) {
+      seen.add(read.observable);
+      names.push(describeRead(read.observable, box));
+    }
+  }
+  return names;
+};
+
 /** The stage's name, realm, parent, status, and what it holds now. */
 export const inspectStage = (stage: Stage): StageInspection => {
   const state = stage as StageState;
@@ -889,13 +906,7 @@ export const inspectStage = (stage: Stage): StageInspection => {
     conflicts: state.conflicts,
     boxes,
     collections: [...state.rows.keys()].map((collection) => collection.name ?? "a collection"),
-    read: [
-      ...new Set(
-        [...(state.reads ?? new Map<BoxCell<unknown>, ReadVersion>())].map(([box, read]) =>
-          describeRead(read.observable, box),
-        ),
-      ),
-    ],
+    read: readNames(state),
     recipes: state.journal.length,
     children: state.children.size,
   };
