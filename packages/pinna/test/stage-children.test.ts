@@ -180,6 +180,8 @@ describe("inspectStage", () => {
     const $unnamed = collection<string, string>(realm, { keyOf: (row) => row });
     const $price = box(realm, 1, { name: "price" });
     const $readOnly = collection<string, string>(realm, { keyOf: (row) => row });
+    const $first = box(realm, 0);
+    const $second = box(realm, 0);
     const stage = openStage(realm, { name: "save", conflicts: "fail" });
     stageUpdate(stage, (read, write) => {
       write($a, 2);
@@ -192,6 +194,8 @@ describe("inspectStage", () => {
       read($unnamed.keys);
       read($price);
       read($readOnly.keys);
+      read($first);
+      read($second);
     });
     const child = openStage(stage);
     expect(inspectStage(stage)).toEqual({
@@ -202,7 +206,8 @@ describe("inspectStage", () => {
       conflicts: "fail",
       boxes: ["a", "<anonymous>"],
       collections: ["rows", "a collection"],
-      read: ["price", "a collection"],
+      // One entry for the collection's two boxes; one for each unnamed box.
+      read: ["price", "a collection", "<anonymous>", "<anonymous>"],
       recipes: 1,
       children: 1,
     });
