@@ -621,6 +621,10 @@ const keptRowsOf = (rows: Collection<string, Row>): unknown =>
   (rows as unknown as { readonly allRows: { readonly source: { readonly value: unknown } } })
     .allRows.source.value;
 
+/** The value a computed value keeps between reads. */
+const keptValueOf = (value: unknown): unknown =>
+  (value as { readonly source: { readonly value: unknown } }).source.value;
+
 describe("a collection's rows", () => {
   test("nothing observing them, a write that changes the rows lets go of the rows read before", () => {
     const realm = createRealm();
@@ -759,6 +763,61 @@ describe("a collection's rows", () => {
     ).toThrow("the recipe fails");
     expect(inside).toEqual([{ id: "b", price: 2 }]);
     expect(untracked(realm, (read) => read(rows.rows))).toEqual([{ id: "a", price: 1 }]);
+    expectRealmAtRest(realm);
+  });
+
+  test("a row computed a caller holds lets go of the row of a key that left", () => {
+    const realm = createRealm();
+    const rows = collection<string, Row>(realm, { keyOf });
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [
+        { id: "a", price: 1 },
+        { id: "b", price: 2 },
+      ]);
+    });
+    const a = rows.row("a");
+    const b = rows.row("b");
+    untracked(realm, (read) => [read(a), read(b)]);
+    update(realm, (_read, write) => {
+      write.remove(rows, "a");
+    });
+    expect(keptValueOf(a)).toBeUndefined();
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [{ id: "c", price: 3 }]);
+    });
+    expect(keptValueOf(b)).toBeUndefined();
+    expect(untracked(realm, (read) => [read(a), read(b)])).toEqual([undefined, undefined]);
+    expectRealmAtRest(realm);
+  });
+
+  test("a failed update lets go of the rows read inside it", () => {
+    const realm = createRealm();
+    const rows = collection<string, Row>(realm, { keyOf });
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [{ id: "a", price: 1 }]);
+    });
+    const a = rows.row("a");
+    for (const write of [
+      (w: Write) => w.upsert(rows, { id: "a", price: 2 }),
+      (w: Write) => w.replaceAll(rows, [{ id: "a", price: 2 }]),
+      (w: Write) => w.remove(rows, "a"),
+    ]) {
+      expect(() =>
+        update(realm, (read, w) => {
+          write(w);
+          read(a);
+          read(rows.rows);
+          throw new Error("the recipe fails");
+        }),
+      ).toThrow("the recipe fails");
+      // The rolled-back rows would otherwise stay reachable until the next read.
+      expect(keptValueOf(a)).toBeUndefined();
+      expect(keptRowsOf(rows)).toBeUndefined();
+      expect(untracked(realm, (read) => [read(a), read(rows.rows)])).toEqual([
+        { id: "a", price: 1 },
+        [{ id: "a", price: 1 }],
+      ]);
+    }
     expectRealmAtRest(realm);
   });
 });

@@ -407,6 +407,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     held.delete(key);
     this.realm.recordUndo(() => {
       held.set(key, previous);
+      this.forgetAllRows();
     });
     const order = peekCell(this.order.source);
     const index = indexOfKey(order, key);
@@ -491,12 +492,15 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       this.held = next;
       this.realm.recordUndo(() => {
         this.held = held;
-        // A key this write added leaves, with any row computed asked for since.
+        // A key this write added leaves, with any row computed asked for since;
+        // a kept key's row computed lets go of a row the write put there.
         for (const key of this.rowsByKey.keys()) {
+          this.forgetRow(key);
           if (!held.has(key)) {
             this.rowsByKey.delete(key);
           }
         }
+        this.forgetAllRows();
       });
       this.order.write(keys);
       if (changed) {
@@ -675,10 +679,14 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       present
         ? () => {
             held.set(key, previous as Value);
+            this.forgetRow(key);
+            this.forgetAllRows();
           }
         : () => {
             held.delete(key);
+            this.forgetRow(key);
             this.rowsByKey.delete(key);
+            this.forgetAllRows();
           },
     );
     this.changed();
@@ -702,6 +710,14 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
    */
   private changed(): void {
     this.changes.write(peekCell(this.changes.source) + 1);
+    this.forgetAllRows();
+  }
+
+  /**
+   * Empties `rows` when nothing observes it: a write or a rollback leaves its
+   * last value holding rows `held` no longer holds.
+   */
+  private forgetAllRows(): void {
     if (this.allRows !== undefined) {
       forgetValue(this.allRows.source);
     }
@@ -722,12 +738,17 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       cell.write(undefined);
       this.cells.delete(key);
     }
+    // A row computed a caller still holds would otherwise keep the leaving row.
+    if (row !== undefined) {
+      forgetValue(row.source);
+    }
     this.rowsByKey.delete(key);
     this.realm.recordUndo(() => {
       if (cell !== undefined) {
         this.cells.set(key, cell);
       }
       if (row !== undefined) {
+        forgetValue(row.source);
         this.rowsByKey.set(key, row);
       }
     });
