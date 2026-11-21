@@ -39,10 +39,10 @@ p {
 .hero-title {
   display: grid;
   margin-bottom: 28px;
-  color: var(--ink-bright);
+  color: var(--display);
   font-size: clamp(2.8rem, 6vw, 5.6rem);
   line-height: 0.96;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 
@@ -51,20 +51,12 @@ p {
   white-space: nowrap;
 }
 
-.hero-accent {
-  color: var(--accent);
-  text-shadow:
-    0 0 1px rgb(var(--accent-rgb) / 0.8),
-    0 0 20px rgb(var(--accent-rgb) / 0.2),
-    0 0 40px rgb(var(--accent-rgb) / 0.08);
-}
-
 .lede {
   max-width: 600px;
   margin-bottom: 20px;
-  color: var(--muted);
-  font-size: 0.92rem;
-  line-height: 1.72;
+  color: var(--lede);
+  font-size: 0.95rem;
+  line-height: 1.65;
 }
 
 .lede-c-pinna {
@@ -79,16 +71,16 @@ p {
   margin-top: 32px;
 }
 
-.btn-primary,
-.btn-secondary {
+.btn-primary {
   transition:
-    background var(--duration-control),
-    border-color var(--duration-control),
-    color var(--duration-control);
+    background var(--duration-beam),
+    border-color var(--duration-beam),
+    box-shadow var(--duration-beam),
+    color var(--duration-beam);
 }
 
-/* The primary action is a beam frame, like the brand mark: a lit line at 70% with lit corners,
-   and no glow. Hover brightens the line and the fill. */
+/* The primary action is a beam frame, like the brand mark: a lit line at 70% with lit corners.
+   Hover and focus brighten the line and the fill and add --bloom-frame. */
 .btn-primary {
   min-height: 44px;
   padding: 0 16px;
@@ -99,20 +91,20 @@ p {
   color: var(--accent);
 }
 
-.btn-primary:hover {
+.btn-primary:hover,
+.btn-primary:focus-visible {
   border-color: var(--lit-line-hover);
   background-color: rgb(var(--accent-rgb) / 0.14);
+  box-shadow: var(--bloom-frame);
 }
 
-.btn-secondary {
-  min-height: 44px;
-  border-bottom: 1px solid var(--lit-hairline);
-  background: transparent;
-  color: var(--muted);
-}
-
-.btn-secondary:hover {
-  color: var(--accent);
+/* A press flashes the fill and thickens the line inward by a pixel, at once. */
+.btn-primary:active {
+  background-color: rgb(var(--accent-rgb) / 0.24);
+  box-shadow:
+    var(--bloom-frame),
+    inset 0 0 0 1px var(--lit-line-hover);
+  transition-duration: 0s;
 }
 
 /* A quiet link into the docs, the last line of a section's header, under its intro. Descriptive
@@ -123,19 +115,9 @@ p {
   justify-self: start;
   align-items: center;
   padding: 4px 0;
-  border-bottom: 1px solid var(--lit-hairline);
   color: var(--muted);
   font-size: 0.78rem;
   letter-spacing: 0.02em;
-  text-decoration: none;
-  transition:
-    color var(--duration-control),
-    border-color var(--duration-control);
-}
-
-.section-doclink:hover {
-  border-bottom-color: var(--accent);
-  color: var(--accent);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -143,15 +125,94 @@ p {
    ═══════════════════════════════════════════════════════════ */
 
 .section {
+  position: relative;
   border-top: 1px solid var(--line);
 }
 
 .section-shell {
+  position: relative;
   display: grid;
   gap: 48px;
   width: var(--shell-width);
   margin: 0 auto;
   padding: 112px 0;
+}
+
+/* A section's rule is a trace leaving a pad: a hollow 5px square on the line at the shell's left
+   edge, and from it a lit stretch of the line that fades into the plain rule. The section's link
+   stands under the rule's right end, as a readout. */
+.section-shell::before {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  z-index: 1;
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--lit-line);
+  background: var(--bg);
+  content: "";
+}
+
+.section-shell::after {
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: min(480px, 60%);
+  height: 1px;
+  background: linear-gradient(90deg, var(--lit-trace), transparent);
+  content: "";
+  transform-origin: left;
+}
+
+/* A section's id leads with --hash-small, the # drawn as a piece of the hero graph, as a docs
+   heading's anchor does. */
+.section-anchor {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--dim);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  transition: color var(--duration-beam) ease;
+}
+
+.section-anchor::before {
+  width: 9px;
+  height: 9px;
+  background: currentColor;
+  content: "";
+  mask: var(--hash-small) center / 9px 9px no-repeat;
+}
+
+.section-anchor:hover,
+.section-anchor:focus-visible {
+  color: var(--accent);
+}
+
+/* As a section scrolls in, its trace is drawn out from the pad, once per pass, tied to the scroll
+   and not to a clock. A browser without scroll timelines runs the animation in 0s, its default
+   duration, so the trace is drawn at once; so is it under reduced motion. The rule takes no
+   @supports guard, because Biome stops checking selector order after an @supports block. */
+.section-shell::after {
+  animation: trace-draw linear both;
+  animation-timeline: view();
+  animation-range: entry 10% cover 30%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .section-shell::after {
+    animation: none;
+  }
+}
+
+@keyframes trace-draw {
+  from {
+    transform: scaleX(0);
+  }
 }
 
 .section-header {
@@ -167,14 +228,15 @@ p {
 .section-header > p {
   max-width: 640px;
   margin: 0;
-  color: var(--muted);
-  line-height: 1.72;
+  color: var(--lede);
+  font-size: 0.95rem;
+  line-height: 1.65;
 }
 
 .section-header h2 {
   margin: 0;
   max-width: 960px;
-  color: var(--ink-bright);
+  color: var(--display);
   font-size: clamp(2rem, 4.8vw, 5rem);
   line-height: 0.97;
   letter-spacing: 0;
@@ -215,6 +277,7 @@ p {
 
 .code-block-effect {
   --code-accent: var(--green);
+  --corner: var(--green);
 }
 
 .lede-c-effect {
@@ -224,6 +287,7 @@ p {
 
 /* ─── Info cards ─── */
 .info-card {
+  --corner-inset: -1px;
   display: grid;
   gap: 16px;
   align-content: start;
@@ -237,7 +301,7 @@ p {
 .info-card h3,
 .pinna-point h3 {
   margin: 0;
-  color: var(--ink-bright);
+  color: var(--display);
   font-size: clamp(1.2rem, 2vw, 1.8rem);
   line-height: 1.08;
   letter-spacing: 0.02em;
@@ -246,8 +310,8 @@ p {
 
 .info-card p:last-child {
   margin-bottom: 0;
-  color: var(--muted);
-  line-height: 1.68;
+  color: var(--lede);
+  line-height: 1.65;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -341,7 +405,8 @@ p {
   max-width: 920px;
 }
 
-.pinna-hero-code .shiki {
+.pinna-hero-code .shiki,
+.pinna-point .shiki {
   font-size: 0.78rem;
 }
 
@@ -374,8 +439,8 @@ p {
 
 .pinna-point p {
   margin: 0;
-  color: var(--muted);
-  line-height: 1.68;
+  color: var(--lede);
+  line-height: 1.65;
 }
 
 .pinna-point-list {
@@ -390,7 +455,7 @@ p {
 .pinna-point-list li {
   display: grid;
   gap: 8px;
-  color: var(--muted);
+  color: var(--lede);
   font-size: 0.84rem;
   line-height: 1.58;
   padding: 16px 0;
@@ -427,26 +492,12 @@ p {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 0.72rem;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
-  text-underline-offset: 3px;
-}
-
-.pinna-point-test:hover,
-.suite-figure-files a:hover,
-.pinna-bench-notes-row a:hover {
-  color: var(--accent);
-  text-decoration-color: currentColor;
 }
 
 .pinna-point-text {
   display: grid;
   gap: 16px;
   align-content: start;
-}
-
-.pinna-point .shiki {
-  font-size: 0.78rem;
 }
 
 .pinna-proof,
@@ -459,17 +510,10 @@ p {
 
 .suite-grid a {
   color: inherit;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
-  text-underline-offset: 3px;
 }
 
 .suite-grid h3 {
   font-size: 1.05rem;
-}
-
-.suite-grid a:hover {
-  text-decoration-color: currentColor;
 }
 
 .suite-source,
@@ -482,6 +526,7 @@ p {
 }
 
 .suite-row {
+  position: relative;
   display: grid;
   gap: 8px;
 }
@@ -500,8 +545,8 @@ p {
   font-weight: 700;
 }
 
-/* One square per case. Pass is the accent, a miss by design is amber, a fail is red, and a skip
-   is gray. */
+/* One square per case: a pass is the accent, a difference by design is amber, and a skip is
+   gray. */
 .suite-cells,
 .suite-legend {
   display: flex;
@@ -529,6 +574,97 @@ p {
 
 .suite-cell.is-skip {
   background: var(--dim);
+}
+
+/* A case under the pointer or a tap is ringed in every row, and the rest of each row dims, so one
+   case reads across the libraries. The dim is on the three rows' containers and the ring is one
+   marker per row moved by transform over the case's square, a copy of it in its color, so entering
+   the card starts three opacity transitions and not one per square (design/brief.md). The ring
+   sits in the 3px gap, and the dim lights at once and decays, like a control. */
+.suite-cells {
+  transition: opacity var(--duration-beam);
+  will-change: opacity;
+}
+
+.suite-grid[data-case] .suite-cells {
+  --duration-beam: var(--duration-control);
+  opacity: 0.45;
+}
+
+.suite-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-beam);
+}
+
+.suite-grid[data-case] .suite-mark {
+  --duration-beam: var(--duration-control);
+  opacity: 1;
+}
+
+/* The readout shows the legend at rest and names one case under the pointer or a tap: its id and
+   title, each library's result, and the reason recorded for a miss. The legend, the case, and a
+   hidden copy of the case with the most text share one cell, so the card keeps its height at
+   every width. */
+.suite-readout {
+  display: grid;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.suite-readout-rest,
+.suite-readout-live,
+.suite-readout-ghost {
+  display: grid;
+  grid-area: 1 / 1;
+  align-content: start;
+  gap: 2px;
+}
+
+.suite-readout-rest {
+  gap: 4px;
+}
+
+.suite-readout-live,
+.suite-readout-ghost,
+.suite-grid[data-case] .suite-readout-rest {
+  visibility: hidden;
+}
+
+.suite-grid[data-case] .suite-readout-live {
+  visibility: visible;
+}
+
+.suite-readout p {
+  margin: 0;
+}
+
+.suite-readout-title {
+  color: var(--ink-bright);
+}
+
+.suite-readout-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+}
+
+.suite-readout-result.is-pass b {
+  color: var(--accent);
+}
+
+.suite-readout-result.is-differs b {
+  color: var(--amber);
+}
+
+.suite-readout-reasons span {
+  display: block;
 }
 
 .info-card .suite-legend {
@@ -582,9 +718,6 @@ p {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 0.72rem;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
-  text-underline-offset: 3px;
 }
 
 @media (max-width: 700px) {
@@ -626,6 +759,8 @@ p {
 .pinna-bench-disclaimer {
   --disclaimer-border: rgb(var(--red-rgb) / 0.45);
   --disclaimer-rule: rgb(var(--red-rgb) / 0.25);
+  --corner: var(--red);
+  --corner-inset: -1px;
   border: 1px solid var(--disclaimer-border);
 }
 
@@ -696,7 +831,7 @@ p {
   text-transform: uppercase;
   cursor: pointer;
   list-style: none;
-  transition: color var(--duration-control);
+  transition: color var(--duration-beam);
 }
 
 .pinna-bench-notes-summary::-webkit-details-marker {
@@ -713,7 +848,7 @@ p {
   content: "−";
 }
 
-.pinna-bench-notes-summary:hover {
+.pinna-bench-notes-summary:is(:hover, :focus-visible) {
   color: var(--ink-bright);
 }
 
@@ -756,9 +891,21 @@ p {
 
 .pinna-bench-notes-row a {
   color: var(--ink-bright);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
-  text-underline-offset: 3px;
+}
+
+/* Each beam-underlined link's resting color, set above or by the base `a { color: inherit }`,
+   outranks any rule in :where(), so the lit color under the pointer is set here and not in the
+   beam underline's shared hover rule in design-system.css. */
+.pinna-point-test:is(:hover, :focus-visible),
+.suite-grid a:is(:hover, :focus-visible),
+.suite-figure-files a:is(:hover, :focus-visible),
+.pinna-bench-notes-row a:is(:hover, :focus-visible),
+.section-doclink:is(:hover, :focus-visible) {
+  color: var(--accent);
+}
+
+.section-header > p a:is(:hover, :focus-visible) {
+  color: var(--accent);
 }
 
 /* A term and what it means, on one line each. Every row's terms share one
@@ -786,7 +933,7 @@ p {
 
 .pinna-bench-terms dd {
   margin: 0;
-  color: var(--muted);
+  color: var(--lede);
 }
 
 .pinna-bench-terms ul {
@@ -895,6 +1042,28 @@ p {
   border-right-color: var(--edge);
 }
 
+/* Pinna's columns sit on a faint lit wash and its name is lit, so the eye finds the library the
+   page is about. The wash is 3%, far under a best cell's 18% fill, so it never reads as a win. */
+.pinna-bench-table col.is-pinna {
+  background: rgb(var(--accent-rgb) / 0.03);
+}
+
+.pinna-bench-table thead th.is-pinna {
+  color: var(--accent);
+}
+
+/* The row under the pointer lifts a step, lighting in --duration-control and fading in
+   --duration-decay as a control does, so a row can be read across twelve columns. A best cell
+   keeps its own fill. */
+.pinna-bench-table tbody :is(th, td) {
+  transition: background-color var(--duration-decay) ease;
+}
+
+.pinna-bench-table tbody tr:hover > :is(th, td:not(.is-best)) {
+  background-color: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  transition-duration: var(--duration-control);
+}
+
 .pinna-bench-table td {
   color: var(--dim);
   white-space: nowrap;
@@ -909,6 +1078,7 @@ p {
 
 /* What each color means, in a block of its own above the tables. */
 .pinna-bench-legend {
+  --corner-inset: -1px;
   display: grid;
   gap: 12px;
   padding: 16px;
@@ -927,7 +1097,8 @@ p {
 
 /* Each cell against the best figure in its row on the same runtime; the legend's swatches match.
    Only the best cell is filled, and its fill runs under its rules, so no gray line crosses a color.
-   The rest are told apart by their text, the last two tiers by their glow, and the last by its glitch. */
+   The rest are told apart by their text, the last two tiers by their glow, and the last by its
+   glitch. */
 .pinna-bench-swatch {
   padding: 4px 12px;
   border: 1px solid var(--line-bright);
@@ -968,9 +1139,16 @@ p {
   color: color-mix(in srgb, var(--red), #ff0033);
 }
 
-/* Past 100×, and off the scale past 1,000× or with no figure: the same red, lit. */
+/* Past 100×, and off the scale past 1,000× or with no figure: the same red, lit. Past 100× it glows
+   at about half the strength, so the two tiers read apart before the glitch starts. */
 .pinna-bench-table td.is-beyond,
-.pinna-bench-swatch.is-beyond,
+.pinna-bench-swatch.is-beyond {
+  color: #ff5c77;
+  text-shadow:
+    0 0 4px rgb(255 0 51 / 0.55),
+    0 0 10px rgb(255 0 51 / 0.25);
+}
+
 .pinna-bench-table td.is-off-scale,
 .pinna-bench-swatch.is-off-scale {
   color: #ff5c77;
@@ -1242,18 +1420,19 @@ p {
   min-height: clamp(560px, calc(100dvh - var(--header-h) - 96px), 780px);
 }
 
-/* The headline lets clicks through to the branches behind it; its links still take theirs. */
+/* The headline lets clicks through to the branches behind it; its links still take theirs, and the
+   lit word takes the pointer so its edge can light under it. */
 .hero-top .hero-content {
   pointer-events: none;
 }
 
-.hero-top .hero-content a {
+.hero-top .hero-content a,
+.hero-top .lit-word {
   pointer-events: auto;
 }
 
-/* A halo of the page's own background keeps the headline and the lede readable over the traces
-   and names behind them. */
-.hero-top .hero-title,
+/* A halo of the page's own background keeps the lede readable over the traces and names behind
+   it. The headline takes none. */
 .hero-top .lede {
   text-shadow:
     0 0 2px var(--bg),
@@ -1341,6 +1520,10 @@ p {
 }
 
 .frond-caption {
+  /* Three lines whatever it says, so the canvas above, which takes the rest of the hero's height,
+     never resizes and the frond never refits when the caption changes. Every caption fits three
+     lines at the dock's 440px; the 1px is the border, and the rest covers the code's line boxes. */
+  height: calc(3lh + 26px);
   margin: 0;
   padding: 12px 16px;
   border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
@@ -1738,6 +1921,14 @@ p {
 }
 
 .frond-scene-branch.is-done .frond-scene-row {
+  color: var(--ink-bright);
+}
+
+/* A part that holds no todo, a total or `$todos`, does nothing when pressed, so the pointer stays an
+   arrow; its name brightens while the pointer is over it, and a press pops its pad and explains it in
+   the caption (`src/lib/frondScene.ts`). */
+/* Four classes, as the lit names' rule above has. */
+.frond-scene .frond-scene-overlay .frond-scene-name.is-hovered {
   color: var(--ink-bright);
 }
 

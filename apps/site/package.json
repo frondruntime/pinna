@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "sync": "bun run scripts/sync-docs.ts",
+    "sprouts": "bun run scripts/sprouts.ts",
     "dev": "bun run sync && astro dev --host 127.0.0.1",
     "build": "bun run sync && astro check && astro build",
     "typecheck": "bun run sync && astro check"

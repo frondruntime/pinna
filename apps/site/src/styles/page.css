@@ -38,10 +38,10 @@
 
 .page-title {
   margin: 0 0 28px;
-  color: var(--ink-bright);
+  color: var(--display);
   font-size: clamp(2.2rem, 5vw, 3.4rem);
   line-height: 1;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 
@@ -59,34 +59,32 @@
   gap: 12px;
 }
 
-.page-action {
-  height: 40px;
-  padding: 0 16px;
-  border: 1px solid var(--line-bright);
-  border-radius: 0;
-  background: rgb(var(--panel-rgb) / 0.7);
-  color: var(--ink);
-  transition:
-    border-color var(--duration-control),
-    color var(--duration-control),
-    background var(--duration-control);
-}
-
-.page-action:hover {
-  border-color: var(--lit-line-soft);
-  color: var(--accent);
-}
-
+/* The primary action is a beam frame; the secondary action beside it is the shared beam-underlined
+   link, .btn-secondary (design-system.css). */
 .page-action-primary {
-  border-color: var(--lit-line);
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--lit-line);
+  border-radius: 0;
   background: var(--beam-corners);
   background-color: var(--lit-fill);
   color: var(--accent);
+  transition:
+    border-color var(--duration-beam),
+    background var(--duration-beam);
 }
 
-.page-action-primary:hover {
+.page-action-primary:hover,
+.page-action-primary:focus-visible {
   border-color: var(--lit-line-hover);
   background-color: var(--lit-fill-hover);
+}
+
+/* A press flashes the fill and thickens the line inward by a pixel, at once. */
+.page-action-primary:active {
+  background-color: rgb(var(--accent-rgb) / 0.24);
+  box-shadow: inset 0 0 0 1px var(--lit-line-hover);
+  transition-duration: 0s;
 }
 
 /* ─── 404 ─── */
@@ -96,28 +94,13 @@
 }
 
 .notfound-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
   color: var(--red);
-}
-
-.notfound-status {
-  padding: 4px 12px;
-  border: 1px solid color-mix(in srgb, var(--red) 60%, transparent);
-  border-radius: 0;
-  background: color-mix(in srgb, var(--red) 8%, transparent);
-  letter-spacing: 0.08em;
 }
 
 .notfound-title {
   display: grid;
   font-size: clamp(2.4rem, 5.4vw, 4.4rem);
   line-height: 0.98;
-}
-
-.notfound-title-accent {
-  color: var(--accent);
 }
 
 @media (max-width: 40rem) {

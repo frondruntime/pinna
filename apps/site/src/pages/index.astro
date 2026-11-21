@@ -186,12 +186,12 @@ const effectPoints: ReadonlyArray<{
 // suite's `expected.ts`, which `bun run test` checks: a case it does not list passes, and a gap
 // that opens or closes fails the run. A library is one entry of `suiteLibraries`, so a third row
 // is data. A case a library fails reads "differs" for every library alike: the suite encodes one
-// set of design choices, and the recorded reason, on hover, says which one the library took.
+// set of design choices, and the recorded reason, in the readout, says which one the library took.
 type CaseState = "pass" | "differs" | "skip";
 
 interface SuiteSquare {
   readonly state: CaseState;
-  readonly title: string;
+  readonly reason: string | undefined;
 }
 
 const suiteLibraries: ReadonlyArray<{
@@ -210,10 +210,9 @@ const missState = (miss: Miss): CaseState => (miss.status === "skip" ? "skip" : 
 const suiteRows = suiteLibraries.map((library) => {
   const squares: ReadonlyArray<SuiteSquare> = suiteCases.map((testCase) => {
     const miss = expectedCases[library.key][testCase.id];
-    const heading = `#${testCase.id} ${testCase.title}`;
     return miss === undefined
-      ? { state: "pass", title: heading }
-      : { state: missState(miss), title: `${heading}\n${miss.reason}` };
+      ? { state: "pass", reason: undefined }
+      : { state: missState(miss), reason: miss.reason };
   });
   const count = (state: CaseState) => squares.filter((square) => square.state === state).length;
   const parts = [
@@ -227,6 +226,36 @@ const suiteRows = suiteLibraries.map((library) => {
     .join(", ");
   return { key: library.key, name: library.name, squares, summary, count };
 });
+
+// The readout under the rows names one case and what each library got on it, with the reason a
+// library recorded for a miss. MobX's reasons start with its name; the others take it here.
+const suiteReadout = (index: number) => {
+  const testCase = suiteCases[index];
+  return {
+    id: testCase?.id ?? 0,
+    title: testCase?.title ?? "",
+    results: suiteRows.map((row) => {
+      const square = row.squares[index];
+      const name = row.name.split(" ")[0] ?? row.name;
+      const reason = square?.reason;
+      return {
+        name,
+        state: square?.state ?? "pass",
+        reason: reason === undefined || reason.startsWith(`${name}:`) ? reason : `${name}: ${reason}`,
+      };
+    }),
+  };
+};
+
+const suiteReadouts = suiteCases.map((_, index) => suiteReadout(index));
+
+// A hidden copy of the case with the most text holds the readout's height, so the card does not
+// jump between cases at any width.
+const suiteReadoutLength = (readout: ReturnType<typeof suiteReadout>) =>
+  readout.title.length + readout.results.reduce((total, result) => total + (result.reason?.length ?? 0), 0);
+const suiteTallest = suiteReadouts.reduce((tallest, readout) =>
+  suiteReadoutLength(readout) > suiteReadoutLength(tallest) ? readout : tallest,
+);
 
 const suiteLegend = (
   [
@@ -282,7 +311,6 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
   },
 ];
 
-// The three things Pinna is built on, each linked to the section that shows it.
 ---
 
 <BaseLayout title={title} description={siteDescription}>
@@ -302,7 +330,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
         <div class="hero-content">
           <h1 id="hero-title" class="hero-title">
             <span class="hero-line">Reactive state</span>
-            <span class="hero-line">that’s <span class="hero-accent">hard</span></span>
+            <span class="hero-line">that’s <span class="lit-word">hard</span></span>
             <span class="hero-line">to get wrong.</span>
           </h1>
 
@@ -332,6 +360,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
          ═══════════════════════════════════════════════════════════ -->
     <section class="section" id="explicit" aria-labelledby="explicit-title">
       <div class="section-shell">
+        <a class="section-anchor" href="#explicit" aria-label="Link to section: Reads and writes are explicit. A mistake is loud.">explicit</a>
         <header class="section-header">
           <h2 id="explicit-title">Reads and writes are explicit. A mistake is loud.</h2>
           <p>
@@ -371,6 +400,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
          ═══════════════════════════════════════════════════════════ -->
     <section class="section" id="api" aria-labelledby="api-title">
       <div class="section-shell">
+        <a class="section-anchor" href="#api" aria-label="Link to section: The API, in one sample.">api</a>
         <header class="section-header">
           <h2 id="api-title">The API, in one sample.</h2>
           <p>
@@ -430,6 +460,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
          ═══════════════════════════════════════════════════════════ -->
     <section class="section" id="react" aria-labelledby="react-title">
       <div class="section-shell">
+        <a class="section-anchor" href="#react" aria-label="Link to section: In React.">react</a>
         <header class="section-header">
           <h2 id="react-title">In React.</h2>
           <p>
@@ -474,6 +505,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
          ═══════════════════════════════════════════════════════════ -->
     <section class="section" id="effect" aria-labelledby="effect-title">
       <div class="section-shell">
+        <a class="section-anchor" href="#effect" aria-label="Link to section: With Effect.">effect</a>
         <header class="section-header">
           <h2 id="effect-title">With <span class="lede-c-effect">Effect</span>.</h2>
           <p>
@@ -519,6 +551,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
          ═══════════════════════════════════════════════════════════ -->
     <section class="section" id="conformance" aria-labelledby="conformance-title">
       <div class="section-shell">
+        <a class="section-anchor" href="#conformance" aria-label="Link to section: Conformance.">conformance</a>
         <header class="section-header">
           <h2 id="conformance-title">Conformance.</h2>
           <p>
@@ -534,7 +567,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
               <a href={suiteSource} target="_blank" rel="noopener noreferrer">reactive-framework-test-suite</a>
             </h3>
             <p class="suite-source">
-              {suiteCases.length} cases, one square each, in suite order. Hover a square for its case.
+              {suiteCases.length} cases, one square each, in suite order.
               reactive-framework-test-suite 0.2.0, MIT, Johnson Chu;{" "}
               <a href={sourceUrl("packages/pinna/test/conformance/shared-suite")} target="_blank" rel="noopener noreferrer">shared-suite</a>.
             </p>
@@ -546,23 +579,47 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                     <span>{row.summary}</span>
                   </p>
                   <div class="suite-cells" role="img" aria-label={`${row.name}: ${row.summary}`}>
-                    {row.squares.map((square) => (
-                      <span class={`suite-cell is-${square.state}`} title={square.title} />
+                    {row.squares.map((square, index) => (
+                      <span class={`suite-cell is-${square.state}`} data-case={index} />
                     ))}
                   </div>
+                  <span class="suite-cell suite-mark" aria-hidden="true" />
                 </div>
               ))
             }
-            <ul class="suite-legend">
-              {
-                suiteLegend.map((entry) => (
-                  <li>
-                    <span class={`suite-cell is-${entry.state}`} aria-hidden="true" />
-                    {entry.text}
-                  </li>
-                ))
-              }
-            </ul>
+            <div class="suite-readout" data-suite-readouts={JSON.stringify(suiteReadouts)}>
+              <div class="suite-readout-rest">
+                <ul class="suite-legend">
+                  {
+                    suiteLegend.map((entry) => (
+                      <li>
+                        <span class={`suite-cell is-${entry.state}`} aria-hidden="true" />
+                        {entry.text}
+                      </li>
+                    ))
+                  }
+                </ul>
+                <p>Hover or tap a square for its case.</p>
+              </div>
+              <div class="suite-readout-live">
+                <p />
+                <p class="suite-readout-results" />
+                <p class="suite-readout-reasons" />
+              </div>
+              <div class="suite-readout-ghost" aria-hidden="true">
+                <p>#{suiteTallest.id} {suiteTallest.title}</p>
+                <p class="suite-readout-results">
+                  {suiteTallest.results.map((result) => (
+                    <span>
+                      {result.name} <b>{result.state}</b>
+                    </span>
+                  ))}
+                </p>
+                <p class="suite-readout-reasons">
+                  {suiteTallest.results.flatMap((result) => (result.reason === undefined ? [] : [<span>{result.reason}</span>]))}
+                </p>
+              </div>
+            </div>
             <p class="suite-probes">
               Pinna differs on case #154, which expects a batch that throws to keep its writes:{" "}
               <a href="#explicit">an update that throws is undone</a>.
@@ -606,6 +663,7 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
          ═══════════════════════════════════════════════════════════ -->
     <section class="section" id="hermes" aria-labelledby="hermes-title">
       <div class="section-shell">
+        <a class="section-anchor" href="#hermes" aria-label="Link to section: Measurements.">hermes</a>
         <header class="section-header">
           <h2 id="hermes-title">Measurements.</h2>
           <p>
@@ -681,7 +739,9 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                         </caption>
                         <colgroup>
                           <col class="pinna-bench-scenario-column" />
-                          {benchLibraries.map(() => runtimes.map(() => <col />))}
+                          {benchLibraries.map((library) =>
+                            runtimes.map(() => <col class:list={{ "is-pinna": library.key === "pinna" }} />),
+                          )}
                         </colgroup>
                         <thead>
                           <tr>
@@ -689,7 +749,11 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                               Scenario
                             </th>
                             {benchLibraries.map((library) => (
-                              <th scope="colgroup" colspan={runtimes.length} class="is-last">
+                              <th
+                                scope="colgroup"
+                                colspan={runtimes.length}
+                                class:list={["is-last", { "is-pinna": library.key === "pinna" }]}
+                              >
                                 {library.name}
                               </th>
                             ))}
@@ -771,8 +835,9 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                     <code>260318099.0.5</code>, the one React Native <code>0.88.1</code> ships,
                     from the command line. One launch a cell, a process of its own that makes the
                     library's instance once; a figure is the median of that launch's samples. The
-                    machine's load average was 3.0 to 3.7. Every library's watchers run the same
-                    effect, which counts its calls, and every bundle is a production build.
+                    machine's load average was 1.6 to 3.7. Every library's watchers run the same
+                    effect, made once per process, which counts its calls, and every bundle is a
+                    production build.
                   </dd>
                 </div>
                 <div class="pinna-bench-term">
@@ -949,3 +1014,115 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
 
   <SiteFooter />
 </BaseLayout>
+
+<script>
+  // The suite grid's readout. At rest it shows the legend; hovering or tapping a square replaces it
+  // with the case and what each library got on it, and marks the same case in every row. The case
+  // clears when the pointer leaves the card; a touch has no leave, so a tapped case clears on a tap
+  // outside the card. The page swaps without a reload, so the grid binds on every page load, and
+  // the one document listener calls whichever grid is current.
+  interface SuiteReadout {
+    readonly id: number;
+    readonly title: string;
+    readonly results: ReadonlyArray<{ readonly name: string; readonly state: string; readonly reason?: string }>;
+  }
+
+  const span = (className: string, ...children: ReadonlyArray<Node | string>) => {
+    const element = document.createElement("span");
+    element.className = className;
+    element.append(...children);
+    return element;
+  };
+
+  const bold = (text: string) => {
+    const element = document.createElement("b");
+    element.textContent = text;
+    return element;
+  };
+
+  let clearSuiteCase: (() => void) | undefined;
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!(event.target instanceof Element && event.target.closest(".suite-grid") !== null)) {
+      clearSuiteCase?.();
+    }
+  });
+
+  document.addEventListener("astro:page-load", () => {
+    clearSuiteCase = undefined;
+    const grid = document.querySelector<HTMLElement>(".suite-grid");
+    const readout = grid?.querySelector<HTMLElement>(".suite-readout");
+    if (grid == null || readout == null) {
+      return;
+    }
+    const [caseLine, resultsLine, reasonsLine] = readout.querySelector(".suite-readout-live")?.children ?? [];
+    if (caseLine === undefined || resultsLine === undefined || reasonsLine === undefined) {
+      return;
+    }
+    const readouts: ReadonlyArray<SuiteReadout> = JSON.parse(readout.dataset.suiteReadouts ?? "[]");
+    const rows = [...grid.querySelectorAll(".suite-row")].flatMap((row) => {
+      const cells = row.querySelector(".suite-cells");
+      const marker = row.querySelector<HTMLElement>(".suite-mark");
+      return cells === null || marker === null ? [] : [{ row, cells, marker }];
+    });
+    let current = -1;
+
+    // One marker per row moves onto the case and copies its square, so the dim stays on the
+    // three rows' containers and a case touches three transforms, not 483 squares.
+    const mark = (index: number) => {
+      // Every position is read before any marker moves, so the reads share one layout.
+      // Rectangles, not offsets: offsets round, and a row starts on a fraction of a pixel.
+      const targets = rows.flatMap(({ row, cells, marker }) => {
+        const cell = cells.children[index];
+        if (cell === undefined) {
+          return [];
+        }
+        const from = row.getBoundingClientRect();
+        const to = cell.getBoundingClientRect();
+        return [{ cell, marker, x: to.left - from.left, y: to.top - from.top }];
+      });
+      for (const { cell, marker, x, y } of targets) {
+        marker.className = `${cell.className} suite-mark`;
+        marker.style.transform = `translate(${x}px, ${y}px)`;
+      }
+      current = index;
+    };
+
+    const show = (index: number) => {
+      const entry = readouts[index];
+      if (entry === undefined || index === current) {
+        return;
+      }
+      mark(index);
+      grid.dataset.case = "on";
+      caseLine.replaceChildren(`#${entry.id} `, span("suite-readout-title", entry.title));
+      resultsLine.replaceChildren(
+        ...entry.results.map((result) =>
+          span(`suite-readout-result is-${result.state}`, `${result.name} `, bold(result.state)),
+        ),
+      );
+      reasonsLine.replaceChildren(
+        ...entry.results.flatMap((result) => (result.reason === undefined ? [] : [span("", result.reason)])),
+      );
+    };
+
+    grid.addEventListener("pointerover", (event) => {
+      const cell = event.target instanceof Element ? event.target.closest<HTMLElement>(".suite-cells > .suite-cell") : null;
+      if (cell !== null) {
+        show(Number(cell.dataset.case));
+      }
+    });
+
+    const clear = () => {
+      current = -1;
+      delete grid.dataset.case;
+    };
+    clearSuiteCase = clear;
+
+    grid.addEventListener("pointerleave", (event) => {
+      if (event.pointerType !== "touch") {
+        clear();
+      }
+    });
+  });
+</script>

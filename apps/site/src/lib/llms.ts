@@ -21,14 +21,48 @@ type LlmsDoc = {
   readonly body: string;
 };
 
-const contentType = "text/plain; charset=utf-8";
-
 export function textResponse(body: string): Response {
   return new Response(body, {
     headers: {
-      "Content-Type": contentType,
+      "Content-Type": "text/plain; charset=utf-8",
     },
   });
+}
+
+// The dev server sends this type; a static build drops it, and the host types the file by its
+// extension (`vercel.json` names text/markdown for `.md`).
+export function markdownResponse(body: string): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
+    },
+  });
+}
+
+/**
+ * Where a docs page's Markdown copy is served, mirroring `docs/public`: `effect/boxes.md` at
+ * `/docs/effect/boxes.md`, and the section page `start/index.md` at `/docs/start/index.md`, as the
+ * llms.txt proposal names a copy of a URL without a file name. The corpus links its pages as
+ * relative `.md` paths, so every link in a copy resolves as written.
+ */
+export function markdownPath(slug: string): string {
+  return rawDocs[`../content/docs/${slug}/index.md`] === undefined
+    ? `/docs/${slug}.md`
+    : `/docs/${slug}/index.md`;
+}
+
+/** A page's Markdown copy: its title and description, then its source body. */
+export async function renderMarkdownPages(): Promise<
+  ReadonlyArray<{ readonly path: string; readonly body: string }>
+> {
+  const docs = await getOrderedDocs();
+  return docs.map((doc) => ({
+    path: markdownPath(doc.slug),
+    body: `${[`# ${doc.title}`, "", doc.description ? `> ${doc.description}` : "", "", doc.body]
+      .filter((line, index, lines) => line !== "" || lines[index - 1] !== "")
+      .join("\n")
+      .trim()}\n`,
+  }));
 }
 
 export async function renderLlmsIndex(): Promise<string> {
@@ -39,23 +73,24 @@ export async function renderLlmsIndex(): Promise<string> {
     "",
     `> ${siteDescription}`,
     "",
-    "Pinna is observable state for TypeScript and React, with Effect Schema or without it. These links point to the canonical documentation pages.",
-    "",
-    "## Full context",
-    "",
-    `- [Full documentation](${siteUrl}/llms-full.txt): Complete Markdown documentation concatenated into one plain-text file.`,
-    "",
-    "## Documentation",
+    "Pinna is observable state for TypeScript and React, with Effect Schema or without it. Each link points to the Markdown source of a documentation page; the HTML page is at the same URL without `.md` (without `/index.md` for a section page).",
   ];
 
   for (const group of sidebar) {
     const groupDocs = group.items.flatMap((item) => bySlug.get(item.slug) ?? []);
     if (groupDocs.length === 0) continue;
-    lines.push("", `### ${group.label}`);
+    lines.push("", `## ${group.label}`, "");
     for (const doc of groupDocs) {
-      lines.push(`- [${doc.title}](${doc.url}): ${doc.description}`);
+      lines.push(`- [${doc.title}](${siteUrl}${markdownPath(doc.slug)}): ${doc.description}`);
     }
   }
+
+  lines.push(
+    "",
+    "## Optional",
+    "",
+    `- [Full documentation](${siteUrl}/llms-full.txt): Every page above, concatenated into one file.`,
+  );
 
   return `${lines.join("\n").trimEnd()}\n`;
 }

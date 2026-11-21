@@ -3,8 +3,8 @@
 `design.md` "Benchmarks" holds the reference table; this file holds where
 performance work goes next and why. "Where 1.0 stands" is the state on
 2026-11-13; "Measurements, in order" is the dated log behind it, and its
-entries after that date, through "The graph tables after the fairness fixes, rough tier"
-(2026-11-18), are newer than the summary.
+entries after that date, through "Bursty fan-out's update made once per
+process" (2026-11-19), are newer than the summary.
 
 ## Direction (owner, 2026-11-04)
 
@@ -2397,7 +2397,149 @@ Pinna's median divided by alien-signals':
   scenario with a no-op effect measured 0.28 MiB, against 0.20 MiB with the
   counting effect. Within one launch the 15 counted runs ranged from 39 to
   577 KB, so a rough launch's median swings across that range; Hermes
-  holds 14 KB. The cause is not yet found.
+  holds 14 KB. The cause is V8 compiling Pinna's effect call for one
+  function: the next entry.
+
+### A counting effect made once per process (2026-11-19)
+
+Pinna's fan-out on Node rose from 8.36 to 10.6 ms and from 10 to 273 KB
+because the bench made its counting effect in `setup`, once per sample.
+TurboFan compiles `runWatch` in `packages/pinna-core/src/graph.ts` for the
+one effect function its call `watch.effect(value, previous)` has seen and
+holds that function weakly; when a sample's watchers and function are
+collected, V8 discards the compiled `runWatch` and compiles it again. The
+compiled code and its feedback count in `total_allocated_bytes`, and the
+runs between compilations take the slower tiers. Since this entry every
+scenario whose watchers only count runs passes one `count` made when the
+worker loads (`packages/pinna-bench/src/scenarios.ts`): fan-out,
+conditional reads, make and dispose, write 1,000 sources, and one write
+among 10k. Every library still gets the same function.
+
+- **Run:** pinna-bench's rough tier, Pinna's fan-out on Node 26.13.1 alone,
+  two launches each way, alternated, on battery with a load average near 4:
+  a diagnosis, not a table.
+
+| Effect | Median ms | KB a run | Counted runs, KB |
+| --- | --- | --- | --- |
+| made in `setup`, launch 1 | 11.72 | 281 | 37 to 586 |
+| made in `setup`, launch 2 | 10.70 | 224 | 37 to 500 |
+| made once per process, launch 1 | 8.56 | 10 | 10 to 20 |
+| made once per process, launch 2 | 8.55 | 10 | 10 to 21 |
+
+- **V8's log names the discarded code.** With `--log-deopt` on the counting
+  launch, the effect made in `setup` gave 37 deoptimizations, 25 of them
+  "embedded weak objects cleared" (24 in `runWatch`), and 41 TurboFan
+  compilations; the effect made once gave 14 deoptimizations, one of that
+  kind, and 15 compilations.
+- **Pinna's core did not change between the two measurements.** Before the
+  fairness fixes, fan-out passed no effect and Pinna's adapter substituted
+  one function made when the module loads, which is never collected.
+- **alien-signals stays at 14 KB with the effect made in `setup`.** Its
+  adapter calls the effect from a wrapper of its own; why that call escapes
+  the same discard is not established. Hermes has no optimizing compiler and
+  holds 14 KB.
+- **An application does not pay this per update.** It passes many effect
+  functions, and a discard costs one compilation when the one function a
+  call was compiled for is collected, not one per update. Not measured.
+- **Bursty fan-out is a separate case.** Each of its watchers has its own
+  effect, and its bytes ranged from 10 to 536 KB before the fairness fixes.
+- **The site's graph tables come from a rough run with the effect made
+  once**: the next entry.
+
+### The graph tables with the effect made once, rough tier (2026-11-19)
+
+The site's Node and Hermes graph figures are replaced by a rough run with
+the counting effect made once per process. Pinna's fan-out on Node returns
+to 8.44 ms and 10 KB, and its ratio to alien-signals falls from 1.75 to
+1.44. On Hermes, which has no optimizing compiler, Pinna and alien-signals
+moved within 3% in every scenario but one write among 10k, where all four
+libraries ran 9 to 15% faster (Pinna 2.98 to 2.61 ms, alien-signals 2.12 to
+1.81 ms), so the ratio held at 1.41 to 1.44.
+
+- **Run:** pinna-bench's rough tier, one launch a cell, on Node 26.13.1 and
+  Hermes 260318099.0.5, 323 seconds with every package clean, on AC power,
+  load average 1.6 before and 3.7 after, with `coreduetd` busy. Bun's
+  column is unchanged: `bench:graph` has scenarios of its own and was not
+  rerun. A publish-tier run replaces these figures.
+- **Libraries:** unchanged: alien-signals 3.2.1, MobX 7.1.7, Legend State
+  3.0.0-beta.48.
+
+Pinna's median divided by alien-signals':
+
+| Scenario | Node | Hermes | Bun |
+| --- | --- | --- | --- |
+| deep chain | 1.25 | 1.80 | 1.45 |
+| fan-out | 1.44 | 1.36 | 1.42 |
+| diamond | 1.29 | 1.60 | 1.26 |
+| conditional reads | 1.53 | 1.56 | 1.23 |
+| make and dispose | 2.37 | 1.87 | 1.87 |
+| write 1,000 sources | 1.61 | 1.32 | 1.28 |
+| bursty fan-out | 0.10 | 0.29 | 0.15 |
+| increment ×100k | 2.18 | 1.51 | 1.33 |
+| one write among 10k | 1.43 | 1.44 | 1.31 |
+
+- **Write 1,000 sources moved for both libraries on Node**: Pinna 8.52 to
+  6.92 ms and 20 to 10 KB, alien-signals 5.70 to 4.29 ms and 164 to 10 KB,
+  so its ratio rose from 1.50 to 1.61. Its effect had been made in `setup`
+  too.
+- **alien-signals' increment on Node took 6.93 ms in this launch**, its fast
+  mode, against 9.81 ms in the previous launch; the ratio of 2.18 against
+  1.53 is that mode, not a change in Pinna (15.0 to 15.1 ms).
+- **Legend's fan-out and diamond on Hermes rose 15% and 11%** (1598 to 1836
+  ms, 1424 to 1585 ms) with nothing changed for them but the effect, which
+  Hermes does not compile; the busy `coreduetd` is the likely cause, not
+  verified.
+- **Pinna's bursty fan-out on Node holds 342 KB**: the harness, the next
+  entry.
+
+### Bursty fan-out's update made once per process (2026-11-19)
+
+Bursty fan-out's bytes on Node were V8 compiling the scenario's own update,
+not Pinna's graph. The scenario made its update, a closure that writes `head`
+100 times, once per burst; V8 compiled it with Maglev on every other sample
+and the heavy samples were those. Made once per process, as `count` is,
+Pinna allocates 1 KB a run and alien-signals 5 KB, and alien-signals' time
+falls from 90.3 to about 55 ms.
+
+- **What the V8 log shows:** with `--trace-opt`, every even-numbered sample
+  from sample 8 on, counting from 0, compiles the update for Maglev anew;
+  those samples counted 119 to 964 KB, the odd ones 10 to 16 KB. The heap
+  sampler attributes about 12 KB a sample to objects the run allocates, so
+  the rest is the compilation. Why V8 discards the code between samples is
+  not established.
+- **The watchers' own effects are not the cause.** With the update made
+  once, they measured the same as one shared `count`; they take `count` now,
+  as every other scenario whose watchers only count runs.
+
+Median bytes of 15 samples on Node's counting launch (`--no-inline-new`),
+four launches each:
+
+| | Pinna | alien-signals |
+| --- | --- | --- |
+| update per burst, own effects (before) | 254 to 345 KB | 165 to 169 KB |
+| update per burst, shared `count` | 104 to 117 KB | 109 to 251 KB |
+| update once, own effects | 1 KB | 5 KB |
+| update once, shared `count` (now) | 1 KB | 5 KB |
+
+After the change, three rough runs of bursty fan-out on Node through
+`bun run bench`, at a load average of 4.4 to 6.1:
+
+| | median | bytes |
+| --- | --- | --- |
+| Pinna | 8.66 to 8.89 ms | 1 KB |
+| alien-signals | 54.3 to 55.2 ms | 5 KB |
+| MobX | 28.1 to 29.6 ms | 76,273 to 76,283 KB |
+| Legend State | 1088 to 1143 ms | 878,461 to 878,829 KB |
+
+- **alien-signals' time had the compilation in it too**: 90.3 ms on the
+  site against about 55 ms now, so Pinna's ratio to it on Node moves from
+  0.10 to about 0.16. Pinna's own time moved within noise (8.85 ms on the
+  site). MobX and Legend State, which allocate far more, moved within noise.
+- **Hermes was not rerun.** It has no optimizing compiler and held 14 KB
+  for Pinna; what removing 100 closures a run changes there is not
+  measured.
+- **The site's bursty fan-out row still shows the earlier run** until it is
+  measured again on a quiet machine.
 
 ### Cold boxes, and what each box layout would save (2026-11-21)
 

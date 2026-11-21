@@ -1,7 +1,7 @@
 // The hero's frond: todos drawn as branches of a stem, in the brand mark's circuit style. The stem
 // is the realm and its root pad the `$todos` box; each todo is a branch whose pads are its `$done`
 // box, its `$label` computed value, and its `<Row>`, and each trace between two pads is a read. A
-// done todo's branch is lit and its pads filled, since all three hold its done state. The stem and
+// done todo's branch and its pads' outlines are lit, since all three hold its done state. The stem and
 // its root are lit while the realm holds a todo, and the tip turns cyan, as the mark's is, once every
 // todo is done. Leaves alternate sides up the stem like a fern's. Past the last todo, shorter leaves
 // end in the realm's totals, computed values that read `$todos` and every `$done`, and taper the
@@ -29,6 +29,16 @@ export interface FrondPicture {
 
 /** The computed values past the last todo, from the lowest leaf up. */
 export const frondTotalNames = ["$count", "$left", "$allDone"] as const;
+
+/** The parts a press explains instead of acting on: the totals, `$todos`, the stem, and its tip. */
+export type FrondPart = (typeof frondTotalNames)[number] | "$todos" | "realm" | "tip";
+
+/**
+ * The event the drawing sends, bubbling, when a press lands on a part that holds no todo; its
+ * `detail` is the `FrondPart`. Here and not in `frondScene.ts`, so the page reads it without
+ * loading the 3D drawing.
+ */
+export const frondExplain = "frond-explain";
 
 /** The totals' values: how many todos, how many not done, and whether every one is done. */
 export const frondTotals = (

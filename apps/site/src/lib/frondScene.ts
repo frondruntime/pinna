@@ -13,6 +13,10 @@
 // todo or the gray of one not done, and the flash runs from the write to what it reached, one
 // step every 100 ms, so an update reads in order: `$done`, then `$label`, then `<Row>`.
 //
+// A press on a part that holds no todo, a total, `$todos`, the stem (the realm), or the tip,
+// changes nothing: the part pops and brightens toward white for a moment, never cyan, since nothing was written,
+// and the frame says which part it was (`frondExplain`), so the caption says what the part reads.
+//
 // Nothing moves on its own. A frame is drawn when something eases: a part flashing as an update
 // reaches it, a branch growing or moving. The camera holds still, so the labels laid over the
 // canvas keep their pixels. With reduced motion every change is drawn at once, with no flash.
@@ -20,9 +24,11 @@
 import { Camera, Geometry, Mesh, Polyline, Program, Renderer, Transform, Vec3 } from "ogl";
 import {
   type FrondLeafLayout,
+  type FrondPart,
   type FrondPicture,
   fitLabel,
   frondBranchLayout,
+  frondExplain,
   frondHeight,
   frondMeasures,
   frondTotalLeaves,
@@ -53,6 +59,7 @@ interface Palette {
   readonly edge: Rgb;
   readonly muted: Rgb;
   readonly background: Rgb;
+  readonly ink: Rgb;
 }
 
 // ── Timing ────────────────────────────────────────────────────────────────
@@ -88,6 +95,10 @@ const flashDuration = 700;
  */
 const flashStep = 50;
 const hoverDuration = 150;
+/** How long a pressed part's pop takes to settle, and how far it grows and brightens at first. */
+const pressDuration = 450;
+const pressGrowth = 0.35;
+const pressBrightness = 0.7;
 /** How near the pointer must come to a branch's traces, in pixels, to pick it. */
 const hitReach = 18;
 
@@ -138,9 +149,11 @@ class Tween {
 class Flash {
   private start = Number.NEGATIVE_INFINITY;
 
+  constructor(private readonly duration = flashDuration) {}
+
   value(now: number): number {
     const elapsed = now - this.start;
-    return elapsed < 0 || elapsed >= flashDuration ? 0 : (1 - elapsed / flashDuration) ** 2;
+    return elapsed < 0 || elapsed >= this.duration ? 0 : (1 - elapsed / this.duration) ** 2;
   }
 
   fire(now: number, delay = 0): void {
@@ -148,7 +161,7 @@ class Flash {
   }
 
   settled(now: number): boolean {
-    return now >= this.start + flashDuration;
+    return now >= this.start + this.duration;
   }
 }
 
@@ -177,12 +190,18 @@ const readPalette = (host: HTMLElement): Palette => {
     edge: token("--edge"),
     muted: token("--muted"),
     background: token("--bg"),
+    ink: token("--ink-bright"),
   };
   probe.remove();
   return palette;
 };
 
-const mix = (into: Float32Array, from: Rgb, to: Rgb, amount: number): Float32Array => {
+const mix = (
+  into: Float32Array,
+  from: Rgb | Float32Array,
+  to: Rgb,
+  amount: number,
+): Float32Array => {
   for (let channel = 0; channel < 3; channel++) {
     into[channel] = from[channel]! + (to[channel]! - from[channel]!) * amount;
   }
@@ -560,13 +579,8 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
   };
 
   /** `into` set to `color`, raised toward cyan as far as `flash` still shows. */
-  const flashed = (into: Float32Array, color: Rgb | Float32Array, flash: Flash): Float32Array => {
-    const amount = flash.value(clock);
-    for (let channel = 0; channel < 3; channel++) {
-      into[channel] = color[channel]! + (palette.cyan[channel]! - color[channel]!) * amount;
-    }
-    return into;
-  };
+  const flashed = (into: Float32Array, color: Rgb | Float32Array, flash: Flash): Float32Array =>
+    mix(into, color, palette.cyan, flash.value(clock));
 
   // The stem, its tip, and its root, `$todos`.
   const stemLit = new Tween(0);
@@ -580,8 +594,16 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
   const stem = trace([stemRoot, stemTip], stemColor);
   const stemStroke = new Float32Array(3);
   const tipStroke = new Float32Array(3);
-  const rootPad = pad(boxShape, () => stemStroke);
-  const tipPad = pad(boxShape, () => tipStroke);
+  // A pressed part's pop: it grows and brightens toward white, then settles.
+  const rootPress = new Flash(pressDuration);
+  const tipPress = new Flash(pressDuration);
+  const stemPress = new Flash(pressDuration);
+  const pressed = (into: Float32Array, color: Float32Array, press: Flash): Float32Array =>
+    mix(into, color, palette.ink, press.value(clock) * pressBrightness);
+  const rootPressStroke = new Float32Array(3);
+  const tipPressStroke = new Float32Array(3);
+  const rootPad = pad(boxShape, () => pressed(rootPressStroke, stemStroke, rootPress));
+  const tipPad = pad(boxShape, () => pressed(tipPressStroke, tipStroke, tipPress));
   const rootName = element("span", "frond-scene-name frond-scene-root-name", "$todos");
   const realmName = element("span", "frond-scene-name frond-scene-realm-name", "realm");
   overlay.append(rootName, realmName);
@@ -592,6 +614,7 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
     const foot = new Vec3();
     const end = new Vec3();
     const flash = new Flash();
+    const press = new Flash(pressDuration);
     const stroke = new Float32Array(3);
     const leafOverlay = element("div", "frond-scene-branch frond-scene-total");
     const label = element("span", "frond-scene-name", name);
@@ -606,7 +629,9 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
       foot,
       end,
       line: trace([foot, end], stemColor),
-      pad: pad(computedShape, () => flashed(stroke, stemStroke, flash)),
+      pad: pad(computedShape, () => pressed(stroke, flashed(stroke, stemStroke, flash), press)),
+      name,
+      press,
       overlay: leafOverlay,
       label,
       value,
@@ -724,9 +749,9 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
     branches.delete(branch.id);
   };
 
-  /** The canvas's top-down height as a world height, with the plane's middle at zero. */
   /** The frond's own height, as the flat drawing lays it out; its middle sits at the origin. */
   const extent = new Tween(0);
+  /** The canvas's top-down height as a world height, with the plane's middle at zero. */
   const worldY = (fromTop: number, span = extent.value(clock)): number => span / 2 - fromTop;
 
   const place = (branch: Branch, now: number): void => {
@@ -877,11 +902,17 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
     lift(stemRoot, 0, worldY(rootY.value(now)), 0);
     lift(stemTip, 0, worldY(frondMeasures.tipY), 0);
     stem.updateGeometry();
-    flashed(stemColor, mix(stemColor, palette.edge, palette.accent, stemAmount), stemFlash);
+    pressed(
+      stemColor,
+      flashed(stemColor, mix(stemColor, palette.edge, palette.accent, stemAmount), stemFlash),
+      stemPress,
+    );
     flashed(stemStroke, mix(stemStroke, palette.dim, palette.accent, stemAmount), stemFlash);
     flashed(tipStroke, mix(tipStroke, palette.dim, palette.cyan, tipAmount), tipFlash);
     rootPad.position.copy(stemRoot);
     tipPad.position.copy(stemTip);
+    rootPad.scale.set(1 + rootPress.value(now) * pressGrowth);
+    tipPad.scale.set(1 + tipPress.value(now) * pressGrowth);
     for (const leaf of totalLeaves) {
       const angle = leaf.angle.value(now);
       const length = leaf.length.value(now);
@@ -892,17 +923,22 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
       leaf.line.updateGeometry();
       leaf.pad.position.copy(leaf.end);
       leaf.pad.rotation.y = -angle;
+      leaf.pad.scale.set(1 + leaf.press.value(now) * pressGrowth);
       moving ||=
         !leaf.y.settled(now) ||
         !leaf.length.settled(now) ||
         !leaf.angle.settled(now) ||
-        !leaf.flash.settled(now);
+        !leaf.flash.settled(now) ||
+        !leaf.press.settled(now);
     }
     moving ||=
       !stemLit.settled(now) ||
       !tipLit.settled(now) ||
       !stemFlash.settled(now) ||
       !tipFlash.settled(now) ||
+      !rootPress.settled(now) ||
+      !tipPress.settled(now) ||
+      !stemPress.settled(now) ||
       !rootY.settled(now) ||
       !extent.settled(now);
 
@@ -1059,6 +1095,86 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
     return branchAt(event.clientX - box.left, event.clientY - box.top);
   };
 
+  // A part that holds no todo, under the pointer: a total by its leaf, its name, or its value;
+  // `$todos` by its pad or its name; the tip by its pad; the realm by the stem or its name. A todo
+  // branch within reach takes the pointer first.
+  const within = (x: number, y: number, target: HTMLElement): boolean => {
+    const box = root.getBoundingClientRect();
+    const area = target.getBoundingClientRect();
+    const [left, top] = [area.left - box.left, area.top - box.top];
+    return x >= left && x <= left + area.width && y >= top && y <= top + area.height;
+  };
+  const partAt = (x: number, y: number): FrondPart | undefined => {
+    let picked: FrondPart | undefined;
+    let best = hitReach;
+    const near = (part: FrondPart, distance: number): void => {
+      if (distance < best) {
+        best = distance;
+        picked = part;
+      }
+    };
+    for (const leaf of totalLeaves) {
+      near(leaf.name, segmentDistance(x, y, screen(leaf.foot), screen(leaf.end)));
+      if (within(x, y, leaf.label) || within(x, y, leaf.value)) near(leaf.name, 0);
+    }
+    const tip = screen(stemTip);
+    const base = screen(stemRoot);
+    near("tip", Math.hypot(x - tip.x, y - tip.y));
+    near("$todos", Math.hypot(x - base.x, y - base.y));
+    if (within(x, y, rootName)) near("$todos", 0);
+    if (within(x, y, realmName)) near("realm", 0);
+    // The stem is the realm, but a leaf, the root, or the tip near it wins.
+    if (picked === undefined) near("realm", segmentDistance(x, y, base, tip));
+    return picked;
+  };
+
+  // `branch` is `branchFor(event)`, which the caller has already found.
+  const partFor = (event: MouseEvent, branch: Branch | undefined): FrondPart | undefined => {
+    if (
+      branch !== undefined ||
+      (event.target instanceof Element && event.target.closest("[data-action]") !== null)
+    ) {
+      return undefined;
+    }
+    const box = root.getBoundingClientRect();
+    return partAt(event.clientX - box.left, event.clientY - box.top);
+  };
+
+  /** A part's name on the overlay, which lights while the pointer is over the part. */
+  const partName = (part: FrondPart | undefined): HTMLElement | undefined =>
+    part === "$todos"
+      ? rootName
+      : part === "realm"
+        ? realmName
+        : totalLeaves.find((leaf) => leaf.name === part)?.label;
+
+  let hoveredPart: FrondPart | undefined;
+  const hoverPart = (part: FrondPart | undefined): void => {
+    if (part === hoveredPart) {
+      return;
+    }
+    partName(hoveredPart)?.classList.remove("is-hovered");
+    partName(part)?.classList.add("is-hovered");
+    hoveredPart = part;
+  };
+
+  const press = (part: FrondPart): void => {
+    if (!still) {
+      const now = performance.now();
+      const pop =
+        part === "$todos"
+          ? rootPress
+          : part === "tip"
+            ? tipPress
+            : part === "realm"
+              ? stemPress
+              : totalLeaves.find((leaf) => leaf.name === part)?.press;
+      pop?.fire(now);
+      requestFrame();
+    }
+    root.dispatchEvent(new CustomEvent<FrondPart>(frondExplain, { detail: part, bubbles: true }));
+  };
+
   let hovered: Branch | undefined;
   const hover = (branch: Branch | undefined): void => {
     if (branch === hovered) {
@@ -1079,16 +1195,31 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
     requestFrame();
   };
 
-  root.addEventListener("pointermove", (event) =>
-    hover(event.pointerType === "touch" ? undefined : branchFor(event)),
-  );
-  root.addEventListener("pointerleave", () => hover(undefined));
-  // A press on a trace or pad clicks the branch's row, which the canvas's own listener toggles.
+  root.addEventListener("pointermove", (event) => {
+    const touch = event.pointerType === "touch";
+    const branch = touch ? undefined : branchFor(event);
+    hover(branch);
+    hoverPart(touch ? undefined : partFor(event, branch));
+  });
+  root.addEventListener("pointerleave", () => {
+    hover(undefined);
+    hoverPart(undefined);
+  });
+  // A press on a trace or pad clicks the branch's row, which the canvas's own listener toggles; a
+  // press on a part that holds no todo only explains it.
   root.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-action]") !== null) {
       return;
     }
-    branchFor(event)?.text.click();
+    const branch = branchFor(event);
+    if (branch !== undefined) {
+      branch.text.click();
+      return;
+    }
+    const part = partFor(event, branch);
+    if (part !== undefined) {
+      press(part);
+    }
   });
 
   let last: FrondPicture | undefined;

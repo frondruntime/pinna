@@ -15,21 +15,18 @@ const description = "Nothing here reads this address.";
 
   <main class="page-main notfound-main">
     <div class="page-shell">
-      <p class="page-eyebrow notfound-eyebrow">
-        <span class="notfound-status">404</span>
-        <span>page not found</span>
-      </p>
+      <p class="page-eyebrow notfound-eyebrow">Not found</p>
       <h1 class="page-title notfound-title">
         <span>Nothing here</span>
-        <span>was ever <span class="notfound-title-accent">read</span>.</span>
+        <span>was ever <span class="lit-word">read</span>.</span>
       </h1>
       <p class="page-lede">
         This address has no page. The URL may be wrong, or the page moved
         while Pinna is in developer preview.
       </p>
       <div class="page-actions">
-        <a class="action page-action page-action-primary" href="/">Back to home</a>
-        <a class="action page-action" href={docsPath("start")}>Read the docs</a>
+        <a class="action page-action-primary" href="/">Back to home</a>
+        <a class="action btn-secondary" href={docsPath("start")}>Read the docs</a>
       </div>
     </div>
   </main>

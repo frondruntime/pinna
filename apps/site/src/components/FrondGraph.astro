@@ -5,6 +5,8 @@
 // `site.toggle()`; in the browser a Pinna realm holds them, a done todo's branch is lit, the stem
 // is lit while there is a todo and its tip once all are done, the leaves past the last todo hold
 // the realm's totals, and the caption counts what each toggle, add, or remove recomputed and rendered.
+// A press on a part that holds no todo, a total, `$todos`, the stem (the realm), or the tip, changes
+// nothing; the caption says what that part reads and what changes it.
 import {
   type FrondTodo,
   frondClasses,
@@ -79,11 +81,14 @@ const picture = {
     update,
   } from "@frondruntime/pinna";
   import {
+    type FrondPart,
     type FrondPicture,
     fitLabel,
     frondClasses,
+    frondExplain,
     frondMarkup,
     frondMaximum,
+    frondTotalNames,
     frondTotals,
     frondViewBox,
   } from "../lib/frondGraph";
@@ -295,6 +300,46 @@ const picture = {
       );
     };
 
+    // What a part that holds no todo reads, and what changes it, as the realm above builds it.
+    const explain = (part: FrondPart): void => {
+      if (part === "$todos") {
+        say(code("$todos"), " is a box, the list itself: ", code("add()"), " and ", code("remove()"),
+          " write it; a toggle does not.");
+      } else if (part === "$count") {
+        say(code("$count"), " is computed from ", code("$todos"), ": ", code("add()"), " and ",
+          code("remove()"), " change it; a toggle does not.");
+      } else if (part === "$left") {
+        say(code("$left"), " is computed from ", code("$todos"), " and every ", code("$done"),
+          ": a toggle changes it too.");
+      } else if (part === "$allDone") {
+        say(code("$allDone"), " is computed from ", code("$count"), ", then ", code("$left"),
+          " when there is a todo; while it is true, the tip is lit.");
+      } else if (part === "realm") {
+        say("The stem is the ", code("realm"), ", which holds every box and computed value here;",
+          " it is lit while it holds a todo.");
+      } else {
+        say("The tip is lit while ", code("$allDone"), " is true.");
+      }
+    };
+
+    // The flat drawing's parts that hold no todo, for a browser without the 3D one.
+    const flatPart = (target: EventTarget | null): FrondPart | undefined => {
+      if (!(target instanceof Element) || !svg.contains(target)) {
+        return undefined;
+      }
+      const total = target.closest(".frond-total");
+      if (total !== null) {
+        return frondTotalNames[[...svg.querySelectorAll(".frond-total")].indexOf(total)];
+      }
+      if (target.closest(".frond-tip") !== null) {
+        return "tip";
+      }
+      if (target.closest(".frond-stem, .frond-realm-name") !== null) {
+        return "realm";
+      }
+      return target.closest(".frond-root") === null ? undefined : "$todos";
+    };
+
     const todoOf = (target: EventTarget | null): { todo: Todo; action: string } | undefined => {
       if (!(target instanceof Element)) {
         return undefined;
@@ -323,7 +368,16 @@ const picture = {
 
     // On the frame, so the 3D drawing's buttons reach it too; they are buttons, so keys click them.
     canvas.addEventListener("click", (event) => {
-      run(event.target);
+      if (run(event.target)) {
+        return;
+      }
+      const part = flatPart(event.target);
+      if (part !== undefined) {
+        explain(part);
+      }
+    });
+    canvas.addEventListener(frondExplain, (event) => {
+      explain((event as CustomEvent<FrondPart>).detail);
     });
     svg.addEventListener("keydown", (event) => {
       if ((event.key === "Enter" || event.key === " ") && run(event.target)) {

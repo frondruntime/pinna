@@ -61,8 +61,8 @@ ol {
   flex-shrink: 0;
 }
 
-.menu-toggle:hover,
-.sidebar-close:hover {
+.menu-toggle:is(:hover, :focus-visible),
+.sidebar-close:is(:hover, :focus-visible) {
   color: var(--ink);
 }
 
@@ -155,14 +155,14 @@ ol {
   overflow: hidden;
   text-overflow: ellipsis;
   transition:
-    color var(--duration-control),
-    box-shadow var(--duration-control);
+    color var(--duration-beam),
+    box-shadow var(--duration-beam);
 }
 
 /* The frames are inset shadows, not borders, so a link's text stays in line with its group's
    label. Hover draws a hairline; the current page is a beam frame, like the primary action:
    a lit line with lit corner squares over a faint fill. */
-.nav-link:hover {
+.nav-link:is(:hover, :focus-visible) {
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--line-bright);
 }
@@ -186,7 +186,7 @@ ol {
   font-size: 1.625rem;
   font-weight: 600;
   line-height: 1.2;
-  color: var(--ink-bright);
+  color: var(--display);
 }
 
 /* ─── Right TOC ──────────────────────────────────────────────────── */
@@ -215,20 +215,41 @@ ol {
   padding: calc(var(--u) * 1) 0 calc(var(--u) * 1) calc(var(--u) * 3);
   font-size: 0.75rem;
   color: var(--muted);
-  transition: color var(--duration-control);
+  transition: color var(--duration-beam);
 }
 
-.toc-link:hover {
+.toc-link:is(:hover, :focus-visible) {
   color: var(--ink);
 }
 
-/* The section in view is marked by a lit square centered on its first line, half its 1.6 line
-   height down, like the header's current page. */
 .toc-link[aria-current="true"] {
   color: var(--accent);
-  background:
-    linear-gradient(var(--accent) 0 0) left 0 top calc(var(--u) * 1 + 0.8em - 2px) / 4px 4px
-    no-repeat;
+}
+
+/* The section in view is marked by one lit square, like the header's current page, centered on its
+   link's first line: the link's top padding, half its 1.6 line height at 0.75rem, less half the
+   square. The scrollspy in DocsLayout.astro sets --toc-marker-y to the link's offsetTop and marks
+   the nav "placed" for the first section, which shows the square where it lands, then "sliding",
+   which moves it to the next section in --duration-graph, so the eye follows it down the list. */
+.toc nav {
+  position: relative;
+}
+
+.toc nav[data-marker]::before {
+  position: absolute;
+  top: calc(var(--u) * 1 + 0.6rem - 2px);
+  left: 0;
+  width: 4px;
+  height: 4px;
+  background: var(--accent);
+  transform: translateY(var(--toc-marker-y, 0));
+  content: "";
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toc nav[data-marker="sliding"]::before {
+    transition: transform var(--duration-graph) ease;
+  }
 }
 
 .toc-link.toc-link--h3 {
@@ -256,9 +277,9 @@ ol {
   border: 1px solid var(--line);
   border-radius: 0;
   transition:
-    border-color var(--duration-control),
-    background-color var(--duration-control),
-    color var(--duration-control);
+    border-color var(--duration-beam),
+    background-color var(--duration-beam),
+    color var(--duration-beam);
 }
 
 .pagination-next {
@@ -266,8 +287,8 @@ ol {
 }
 
 /* Under the pointer a link becomes a beam frame, like the sidebar's current page. */
-.pagination-prev:hover,
-.pagination-next:hover {
+.pagination-prev:is(:hover, :focus-visible),
+.pagination-next:is(:hover, :focus-visible) {
   border-color: var(--lit-line);
   background: var(--beam-corners);
   background-color: var(--lit-fill);
@@ -284,10 +305,10 @@ ol {
   color: var(--ink);
 }
 
-.pagination-prev:hover .pagination-dir,
-.pagination-prev:hover .pagination-label,
-.pagination-next:hover .pagination-dir,
-.pagination-next:hover .pagination-label {
+.pagination-prev:is(:hover, :focus-visible) .pagination-dir,
+.pagination-prev:is(:hover, :focus-visible) .pagination-label,
+.pagination-next:is(:hover, :focus-visible) .pagination-dir,
+.pagination-next:is(:hover, :focus-visible) .pagination-label {
   color: var(--accent);
 }
 
@@ -345,9 +366,13 @@ ol {
 }
 
 /* Self-links appended by rehypeDocsChrome; the glyph lives in CSS so the
-   heading text Astro collects for the TOC stays clean. */
+   heading text Astro collects for the TOC stays clean. The glyph is --hash, a #
+   drawn as a piece of the hero graph. It carries no underline: the glyph alone
+   marks it as a link, and a line under a 13px drawing read as part of it. */
 .prose .heading-anchor {
+  display: inline-block;
   margin-left: 0.5em;
+  background: none;
   color: var(--dim);
   text-decoration: none;
   opacity: 0;
@@ -355,7 +380,12 @@ ol {
 }
 
 .prose .heading-anchor::before {
-  content: "#";
+  display: block;
+  width: 13px;
+  height: 13px;
+  background: currentColor;
+  content: "";
+  mask: var(--hash) center / 13px 13px no-repeat;
 }
 
 .prose :is(h2, h3):hover .heading-anchor,
@@ -363,7 +393,7 @@ ol {
   opacity: 1;
 }
 
-.prose .heading-anchor:hover {
+.prose .heading-anchor:is(:hover, :focus-visible) {
   color: var(--accent);
 }
 
@@ -386,17 +416,43 @@ ol {
   margin-bottom: calc(var(--u) * 1);
 }
 
+/* An unordered list's bullet is a leaflet in the lit line color (the --leaflet mask), so a list
+   reads as growth off the section's trace. It is drawn in ::before, because a marker takes no
+   mask. The disc stays and is made transparent rather than removed: Safari drops a list's role
+   when its list-style is none, and a screen reader then stops counting the items. */
+.prose ul > li {
+  position: relative;
+}
+
+.prose ul > li::marker {
+  color: transparent;
+}
+
+.prose ul > li::before {
+  position: absolute;
+  top: 0.62em;
+  left: calc(var(--u) * -3.5);
+  width: 6px;
+  height: 6px;
+  background-color: var(--lit-line);
+  content: "";
+  mask: var(--leaflet) center / contain no-repeat;
+}
+
 .prose strong {
   color: var(--ink);
   font-weight: 600;
 }
 
+/* Underlined by the beam underline (design-system.css); the text is a step brighter than the prose
+   around it. */
 .prose a {
-  color: var(--cyan);
-  text-decoration: underline;
+  color: var(--ink);
 }
 
-.prose a:hover {
+/* The resting color above outranks any rule in :where(), so the lit color under the pointer is set
+   here and not in the beam underline's shared hover rule. */
+.prose a:is(:hover, :focus-visible) {
   color: var(--accent);
 }
 
@@ -436,6 +492,7 @@ ol {
 
 .prose .code-frame-wrong {
   --code-border: rgb(var(--red-rgb) / 0.38);
+  --corner: var(--red);
 }
 
 .prose .code-frame > pre {
@@ -471,10 +528,10 @@ ol {
   text-transform: inherit;
   cursor: pointer;
   text-underline-offset: 3px;
-  transition: color var(--duration-control) ease;
+  transition: color var(--duration-beam) ease;
 }
 
-.code-copy:hover {
+.code-copy:is(:hover, :focus-visible) {
   color: var(--accent);
   text-decoration: underline;
 }
@@ -485,6 +542,43 @@ ol {
 
 .code-copy[data-state="failed"] {
   color: var(--red);
+}
+
+/* A copy lights the seam under the header once: a short lit segment runs left to right along it in
+   --duration-sweep, so "Copied" reads as the code taken out of the panel. Above the
+   code's own top border, which the segment covers as it passes. */
+@media (prefers-reduced-motion: no-preference) {
+  .code-header {
+    position: relative;
+  }
+
+  .code-header:has(.code-copy[data-state="copied"])::after {
+    position: absolute;
+    z-index: 1;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    height: 1px;
+    background:
+      linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 30% 100% no-repeat;
+    opacity: 0;
+    animation: copy-sweep var(--duration-sweep) ease-out;
+    content: "";
+  }
+}
+
+/* With a 30% segment, -43% puts its right edge at the seam's left end and 143% its left edge at the
+   right end. */
+@keyframes copy-sweep {
+  from {
+    background-position: -43% 0;
+    opacity: 1;
+  }
+
+  to {
+    background-position: 143% 0;
+    opacity: 1;
+  }
 }
 
 .prose pre code,
@@ -577,6 +671,7 @@ ol {
   border-right: 1px solid var(--line-bright);
   border-bottom: 1px solid var(--line-bright);
   vertical-align: top;
+  transition: background-color var(--duration-decay) ease;
 }
 
 .prose th {
@@ -595,6 +690,12 @@ ol {
 
 .prose tr:last-child td {
   border-bottom: none;
+}
+
+/* The row under the pointer lifts a step, as a landing bench row does. */
+.prose tr:hover > td {
+  background-color: rgb(var(--accent-rgb) / 0.04);
+  transition-duration: var(--duration-control);
 }
 
 .prose hr {

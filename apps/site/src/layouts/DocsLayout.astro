@@ -5,6 +5,7 @@ import Brand from "../components/Brand.astro";
 import SiteFooter from "../components/SiteFooter.astro";
 import SiteHeader from "../components/SiteHeader.astro";
 import { docsPath, getPagination, sidebar } from "../config/sidebar";
+import { markdownPath } from "../lib/llms";
 import { siteDescription, siteName } from "../lib/siteMetadata";
 import BaseLayout from "./BaseLayout.astro";
 
@@ -23,8 +24,7 @@ const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
 ---
 
 <BaseLayout title={`${title} | ${siteName}`} description={description}>
-  <link slot="head" rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
-  <link slot="head" rel="alternate" type="text/plain" title="llms-full.txt" href="/llms-full.txt" />
+  <link slot="head" rel="alternate" type="text/markdown" href={markdownPath(slug)} />
 
   <div class="preview-banner">
     <span class="preview-banner-label">v0 · Developer Preview</span>
@@ -234,26 +234,26 @@ const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
     // order). Pure heading-observation feels laggy and skips sections.
     // A bundled script runs once per session, so the spy re-binds on every
     // `astro:page-load` and releases the previous page's observer first.
-    const headingSel = 'h2[id], h3[id]';
+    const headingSelector = 'h2[id], h3[id]';
 
     // For any element inside .prose, find the heading that "owns" it:
     // itself if it's a heading, else walk backwards through previous
     // siblings looking for the nearest h2/h3.
-    const ownerHeading = (el: Element): HTMLHeadingElement | null => {
-      if (el.matches(headingSel)) return el as HTMLHeadingElement;
-      let p = el.previousElementSibling;
-      while (p) {
-        if (p.matches(headingSel)) return p as HTMLHeadingElement;
-        p = p.previousElementSibling;
+    const ownerHeading = (element: Element): HTMLHeadingElement | null => {
+      if (element.matches(headingSelector)) return element as HTMLHeadingElement;
+      let sibling = element.previousElementSibling;
+      while (sibling) {
+        if (sibling.matches(headingSelector)) return sibling as HTMLHeadingElement;
+        sibling = sibling.previousElementSibling;
       }
       return null;
     };
 
     const rootMargin = () => {
-      const headerH =
+      const headerHeight =
         document.querySelector('.site-header')?.getBoundingClientRect()
           .height ?? 0;
-      const top = headerH + 32;
+      const top = headerHeight + 32;
       const bottom = top + 53;
       return `-${top}px 0% ${bottom - document.documentElement.clientHeight}px`;
     };
@@ -273,11 +273,22 @@ const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
         links.map((l) => [l.hash, l]),
       );
       let current: HTMLAnchorElement | null = null;
+      // The lit square (docs.css, `.toc nav[data-marker]`) shows where the first section lands and
+      // slides to every later one.
+      const placeMarker = () => {
+        if (!current) {
+          delete toc.dataset.marker;
+          return;
+        }
+        toc.style.setProperty('--toc-marker-y', `${current.offsetTop}px`);
+      };
       const setCurrent = (link: HTMLAnchorElement | null) => {
         if (link === current) return;
         current?.removeAttribute('aria-current');
         link?.setAttribute('aria-current', 'true');
+        toc.dataset.marker = current ? 'sliding' : 'placed';
         current = link;
+        placeMarker();
       };
 
       // Sections shorter than the viewport never reach the observed band near
@@ -325,19 +336,20 @@ const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
         cancelObserve = () => clearTimeout(handle);
       }
 
-      let resizeT: ReturnType<typeof setTimeout> | undefined;
+      let resizeTimeout: ReturnType<typeof setTimeout> | undefined;
       const onResize = () => {
+        placeMarker();
         observer?.disconnect();
         observer = undefined;
-        clearTimeout(resizeT);
-        resizeT = setTimeout(observe, 200);
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(observe, 200);
       };
       addEventListener('resize', onResize);
       addEventListener('scroll', onScroll, { passive: true });
 
       teardown = () => {
         cancelObserve();
-        clearTimeout(resizeT);
+        clearTimeout(resizeTimeout);
         removeEventListener('resize', onResize);
         removeEventListener('scroll', onScroll);
         observer?.disconnect();

@@ -28,6 +28,38 @@ const expect = (actual: unknown, expected: unknown, scenario: string): void => {
   }
 };
 
+/**
+ * The effect of every scenario whose watchers only count runs, made once per
+ * process rather than in `setup`. V8 compiles Pinna's effect call for the one
+ * function it has seen and discards that code when a sample's function is
+ * collected; with `count` made in `setup`, fan-out on Node measured 10.7 to
+ * 11.7 ms and 224 to 281 KB a run, against 8.6 ms and 10 KB with one
+ * function (`docs/performance.md`). Every library gets the same function.
+ */
+let runs = 0;
+const count = (): void => {
+  runs++;
+};
+
+/**
+ * Bursty fan-out's update, made once per process for the same reason as
+ * `count`. Made per burst, V8 compiled it with Maglev on every other sample
+ * and discarded the code, and that compilation counted 119 to 964 KB on
+ * each of those samples for Pinna, and alien-signals paid it too
+ * (`docs/performance.md`). It writes to the sample's `head`, set before the
+ * run's first burst.
+ */
+const burst: { head: Source<number> | undefined; number: number } = {
+  head: undefined,
+  number: 0,
+};
+const writeBurst = (): void => {
+  const head = burst.head as Source<number>;
+  for (let write = 1; write <= 100; write++) {
+    head.set(burst.number * 100 + write);
+  }
+};
+
 export const scenarios: ReadonlyArray<Scenario> = [
   {
     id: "deep-chain",
@@ -56,10 +88,6 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "fan-out 1000 watched, write ×100",
     setup: (library) => {
       const head = library.box(0);
-      let runs = 0;
-      const count = (): void => {
-        runs++;
-      };
       for (let index = 0; index < 1000; index++) {
         library.watch(library.computed(() => head.get() + index).get, count);
       }
@@ -107,10 +135,6 @@ export const scenarios: ReadonlyArray<Scenario> = [
       const flag = library.box(true);
       const left = library.box(1);
       const right = library.box(2);
-      let runs = 0;
-      const count = (): void => {
-        runs++;
-      };
       for (let index = 0; index < 1000; index++) {
         library.watch(library.computed(() => (flag.get() ? left.get() : right.get())).get, count);
       }
@@ -131,13 +155,10 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "make and dispose 1000 watched computeds ×10",
     setup: (library) => {
       const head = library.box(0);
-      // Nothing is written, so no effect runs; it is there so that each watch
-      // is made as in every other scenario.
-      let runs = 0;
-      const count = (): void => {
-        runs++;
-      };
       return () => {
+        runs = 0;
+        // Nothing is written, so `count` never runs; it is passed so that each
+        // watch is made as in every other scenario.
         for (let round = 0; round < 10; round++) {
           const stops: Array<() => void> = [];
           for (let index = 0; index < 1000; index++) {
@@ -156,10 +177,6 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "write 1000 sources in one update ×100",
     setup: (library) => {
       const sources = Array.from({ length: 1000 }, () => library.box(0));
-      let runs = 0;
-      const count = (): void => {
-        runs++;
-      };
       for (const source of sources) {
         library.watch(source.get, count);
       }
@@ -181,22 +198,17 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "bursty fan-out: 1000 watched, 100 writes per update ×100",
     setup: (library) => {
       const head = library.box(0);
-      let runsSeen = 0;
       for (let index = 0; index < 1000; index++) {
-        library.watch(library.computed(() => head.get() + index).get, () => {
-          runsSeen++;
-        });
+        library.watch(library.computed(() => head.get() + index).get, count);
       }
       return () => {
-        runsSeen = 0;
-        for (let burst = 1; burst <= 100; burst++) {
-          library.update(() => {
-            for (let write = 1; write <= 100; write++) {
-              head.set(burst * 100 + write);
-            }
-          });
+        runs = 0;
+        burst.head = head;
+        for (let number = 1; number <= 100; number++) {
+          burst.number = number;
+          library.update(writeBurst);
         }
-        expect(runsSeen, 100 * 1000, "bursty fan-out");
+        expect(runs, 100 * 1000, "bursty fan-out");
       };
     },
   },
@@ -223,10 +235,6 @@ export const scenarios: ReadonlyArray<Scenario> = [
     name: "one write among 10k watched rows ×1000",
     setup: (library) => {
       const sources = Array.from({ length: 10_000 }, () => library.box(0));
-      let runs = 0;
-      const count = (): void => {
-        runs++;
-      };
       for (const source of sources) {
         library.watch(library.computed(() => `row ${source.get()}`).get, count);
       }

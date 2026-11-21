@@ -39,6 +39,8 @@ const {
 } = Astro.props;
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site).href;
 const jsonLdSchema = createJsonLd({ title, description, url: canonicalUrl });
+// Every page names /llms.txt as the file that describes it (`rel="describedby"`, the llms.txt
+// proposal's relation); a docs page also names its Markdown copy in DocsLayout.
 // `<html>` takes no transition directive: design-system.css keeps the page out of view transitions,
 // and a scoped name from a directive would outrank that rule.
 ---
@@ -82,6 +84,7 @@ const jsonLdSchema = createJsonLd({ title, description, url: canonicalUrl });
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
+    <link rel="describedby" href="/llms.txt" />
     <Font cssVariable="--font-plex-mono" preload={[{ weight: "400" }, { weight: "700" }]} />
     <slot name="head" />
     <GoogleAnalytics />

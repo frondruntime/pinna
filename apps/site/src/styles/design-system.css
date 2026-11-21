@@ -27,7 +27,13 @@
   /* Text */
   --ink: #e5eee9;
   --ink-bright: #f4fbf7;
+  /* Headings set large (the hero, the landing's sections and cards, a page's title): 14.7:1 on
+     --bg. At 2rem and up, --ink-bright's 18.5:1 read as glare beside the text under it. */
+  --display: #d4e3dc;
   --prose: #c8d8d2;
+  /* The landing's running text, between --prose and --muted: 9.1:1 on --bg. --muted's 6.4:1 read
+     as too dim to read at length under headings three times as bright. */
+  --lede: #a7b4b5;
   --muted: #89969a;
   --dim: #526067;
 
@@ -40,7 +46,6 @@
   --accent: #c8f26b;
   --cyan: #3ccfed;
   --amber: #e2a847;
-  --pink: #c8b6ff;
   --red: #f07178;
   --green: #91f29a;
 
@@ -69,6 +74,7 @@
   --lit-line-hover: rgb(var(--accent-rgb) / 0.9);
   --lit-fill: rgb(var(--accent-rgb) / 0.06);
   --lit-fill-hover: rgb(var(--accent-rgb) / 0.12);
+  --lit-trace: rgb(var(--accent-rgb) / 0.45); /* a section's rule where it leaves its pad */
   --lit-panel-line: color-mix(
     in srgb,
     var(--accent) 30%,
@@ -87,6 +93,50 @@
   --duration-drawer: 0.2s;
   --duration-graph: 0.3s;
   --duration-enter: 0.4s;
+  /* A lit control fades like phosphor: it lights in --duration-control and decays in
+     --duration-decay. --duration-beam is the one a transition names; it holds the decay at rest
+     and the control's speed under the pointer or focus (see "Beam timing" below). */
+  --duration-decay: 0.6s;
+  /* A copy's lit segment runs along the code panel's seam in this (docs.css, `.code-header`). */
+  --duration-sweep: 0.44s;
+  --duration-beam: var(--duration-decay);
+  /* An underlined link answers faster than a control, since a page carries dozens and the pointer
+     crosses them on the way elsewhere: it lights in --duration-link and fades in
+     --duration-link-decay. */
+  --duration-link: 0.08s;
+  --duration-link-decay: 0.3s;
+
+  /* Bloom: the halo a vector display's beam leaves around a bright line. The primary action's
+     beam frame blooms under the pointer or focus. */
+  --bloom-frame:
+    0 0 14px rgb(var(--accent-rgb) / 0.16), inset 0 0 10px rgb(var(--accent-rgb) / 0.06);
+
+  /* Corner dots: the 3px squares a panel's frame carries at its corners, as a beam frame does.
+     A panel sets --corner to its own frame's hue and --corner-inset to where its frame lies. */
+  --corner-size: 3px;
+
+  /* The graticule: a plus at every intersection of the background grid, as on an oscilloscope's
+     screen, 2px from the center on each side. A data URI cannot read a custom property, so its
+     white at 0.04 is written in it. */
+  --graticule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cpath d='M0 .5h3M61 .5h3M.5 0v3M.5 61v3' stroke='%23fff' stroke-opacity='.04'/%3E%3C/svg%3E");
+
+  /* A # drawn as a piece of the hero graph, the glyph of a link to a section: two edges each way at
+     0.6 that cross at four filled nodes. --hash is 13px with 3px nodes, beside a docs heading, drawn
+     to whole pixels. --hash-small is 9px with 2px nodes, beside a landing section's 0.68rem id; a
+     2px node centered on a 1px edge sits on half pixels, which are whole device pixels on a screen
+     of two or more. Neither is scaled. */
+  --hash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 13 13'%3E%3Cpath fill-opacity='.6' d='M3 0h1v13H3zM9 0h1v13H9zM0 3h13v1H0zM0 9h13v1H0z'/%3E%3Cpath d='M2 2h3v3H2zM8 2h3v3H8zM2 8h3v3H2zM8 8h3v3H8z'/%3E%3C/svg%3E");
+  --hash-small: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 9'%3E%3Cpath fill-opacity='.6' d='M1.5 0h1v9h-1zM6.5 0h1v9h-1zM0 1.5h9v1H0zM0 6.5h9v1H0z'/%3E%3Cpath d='M1 1h2v2H1zM6 1h2v2H6zM1 6h2v2H1zM6 6h2v2H6z'/%3E%3C/svg%3E");
+
+  /* A leaflet, the bullet of a docs list: a filled pointed oval tipped up and to the right, drawn
+     as a mask so it takes the lit color. At 6px it reads as a dot; the points show up close. */
+  --leaflet: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M.5 9.5C.5 4 4 .5 9.5 .5C9.5 6 6 9.5 .5 9.5Z'/%3E%3C/svg%3E");
+
+  /* The footer's garden: one 1499px tile of small trees drawn as the brand mark is, which
+     `bun run sprouts` draws from a seeded generator (`scripts/sprouts.ts`) and writes here. A data
+     URI cannot read a token, so the run copies `--accent` and `--cyan` into it; run it again after
+     changing one. */
+  --sprouts: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1499' height='28'%3E%3Cfilter id='g' filterUnits='userSpaceOnUse' x='0' y='0' width='1499' height='28'%3E%3CfeGaussianBlur stdDeviation='1.5' result='b'/%3E%3CfeMerge%3E%3CfeMergeNode in='b'/%3E%3CfeMergeNode in='b'/%3E%3CfeMergeNode in='SourceGraphic'/%3E%3C/feMerge%3E%3C/filter%3E%3Cg fill='none'%3E%3Cpath d='M36.5 28L36.5 13.5M36 24.5L30.5 20.5M36 20.5L31.5 17.5M37 20.5L41.5 17.5M36 16.5L33.5 14.5M37 16.5L39.5 14.5M55.5 28L55.5 13.5M55 23.5L49.5 19.5M56 23.5L61.5 19.5M55 19.5L50.5 16.5M56 19.5L60.5 16.5M55 16.5L52.5 14.5M56 16.5L58.5 14.5M89.5 28L89.5 21.5M255.5 28L255.5 21.5M255 23.5L246.5 17.5M256 23.5L264.5 17.5M297.5 28L297.5 19.5M309.5 28L309.5 15.5M309 24.5L304.5 21.5M310 24.5L314.5 21.5M309 18.5L306.5 16.5M310 18.5L312.5 16.5M601.5 28L601.5 18.5M601 24.5L595.5 20.5M602 24.5L607.5 20.5M601 21.5L597.5 19.5M602 21.5L605.5 19.5M717.5 28L717.5 18.5M718 24.5L722.5 21.5M717 21.5L714.5 19.5M718 21.5L720.5 19.5M785.5 28L785.5 15.5M786 23.5L791.5 19.5M785 18.5L781.5 16.5M786 18.5L789.5 16.5M836.5 28L836.5 16.5M836 24.5L829.5 20.5M837 24.5L843.5 20.5M836 19.5L831.5 16.5M837 19.5L841.5 16.5M857.5 28L857.5 18.5M857 23.5L850.5 19.5M858 23.5L864.5 19.5M857 21.5L852.5 18.5M870.5 28L870.5 22.5M902.5 28L902.5 22.5M1038.5 28L1038.5 20.5M1038 24.5L1029.5 18.5M1039 24.5L1047.5 18.5M1060.5 28L1060.5 23.5M1105.5 28L1105.5 18.5M1105 24.5L1099.5 20.5M1106 24.5L1111.5 20.5M1105 21.5L1101.5 19.5M1106 21.5L1109.5 19.5M1198.5 28L1198.5 15.5M1198 24.5L1190.5 19.5M1199 24.5L1206.5 19.5M1198 18.5L1193.5 15.5M1199 18.5L1203.5 15.5M1246.5 28L1246.5 15.5M1247 24.5L1254.5 19.5M1246 18.5L1241.5 15.5M1247 18.5L1251.5 15.5M1405.5 28L1405.5 22.5M1419.5 28L1419.5 18.5M1419 23.5L1411.5 18.5M1420 23.5L1427.5 18.5M1420 21.5L1424.5 18.5M1451.5 28L1451.5 21.5' stroke='%23c8f26b' stroke-opacity='0.22'/%3E%3Cpath d='M35 12h3v3h-3ZM49 15h3v3h-3ZM54 12h3v3h-3ZM88 20h3v3h-3ZM263 16h3v3h-3ZM254 20h3v3h-3ZM296 18h3v3h-3ZM308 14h3v3h-3ZM600 17h3v3h-3ZM713 18h3v3h-3ZM716 17h3v3h-3ZM790 18h3v3h-3ZM784 14h3v3h-3ZM835 15h3v3h-3ZM849 18h3v3h-3ZM856 17h3v3h-3ZM869 21h3v3h-3ZM901 21h3v3h-3ZM1046 17h3v3h-3ZM1059 22h3v3h-3ZM1098 19h3v3h-3ZM1108 18h3v3h-3ZM1104 17h3v3h-3ZM1202 14h3v3h-3ZM1197 14h3v3h-3ZM1240 14h3v3h-3ZM1404 21h3v3h-3ZM1426 17h3v3h-3ZM1423 17h3v3h-3ZM1418 17h3v3h-3ZM1450 20h3v3h-3Z' fill='%23c8f26b' fill-opacity='0.4'/%3E%3Cpath d='M18.5 28L18.5 21.5M18 23.5L13.5 20.5M19 23.5L23.5 20.5M74.5 28L74.5 20.5M74 24.5L66.5 19.5M75 24.5L82.5 19.5M108.5 28L108.5 20.5M108 23.5L99.5 17.5M109 23.5L117.5 17.5M322.5 28L322.5 22.5M347.5 28L347.5 13.5M347 24.5L338.5 18.5M348 24.5L356.5 18.5M348 16.5L353.5 12.5M381.5 28L381.5 12.5M381 23.5L372.5 17.5M382 23.5L390.5 17.5M381 15.5L375.5 11.5M382 15.5L387.5 11.5M478.5 28L478.5 23.5M497.5 28L497.5 11.5M497 24.5L492.5 21.5M498 24.5L502.5 21.5M497 19.5L493.5 17.5M497 14.5L494.5 12.5M498 14.5L500.5 12.5M516.5 28L516.5 11.5M516 24.5L509.5 20.5M517 24.5L523.5 20.5M516 19.5L511.5 16.5M517 19.5L521.5 16.5M517 14.5L520.5 12.5M536.5 28L536.5 15.5M536 23.5L530.5 19.5M537 23.5L542.5 19.5M536 18.5L532.5 16.5M537 18.5L540.5 16.5M620.5 28L620.5 11.5M620 23.5L613.5 19.5M620 14.5L615.5 11.5M621 14.5L625.5 11.5M701.5 28L701.5 15.5M701 24.5L695.5 20.5M702 24.5L707.5 20.5M701 18.5L697.5 16.5M702 18.5L705.5 16.5M814.5 28L814.5 14.5M814 23.5L807.5 19.5M815 23.5L821.5 19.5M814 20.5L809.5 17.5M814 17.5L810.5 15.5M815 17.5L818.5 15.5M886.5 28L886.5 18.5M886 23.5L878.5 18.5M887 23.5L894.5 18.5M886 21.5L881.5 18.5M887 21.5L891.5 18.5M1126.5 28L1126.5 19.5M1126 24.5L1119.5 20.5M1127 24.5L1133.5 20.5M1154.5 28L1154.5 19.5M1154 23.5L1147.5 19.5M1155 23.5L1161.5 19.5M1180.5 28L1180.5 19.5M1180 24.5L1175.5 21.5M1387.5 28L1387.5 13.5M1387 23.5L1378.5 17.5M1388 23.5L1396.5 17.5M1387 16.5L1381.5 12.5M1388 16.5L1393.5 12.5M1443.5 28L1443.5 23.5M1483.5 28L1483.5 16.5M1483 23.5L1478.5 20.5M1484 23.5L1488.5 20.5M1483 19.5L1480.5 17.5M1484 19.5L1486.5 17.5' stroke='%23c8f26b' stroke-opacity='0.32'/%3E%3Cpath d='M17 20h3v3h-3ZM107 19h3v3h-3ZM321 21h3v3h-3ZM337 17h3v3h-3ZM355 17h3v3h-3ZM346 12h3v3h-3ZM374 10h3v3h-3ZM386 10h3v3h-3ZM380 11h3v3h-3ZM477 22h3v3h-3ZM501 20h3v3h-3ZM496 10h3v3h-3ZM522 19h3v3h-3ZM515 10h3v3h-3ZM539 15h3v3h-3ZM535 14h3v3h-3ZM612 18h3v3h-3ZM624 10h3v3h-3ZM619 10h3v3h-3ZM706 19h3v3h-3ZM700 14h3v3h-3ZM809 14h3v3h-3ZM817 14h3v3h-3ZM813 13h3v3h-3ZM893 17h3v3h-3ZM885 17h3v3h-3ZM1125 18h3v3h-3ZM1146 18h3v3h-3ZM1160 18h3v3h-3ZM1153 18h3v3h-3ZM1179 18h3v3h-3ZM1386 12h3v3h-3ZM1442 22h3v3h-3ZM1487 19h3v3h-3ZM1482 15h3v3h-3Z' fill='%23c8f26b' fill-opacity='0.52'/%3E%3Cpath d='M190.5 28L190.5 14.5M190 24.5L185.5 21.5M191 24.5L195.5 21.5M190 17.5L187.5 15.5M191 17.5L193.5 15.5M276.5 28L276.5 22.5M284.5 28L284.5 22.5M457.5 28L457.5 20.5M457 24.5L452.5 21.5M458 24.5L462.5 21.5M557.5 28L557.5 19.5M557 23.5L550.5 19.5M558 23.5L564.5 19.5M578.5 28L578.5 20.5M578 24.5L570.5 19.5M579 24.5L586.5 19.5M997.5 28L997.5 18.5M997 23.5L991.5 19.5M998 23.5L1003.5 19.5M997 21.5L993.5 19.5M998 21.5L1001.5 19.5M1015.5 28L1015.5 16.5M1015 24.5L1010.5 21.5M1016 24.5L1020.5 21.5M1015 19.5L1012.5 17.5M1016 19.5L1018.5 17.5M1080.5 28L1080.5 18.5M1080 23.5L1075.5 20.5M1081 23.5L1085.5 20.5M1080 21.5L1077.5 19.5M1081 21.5L1083.5 19.5M1224.5 28L1224.5 21.5M1224 23.5L1216.5 18.5M1225 23.5L1232.5 18.5M1266.5 28L1266.5 18.5M1266 24.5L1261.5 21.5M1267 24.5L1271.5 21.5M1266 21.5L1263.5 19.5M1267 21.5L1269.5 19.5M1291.5 28L1291.5 14.5M1291 23.5L1283.5 18.5M1292 23.5L1299.5 18.5M1291 20.5L1285.5 16.5M1292 17.5L1295.5 15.5M1350.5 28L1350.5 14.5M1350 24.5L1341.5 18.5M1351 24.5L1359.5 18.5M1350 20.5L1343.5 16.5M1351 20.5L1357.5 16.5M1350 17.5L1345.5 14.5M1351 17.5L1355.5 14.5M1465.5 28L1465.5 13.5M1465 24.5L1458.5 20.5M1466 24.5L1472.5 20.5M1465 20.5L1460.5 17.5M1465 16.5L1461.5 14.5M1466 16.5L1469.5 14.5' stroke='%23c8f26b' stroke-opacity='0.45'/%3E%3Cpath d='M184 20h3v3h-3ZM186 14h3v3h-3ZM189 13h3v3h-3ZM275 21h3v3h-3ZM283 21h3v3h-3ZM461 20h3v3h-3ZM456 19h3v3h-3ZM556 18h3v3h-3ZM577 19h3v3h-3ZM992 18h3v3h-3ZM996 17h3v3h-3ZM1014 15h3v3h-3ZM1074 19h3v3h-3ZM1079 17h3v3h-3ZM1268 18h3v3h-3ZM1265 17h3v3h-3ZM1290 13h3v3h-3ZM1340 17h3v3h-3ZM1349 13h3v3h-3ZM1460 13h3v3h-3ZM1464 12h3v3h-3Z' fill='%23c8f26b' fill-opacity='0.65'/%3E%3C/g%3E%3Cpath d='M51 13h3v3h-3ZM73 19h3v3h-3ZM371 16h3v3h-3ZM491 20h3v3h-3ZM493 11h3v3h-3ZM1037 19h3v3h-3ZM1084 19h3v3h-3ZM1132 19h3v3h-3ZM1223 20h3v3h-3ZM1245 14h3v3h-3ZM1294 14h3v3h-3ZM1377 16h3v3h-3ZM1485 16h3v3h-3Z' fill='%233ccfed' fill-opacity='0.7' filter='url(%23g)'/%3E%3C/svg%3E");
 
   /* Typography */
   --font-mono: var(--font-plex-mono);
@@ -129,8 +179,8 @@ html {
   color: var(--ink-bright);
 }
 
-/* One focus ring for every control. It sits in :where() so a page rule can refine it; before,
-   pre[tabindex] gave it more weight than any single-class focus rule. */
+/* One focus ring for every control. It sits in :where() so a page rule can refine it: without it,
+   pre[tabindex] would outweigh any single-class focus rule. */
 :where(a, button, summary, pre[tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
@@ -145,14 +195,239 @@ html {
   background: var(--bg);
 }
 
+/* The background is a graticule: the faint grid, a brighter plus where its lines cross, and the
+   tube's edges falling off to black. */
 .site-background-grid {
   position: absolute;
   inset: 0;
   background:
+    var(--graticule) 0 0 / var(--grid) var(--grid),
     linear-gradient(90deg, rgb(var(--white-rgb) / 0.014) 1px, transparent 1px) 0 0 / var(--grid)
     var(--grid),
     linear-gradient(rgb(var(--white-rgb) / 0.014) 1px, transparent 1px) 0 0 / var(--grid)
     var(--grid);
+}
+
+.site-background::after {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 40%, transparent 55%, rgb(0 0 0 / 0.38));
+  content: "";
+}
+
+/* Where the pointer rests, the grid's lines turn faintly lit within a 220px circle. Every move is
+   a transform, so the compositor draws it and nothing is painted again while the pointer moves:
+   the lens is a window of fixed size and a fixed mask that SiteBackground moves to the pointer,
+   and its grid moves back by the same amount, so the lines stay on the page's grid. SiteBackground
+   sets data-pointer while a fine pointer is over the page. */
+.site-background-pointer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--duration-decay) ease;
+}
+
+.site-background[data-pointer="on"] .site-background-pointer {
+  opacity: 1;
+  transition-duration: var(--duration-enter);
+}
+
+.site-background-lens {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 440px;
+  height: 440px;
+  overflow: hidden;
+  mask-image: radial-gradient(circle closest-side, #000, transparent);
+  will-change: transform;
+}
+
+.site-background-lens > div {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background:
+    linear-gradient(90deg, rgb(var(--accent-rgb) / 0.035) 1px, transparent 1px) 0 0 / var(--grid)
+    var(--grid),
+    linear-gradient(rgb(var(--accent-rgb) / 0.035) 1px, transparent 1px) 0 0 / var(--grid)
+    var(--grid);
+  will-change: transform;
+}
+
+/* ─── Beam timing ─── */
+/* Under the pointer or focus a control lights at once; once it is left, its color decays. */
+:where(a, button, summary):where(:hover, :focus-visible) {
+  --duration-beam: var(--duration-control);
+}
+
+/* ─── Beam frame switching on ─── */
+/* A beam frame (the landing's and the 404 page's primary action) switches on like a tube: as the
+   pointer or focus reaches it, it brightens a little, dips once, and settles in 360 ms, eased
+   rather than stepped so it reads as the tube warming and not as a glitch, and a press
+   flashes its fill and thickens its line inward by a pixel, as the beam strikes (the press rules
+   sit beside each frame's hover rule, which they must follow to win). The flicker
+   plays on each arrival, never on its own; under reduced motion it is skipped and the frame
+   lights at once. */
+@media (prefers-reduced-motion: no-preference) {
+  :where(.btn-primary, .page-action-primary):where(:hover, :focus-visible) {
+    animation: beam-switch-on 360ms ease-out;
+  }
+}
+
+@keyframes beam-switch-on {
+  0% {
+    filter: brightness(1.15);
+  }
+
+  40% {
+    filter: brightness(0.94);
+  }
+
+  100% {
+    filter: none;
+  }
+}
+
+/* ─── Beam underline ─── */
+/* Every underlined link carries a lit hairline at rest that brightens to the full lit color with
+   its text under the pointer or focus, lighting in --duration-link and fading in
+   --duration-link-decay, in place, with no sweep. A background layer draws it rather
+   than text-decoration, so a link laid out as a flex box, such as the secondary action, gets the
+   line along its bottom edge, where its border was; box-decoration-break gives a link that wraps a
+   line under each of its lines. The color is a registered property, because a gradient's color
+   cannot transition otherwise. */
+@property --underline {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+
+:where(
+    .prose a,
+    .section-header > p a,
+    .pinna-point-test,
+    .suite-grid a,
+    .suite-figure-files a,
+    .pinna-bench-notes-row a,
+    .site-footer-meta a,
+    .section-doclink,
+    .btn-secondary
+  ) {
+  --underline: var(--lit-hairline);
+  --duration-beam: var(--duration-link-decay);
+  background: linear-gradient(var(--underline) 0 0) left bottom / 100% 1px no-repeat;
+  text-decoration: none;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition:
+    --underline var(--duration-beam) ease,
+    color var(--duration-beam) ease;
+}
+
+:where(
+    .prose a,
+    .section-header > p a,
+    .pinna-point-test,
+    .suite-grid a,
+    .suite-figure-files a,
+    .pinna-bench-notes-row a,
+    .site-footer-meta a,
+    .section-doclink,
+    .btn-secondary
+  ):where(:hover, :focus-visible) {
+  --underline: var(--accent);
+  --duration-beam: var(--duration-link);
+}
+
+/* ─── Corner dots ─── */
+/* A panel's frame carries a 3px square at each corner, as a beam frame does, so every frame on the
+   site ends in the same dot. The dots sit at half strength and come up to full under the pointer,
+   lighting in --duration-control and fading in --duration-decay. A panel whose border is its own
+   sets --corner-inset to -1px, so the dots cover the border's corners; one whose border is on its
+   children keeps 0. */
+:where(.code-block, .code-frame, .info-card, .pinna-bench-legend, .pinna-bench-disclaimer) {
+  --corner: var(--accent);
+  --corner-inset: 0;
+  position: relative;
+}
+
+:where(.code-block, .code-frame, .info-card, .pinna-bench-legend, .pinna-bench-disclaimer)::after {
+  position: absolute;
+  inset: var(--corner-inset);
+  background:
+    linear-gradient(var(--corner) 0 0) left top / var(--corner-size) var(--corner-size) no-repeat,
+    linear-gradient(var(--corner) 0 0) right top / var(--corner-size) var(--corner-size) no-repeat,
+    linear-gradient(var(--corner) 0 0) left bottom / var(--corner-size) var(--corner-size) no-repeat,
+    linear-gradient(var(--corner) 0 0) right bottom / var(--corner-size) var(--corner-size)
+    no-repeat;
+  content: "";
+  opacity: 0.5;
+  pointer-events: none;
+  transition: opacity var(--duration-decay) ease;
+}
+
+:where(
+    .code-block,
+    .code-frame,
+    .info-card,
+    .pinna-bench-legend,
+    .pinna-bench-disclaimer
+  ):hover::after {
+  opacity: 1;
+  transition-duration: var(--duration-control);
+}
+
+/* ─── Lit word ─── */
+/* The lit word is drawn as a vector display's beam draws a line: a hot core, a tight halo in the
+   word's own hue, and a faint bloom, so it reads as a lit stroke rather than a soft blur. Under it
+   runs an edge of the hero graph: a lit line between two filled nodes. Every color comes from
+   currentColor, so the Effect page's green word takes the same light. The hero headline, the
+   Effect page's, and the 404 page's each light one word. */
+.lit-word {
+  --edge-node: max(3px, 0.035em);
+  --edge-line: color-mix(in srgb, currentColor 80%, transparent);
+  --edge-drop: 0.1em;
+  --edge-overhang: 0.08em;
+  position: relative;
+  text-shadow:
+    0 0 1px rgb(var(--white-rgb) / 0.3),
+    0 0 3px color-mix(in srgb, currentColor 40%, transparent),
+    0 0 16px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* The inline box ends 0.277em under the baseline, the font's descent; the edge's center sits
+   --edge-drop under the baseline. */
+.lit-word::before {
+  position: absolute;
+  right: calc(var(--edge-overhang) * -1);
+  bottom: calc(0.277em - var(--edge-drop) - var(--edge-node) / 2);
+  left: calc(var(--edge-overhang) * -1);
+  height: var(--edge-node);
+  background:
+    linear-gradient(currentColor 0 0) left center / var(--edge-node) var(--edge-node) no-repeat,
+    linear-gradient(currentColor 0 0) right center / var(--edge-node) var(--edge-node) no-repeat,
+    linear-gradient(var(--edge-line) 0 0) center / 100% 1px no-repeat;
+  content: "";
+  filter: drop-shadow(0 0 2px color-mix(in srgb, currentColor 35%, transparent));
+  opacity: 0.7;
+  pointer-events: none;
+  transition: opacity var(--duration-decay) ease;
+}
+
+/* The edge rests at 0.7 and comes up to full under the pointer, as a panel's corner dots do:
+   lighting in --duration-control, fading in --duration-decay. Nothing else on the word moves. */
+.lit-word:hover::before {
+  opacity: 1;
+  transition-duration: var(--duration-control);
+}
+
+/* The lit color sits in :where(), so a word that names another product, such as Effect in green,
+   keeps its own color whichever stylesheet loads first. */
+:where(.lit-word) {
+  color: var(--accent);
 }
 
 /* Every direct child of body stacks above the fixed .site-background; a class rule on a child
@@ -176,6 +451,18 @@ body > :where(:not(.site-background)) {
   text-transform: uppercase;
 }
 
+/* The label starts at a pad, a hollow 5px square in the label's color, as a trace leaves a pad in
+   the hero graph. */
+:where(.code-bar) > :first-child::before {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 8px;
+  border: 1px solid currentColor;
+  content: "";
+  vertical-align: 0.1em;
+}
+
 /* A code panel's body: the landing's and the docs' set the same type and scroll sideways; each
    page sets its own inset and surface. */
 :where(.code-block .shiki, .prose pre, .prose .shiki) {
@@ -194,6 +481,19 @@ body > :where(:not(.site-background)) {
   letter-spacing: 0.04em;
   text-decoration: none;
   text-transform: uppercase;
+}
+
+/* The secondary action, beside the primary one on the landing, the Effect page, and the 404 page,
+   is a muted link with the beam underline, not a second frame. */
+.btn-secondary {
+  min-height: 44px;
+  color: var(--muted);
+}
+
+/* The resting color above outranks any rule in :where(), so the lit color under the pointer is set
+   here and not in the beam underline's shared hover rule. */
+.btn-secondary:is(:hover, :focus-visible) {
+  color: var(--accent);
 }
 
 /* ─── Preview banner (developer-preview strip) ─── */
@@ -333,10 +633,10 @@ body > :where(:not(.site-background)) {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   text-decoration: none;
-  transition: color var(--duration-control) ease;
+  transition: color var(--duration-beam) ease;
 }
 
-.nav-link-action:hover {
+.nav-link-action:is(:hover, :focus-visible) {
   color: var(--accent);
 }
 
@@ -356,8 +656,21 @@ body > :where(:not(.site-background)) {
 }
 
 /* ─── Shared footer ─── */
+/* The footer's rule is the garden's ground line: small lime trees stand on it, a few tipped in
+   cyan, so the page ends on ground, as the frond in the hero grows from a root. */
 .site-footer {
-  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  border-top: 1px solid var(--lit-hairline);
+}
+
+.site-footer::before {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: 28px;
+  background: var(--sprouts) 0 100% / 1499px 28px repeat-x;
+  content: "";
 }
 
 .site-footer-shell {
@@ -389,16 +702,12 @@ body > :where(:not(.site-background)) {
 
 .site-footer-meta a {
   color: var(--ink);
-  border-bottom: 1px solid var(--line-bright);
-  text-decoration: none;
-  transition:
-    color var(--duration-control) ease,
-    border-color var(--duration-control) ease;
 }
 
-.site-footer-meta a:hover {
+/* The resting color above outranks any rule in :where(), so the lit color under the pointer is set
+   here and not in the beam underline's shared hover rule. */
+.site-footer-meta a:is(:hover, :focus-visible) {
   color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 
 @media (24rem < width <= 40rem) {
