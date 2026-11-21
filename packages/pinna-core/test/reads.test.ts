@@ -3,27 +3,77 @@ import { Graph, type Node, observerCount, readCell, readDerived, writeCell } fro
 import { captureReports } from "./reports.ts";
 import { expectAtRest } from "./rest.ts";
 
-/** Counts list traversal without a production counter or a timing threshold. */
+type DependencyEdge = NonNullable<Node["cursor"]>;
+
+/** Counts reads of the next dependency with a test-only accessor. */
+const countEdgeTraversals = (edge: DependencyEdge, counted: { traversals: number }) => {
+  let next = edge.nextDependency;
+  Object.defineProperty(edge, "nextDependency", {
+    configurable: true,
+    get: () => {
+      counted.traversals++;
+      return next;
+    },
+    set: (value: typeof next) => {
+      next = value;
+    },
+  });
+  return next;
+};
+
 const countTraversals = (node: Node) => {
   const counted = { traversals: 0 };
   for (let edge = node.dependenciesHead; edge !== undefined; ) {
-    let next = edge.nextDependency;
-    Object.defineProperty(edge, "nextDependency", {
-      configurable: true,
-      get: () => {
-        counted.traversals++;
-        return next;
-      },
-      set: (value: typeof next) => {
-        next = value;
-      },
-    });
-    edge = next;
+    edge = countEdgeTraversals(edge, counted);
   }
   return counted;
 };
 
 describe("wide nested reads", () => {
+  test("keeps first computed-then-source reads within the growth budget", () => {
+    const countFirstRead = (width: number): number => {
+      const graph = new Graph();
+      const rows = Array.from({ length: width }, (_, index) => {
+        const source = graph.cell(index);
+        return { source, derived: graph.derived(() => 2 * readCell(source)) };
+      });
+      const aggregate = graph.derived(() => {
+        let total = 0;
+        for (const { source, derived } of rows) total += readDerived(derived) + readCell(source);
+        return total;
+      });
+      const counted = { traversals: 0 };
+      const wrapped = new WeakSet<DependencyEdge>();
+      let cursor = aggregate.cursor;
+      // A fresh read creates its edges as it runs. Wrap each edge as the cursor reaches it.
+      Object.defineProperty(aggregate, "cursor", {
+        get: () => cursor,
+        set: (edge: Node["cursor"]) => {
+          cursor = edge;
+          if (edge === undefined || wrapped.has(edge)) return;
+          countEdgeTraversals(edge, counted);
+          wrapped.add(edge);
+        },
+      });
+
+      expect(readDerived(aggregate)).toBe((3 * width * (width - 1)) / 2);
+      const { traversals } = counted;
+      let dependencies = 0;
+      for (let edge = aggregate.dependenciesHead; edge !== undefined; edge = edge.nextDependency) {
+        expect(wrapped.has(edge)).toBe(true);
+        dependencies++;
+      }
+      expect(dependencies).toBe(2 * width);
+      expectAtRest(graph);
+      return traversals;
+    };
+
+    // Doubling the width of a head scan per row takes about four times the work.
+    const narrow = countFirstRead(256);
+    const wide = countFirstRead(512);
+    expect(wide).toBeLessThanOrEqual(3 * narrow);
+  });
+
   for (const kind of ["derived", "watch"] as const) {
     for (const ending of ["stable", "drop", "throw"] as const) {
       test(`${kind} scans linearly and clears its index after a ${ending} run`, () => {
