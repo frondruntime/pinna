@@ -1,6 +1,6 @@
 {
   "name": "@frondruntime/pinna-effect",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Pinna on Effect Schema: checked boxes, model classes, decoding, and Effect programs.",
   "license": "MIT",
   "author": {
@@ -57,7 +57,7 @@
     "bench:hermes-blackbox": "bun --conditions=source bench/hermes-blackbox.ts"
   },
   "peerDependencies": {
-    "@frondruntime/pinna": "0.0.1",
+    "@frondruntime/pinna": "0.1.0",
     "effect": "^4.1.0"
   },
   "devDependencies": {
