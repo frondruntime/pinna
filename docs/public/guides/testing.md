@@ -83,8 +83,11 @@ its wire data, `items`, are the ones from
 A watch on the model and a write the schema rejects behave as above: one
 rerun per update, and a rejected write leaves the realm as it was.
 
-An Effect program finds the realm through `RealmService`; the test provides
-its own. A `Deferred` waits for the watch's effect without a sleep. Close every
+An Effect program takes the test's realm: `watchScoped(realm, ...)` and
+`fromStream(realm, ...)` take it first, and `changes`, `observeScoped`, and
+`whileObserved` take it from the observable. A `SchemaModel` decoded inside
+an Effect program reads it from `RealmService`, which the test provides. A
+`Deferred` waits for the watch's effect without a sleep. Close every
 program's scope: a program left running keeps its values cached and its
 `onObserved` hooks started, and the test realm's dispose throws for its
 watch.
@@ -94,7 +97,7 @@ watch.
 | Call | Answers |
 | --- | --- |
 | `decode(realm, Model)(json)` | A model in the test's realm. |
-| `Effect.provideService(RealmService, realm)` | A program that runs in the test's realm. |
+| `Effect.provideService(RealmService, realm)` | A `SchemaModel` decoded inside the program lands in the test's realm. |
 
 A program that polls or sleeps runs on `TestClock`:
 [Programs](../effect/programs.md#testing) shows where to provide it and what
@@ -104,5 +107,5 @@ a test waits on instead of the clock.
 
 - [Updates](../state/updates.md): what an update undoes when it throws.
 - [Reacting](../state/reacting.md): when a watch reruns.
-- [Programs](../effect/programs.md): `RealmService`, `watchScoped`, and testing a program on `TestClock`.
+- [Programs](../effect/programs.md): `watchScoped`, `withStage`, and testing a program on `TestClock`.
 - [Errors and debugging](./errors.md): what throws, and where the rest goes.

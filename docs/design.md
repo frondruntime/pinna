@@ -325,33 +325,71 @@ A stage holds the writes of asynchronous work out of the realm until the
 work succeeds, then lands them in one update; a failure drops them and
 leaves nothing to undo (ruling 53).
 
-- A stage is an overlay and a journal. The overlay maps each box the stage
-  wrote to its staged value, and nothing else; the journal lists the
-  recipes that ran without throwing, in order. A stage copies nothing from
-  the realm and makes no graph node.
-- `stageUpdate` runs its recipe at once against a `read` and a `write` of
-  the stage. The `read` returns the overlay's value of a box, or
-  `peekCell` of its node, so it subscribes nothing. The `write` checks the
-  box's realm and its check, against the staged value, and records what it
-  replaced in the overlay, three slots a write. A recipe that throws puts
-  those back, the last first, and is not kept.
-- `applyStage` replays the journal: one `update` whose recipe runs each
-  kept recipe in a nested `update`, so each is held to what `update` holds a
-  recipe to, and an `update` already open is joined as any nested update
-  is. The recipes run over the realm's values at that moment, with the
-  update's own `read` and `write`, so the stage's limits on writes hold at
-  `stageUpdate`, not on replay.
-- The realm and its boxes carry no field for stages, so `update`, `read`,
-  and `write` cost what they did. A test realm learns of an open stage
-  through the realm's `running` hook, which only `testRealm` sets.
+- **Overlay and journal.** A stage maps each box it wrote to its staged
+  value, and each collection it wrote to a copy of its rows, with the key
+  order held as the order box's staged value; the journal lists the recipes
+  that ran without throwing. A child stage looks itself up first, then its
+  parent, then the realm. Nothing copies the realm, and a stage makes no
+  graph node.
+- **Reads.** A box reads the overlay, or `peekCell`, so nothing subscribes.
+  A collection's `rows` and `row` computed values are tagged with their
+  collection when made (`collectionReads`), so a stage reads its own rows in
+  their place: they read the collection's internals, not the `read` they are
+  handed. Any other computed value runs the core node's own `compute`
+  against the stage's `read`. The result is cached on the stage and cleared
+  when the core's clock or the highest revision along the stage's chain
+  moves, so a value read three times between two writes runs once, and a
+  realm write between two reads is seen.
+- **Writes.** `write` and `write.modify` check the box against the staged
+  value and record what they replaced; `write.modify` drafts the staged
+  value, never the realm's. A collection write runs the collection's own
+  `stagedUpsert`, `stagedRemove`, or `stagedReplace`: the same check,
+  equality, merge, repeated-key check, and `onRowChange` reports as an
+  update's, over the staged rows. A merge takes the `read` and `write` of
+  the place it runs in, so a refetched `SchemaModel` merges into the held
+  instance's boxes through the stage. A recipe that throws undoes its
+  overlay writes, the last first.
+- **The recipe guard.** A recipe runs twice. While it runs, the core's
+  `deriving` slot holds `stageMarker`, `active` is cleared, and `openDepth`
+  is 0: a realm write, a watch, and an observe throw through checks the core
+  already makes, a kept realm `read` throws through the place check it
+  already makes, and the messages that name a stage are built only on those
+  throw paths. Making an observable, `untracked`, `onObserved`,
+  `onRowChange`, and the stage calls compare `deriving` with the marker.
+  `update` and `read` gain nothing.
+- **Applying.** Over a realm: an optional conflict check, then one `update`
+  whose recipe runs each kept recipe in a nested `update`, nested in an
+  update already open. Over a parent: the recipes run against the parent as
+  one session, all or none.
+- **Conflicts.** With `{ conflicts: "fail" }`, the first read of a realm
+  value records the box's version: a box, or a collection's order and
+  change counter, recorded also beneath a computed value's evaluation. A
+  child's record merges into its parent's when it applies. The check
+  compares versions before the replay.
 
-What it cost: no conflict detection. A recipe that read a box another
-update changed since reads the new value on replay, so a value read through
-the stage can differ from what lands, and a recipe that branches on a value
-can take another branch. Detecting it would need a version per read box and
-a rule for what a conflict does; the first build left both out, and the
-complete build settles them (ruling 53). Staged values
-are not observable either: that would need a second graph per stage.
+What it cost:
+
+- A recipe must be a function of its `read`. An id, a time, or an
+  observable made inside one would differ between the staged run and the
+  replay; the guard catches observables, `update`, and kept reads, and an id
+  or a time is a documented rule, since Pinna has no development mode.
+- Computed values through a stage run uncached by the graph: a derivation
+  of n reads costs n per evaluation, bounded by the stage's cache. Frond
+  estimates 1 to 20 boxes and 1 to 50 recipes per stage.
+- A collection costs O(n) to copy on a stage's first write to it, and the
+  replay runs a `replaceAll`, and its merges, a second time: a refetch of
+  10,000 rows does the work twice.
+- Conflicts replay unless asked. A value read through the stage can differ
+  from what lands; `{ conflicts: "fail" }` turns that into an error, and the
+  author decides whether rerunning the work, requests included, is safe.
+- A conflict on a collection is per collection: any row change conflicts
+  with any read of its rows, since a row with no cell has no version.
+- Staged values are not observable: that would need a second graph per
+  stage.
+
+The decision: stages are explicit and synchronous in `pinna`, read and
+write everything the realm does, and hold the guarantee that a dropped
+stage leaves no trace.
 
 ## Checked writes
 

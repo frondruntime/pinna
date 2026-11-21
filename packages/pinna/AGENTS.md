@@ -75,23 +75,35 @@ mind while writing code.
      `reconcile(previous, next, { keyOf, equals })`, which keeps the previous
      object of every item `equals` finds unchanged.
 7. **Writes of asynchronous work that must not show early go through a
-   stage.** `openStage(realm)`, then `stageUpdate(stage, (read, write) =>
-   ...)` for each step: no box changes and nothing reruns until
-   `applyStage(stage)` lands every step in one update, and `dropStage(stage)`
-   on a failure leaves nothing to undo. Call `applyStage` after the `try`
-   whose `catch` drops: it closes the stage even when it throws, and a
-   later `dropStage` throws. A stage writes boxes only, reads no computed
-   value, and replays its recipes over the realm's values when applied, with
-   no conflict check; `realmRead(stage, ...)` reads the realm's value to
-   compare first. A write meant to show before the work succeeds, an
-   optimistic one, stays a plain `update` that the application undoes by
-   hand.
+   stage.** `const stage = openStage(realm, { name })`, then
+   `stageUpdate(stage, (read, write) => ...)` for each step, then
+   `applyStage(stage)`, with `dropStage(stage)` in a `finally`: no box
+   changes and nothing reruns until `applyStage` lands every step in one
+   update, and `dropStage` does nothing once the stage is applied. With
+   Effect, `withStage(realm, (stage) => program)` does the same.
+   - A read through the stage sees its own writes: boxes, collections
+     (`keys`, `rows`, `row`, `read.row`), and computed values. It writes
+     boxes, collections, and atoms, as an update does.
+   - A recipe runs twice, staged and applied. Make ids, times, models, and
+     boxes outside it and close over them; inside it, making an observable,
+     `update`, `untracked`, a kept `read` or `write`, and a watch throw.
+   - A method that hands back a change returns a `Recipe`, so it runs in
+     `update(realm, recipe)` and `stageUpdate(stage, recipe)` alike.
+   - A section that may fail on its own opens a child stage,
+     `openStage(stage)` or `withStage(stage, ...)`: dropped, it leaves the
+     parent as it was.
+   - `applyStage` replays over the realm's values when it runs. Pass
+     `{ conflicts: "fail" }` to have it throw `StageConflictError` instead
+     when what the stage read changed; never retry a section that sends a
+     request unless the request is safe to repeat.
+   - A write meant to show before the work succeeds, an optimistic one,
+     stays a plain `update` that the application undoes by hand.
 8. **State from outside starts when it is observed.** `onObserved($x, start)`
    runs `start` on the first observer and its cleanup after the last; an
    `atom(realm)` stands for outside state, and `write.changed($atom)` reruns
    what read it. With Effect, `whileObserved($x, program)` runs a feed while
-   `$x` is observed, and `fromStream(stream, initial)` makes a value that
-   holds the stream's last element while observed.
+   `$x` is observed, and `fromStream(realm, stream, initial)` makes a value
+   that holds the stream's last element while observed.
 
 ## In a component
 
@@ -119,8 +131,8 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
   as application code does. It makes its realm with `using realm =
   testRealm()` and records what a select changed to with `using values =
   record(realm, select)`, both from `@frondruntime/pinna/testing`; the
-  realm's dispose throws if a watch, an autorun, an `observe`, or an
-  `onRowChange` listener is still running. An autorun, a watch with its own
+  realm's dispose throws if a watch, an autorun, an `observe`, an
+  `onRowChange` listener, or a stage is still running. An autorun, a watch with its own
   effect, or an `observe` is held with `using _ = held(stop)`, so a failed
   assertion still stops it. `retainedKeys($items)` names the keys a
   collection still keeps something for, so a test checks that removed rows
@@ -165,6 +177,11 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
 - `update cannot run in a computed value` or `in a watch's select or a
   selector`: a derivation only reads. Write from an event, a watch's
   effect, or an autorun.
+- `... runs on a stage after it was applied`: a stage call after it
+  closed. Open a new stage; `dropStage` alone does nothing there.
+- `... is made inside a stage recipe` or `a stage recipe writes the
+  realm`: a recipe made something or wrote around its stage. Make it
+  outside the recipe, and write through the recipe's own `write`.
 - `watchers did not settle after 100 rounds`, sent to `onError`: an
   autorun or a watch effect writes what it reads on every run. Make the
   write settle, or derive the value with `computed`.

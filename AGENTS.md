@@ -18,7 +18,8 @@ Frond and imports nothing from it.
 - `packages/pinna-core`: the graph, with no runtime dependencies.
 - `packages/pinna`: the functions on boxes without a schema, with no
   Effect. `src/observable.ts` the realm, boxes, computed values, and
-  updates, `src/collection.ts` the keyed collection, `src/internal` what
+  updates, `src/collection.ts` the keyed collection, `src/stage.ts`
+  stages, `src/internal` what
   sibling packages use, `src/testing` the testing entry (`record`,
   `held`, `testRealm`, `retainedKeys`).
 - `packages/pinna/AGENTS.md`: the rules for agents writing applications on
@@ -28,7 +29,7 @@ Frond and imports nothing from it.
   `CollectionField`, `src/reconcile.ts` `reconcileSchema`, `src/decode.ts`
   `decode` and `RealmService`, `src/programs.ts` the Effect programs
   (`watchScoped`, `changes`, `observeScoped`, `fromStream`,
-  `whileObserved`).
+  `whileObserved`), `src/stage.ts` `withStage` and `StageConflict`.
 - `packages/pinna-react`: `useValue`, `useValues`, `useSelect`, `useRealm`,
   and `RealmProvider`.
 - `packages/pinna-bench`: speed and conformance of Pinna against
