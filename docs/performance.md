@@ -2399,6 +2399,65 @@ Pinna's median divided by alien-signals':
   577 KB, so a rough launch's median swings across that range; Hermes
   holds 14 KB. The cause is not yet found.
 
+### Cold boxes, and what each box layout would save (2026-11-21)
+
+**Neither box layout saves more than 3% of the store's retained heap on
+the React Native trace, and the one-object layout saves more than lazy
+nodes once ticks have run.** A third finding outweighs both: a collection
+read whole, unobserved, keeps the rows it returned alive until the next
+whole read, so after a refetch and a `replaceAll` the store holds 1,500
+boxes of the previous generation. Lazy nodes are not spiked; the
+one-object layout stays parked until after 1.0, for its load time.
+
+The census replays `apps/rn-bench/src/pinna/store.ts` on `528b573`
+(`perf/0.1.0`): 500 rows, a 10-row headless viewport and the details
+panel, 60 frames of 50 ticks, a scroll over every row, a compatible merge,
+a seeded refetch, a full replacement, and disposal. An instrumented copy
+of the graph counts each box's first tracked read, first observer, and
+first changed write; a scan of node fields after every frame and scroll
+step found 0 differences in 127 comparisons, and all 1,405 callbacks match
+an uninstrumented Hermes replay. Bytes are Hermes allocations, median of 5
+processes at 200,000 items: a box is 304 bytes, 176 of them the node and
+128 the handle, matching the 304.3 recorded before. Shares divide by the
+store's Hermes retained heap at that stage, after load minus empty.
+
+| Stage | Live boxes | Cold, a changed write promotes | Heap | Lazy nodes, one more handle field | Lazy nodes, writes do not promote | One object |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Load | 1,503 | 1,501 | 4.47 MB | 264 KB (5.9%) | 144 KB (3.2%) | 108 KB (2.4%) |
+| After ticks | 1,528 | 9 | 4.55 MB | 1.6 KB (0.03%) | 129 KB (2.8%) | 110 KB (2.4%) |
+| After full scroll | 2,003 | 0 | 5.01 MB | 0 | −160 KB | 144 KB (2.9%) |
+| After full replacement | 3,498 | 1,467 | 9.47 MB | 258 KB (2.7%) | −22 KB | 252 KB (2.7%) |
+
+- **Ticks make almost every field box hot.** 3,000 row ticks over 60
+  frames wrote a changed value to 1,491 of the 1,500 field boxes, 1,416 of
+  them never read with tracking or observed. With promotion on a changed
+  write, 9 boxes stay cold.
+- **A lazy handle costs more than its slot.** On Hermes a `BoxCell`-shaped
+  object costs 128 bytes with 8 or 9 fields and 208 with 10: the first
+  added field is free and the second costs 80 bytes. Lazy nodes that do not
+  promote on a write hold the value and its version on the handle, two
+  fields, and lose to one object from the full scroll on. Break-even is
+  40.9% of live boxes cold for lazy nodes with one added field and 86.4%
+  with two.
+- **The ceilings are arithmetic, not measured savings.** Each charges the
+  measured node and handle bytes; a working lazy layout's extra graph work
+  and metadata are not measured. One object's 72 bytes a box come from the
+  parked spike ("A box, a computed value, and an atom as the node itself").
+- **`collection.rows` holds the previous generation.** The store's `merge`
+  reads `read($rows.rows)` before `write.replaceAll`, so the collection's
+  `rows` computed value caches the array it returned. Unobserved, it keeps
+  that array until something reads it again, and the rows in it keep their
+  boxes and data. After the seeded refetch 90 old field boxes stay
+  reachable, after the full replacement 1,500. On Node with `--expose-gc`, 500 rows
+  read through `rows` once and then replaced stay alive in 3 of 3 runs; a
+  second read after the replacement, or no read at all, frees all 500.
+
+The harness, its raw data, and the full report are on the local branch
+`experiment/2026-11-21-cold-box-census` (`085e962`), at
+`experiments/cold-box-census/README.md`. Bun 1.4.4, Hermes
+260318099.0.5 with `hermesc -O`, Node 26.13.1 with `--expose-gc` for the
+cross-check (3.816 MB loaded, as before), Apple M1 Pro.
+
 ## Spike findings
 
 The spike ran on a branch that was never merged and was deleted on
