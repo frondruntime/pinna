@@ -4,6 +4,7 @@ import {
   box,
   collection,
   computed,
+  inspect,
   openStage,
   StageConflictError,
   stageRead,
@@ -130,6 +131,22 @@ describe("a stage that fails on conflicts", () => {
       write($flag, true);
     });
     expect(conflictOf(() => applyStage(root)).changed).toEqual(["flag"]);
+  });
+
+  test("a named collection is named in the conflict, and in inspect", () => {
+    using realm = testRealm();
+    const $orders = collection<string, string>(realm, { keyOf: (row) => row, name: "orders" });
+    const $count = box(realm, 0);
+    expect(inspect($orders.keys).name).toBe("orders.keys");
+    expect(inspect($orders.rows).name).toBe("orders.rows");
+    const stage = openStage(realm, { conflicts: "fail" });
+    stageUpdate(stage, (read, write) => {
+      write($count, read($orders.rows).length);
+    });
+    update(realm, (_read, write) => {
+      write.upsert($orders, "a");
+    });
+    expect(conflictOf(() => applyStage(stage)).changed).toEqual(["orders"]);
   });
 
   test("a child keeps the version it read: a change before the child applies is caught", () => {

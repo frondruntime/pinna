@@ -218,6 +218,11 @@ const names = new WeakMap<Source, string>();
 
 export const nameOf = (source: Source): string => names.get(source) ?? "<anonymous>";
 
+/** Names a graph node for `inspect` and errors: for a collection's own boxes and values. */
+export const nameSource = (source: Source, name: string): void => {
+  names.set(source, name);
+};
+
 /** Why a named computed value runs. An atom nothing observes counts as changed on every check. */
 const explain = (cause: Source | null): string => {
   if (cause === null) {

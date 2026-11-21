@@ -25,10 +25,12 @@ import {
   type Collection,
   type Computed,
   ComputedValue,
+  checkName,
   computedFunction,
   equalKey,
   hashKey,
   identityHash,
+  nameSource,
   type ObservableRealm,
   type Read,
   type Realm,
@@ -232,10 +234,13 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     private readonly keyOf: (value: Value) => Key,
     values: ReadonlyArray<Value>,
     merge?: Merge<Value>,
+    /** A name for `inspect`, errors, and a stage's reports; its keys are `<name>.keys`. */
+    readonly name?: string,
   ) {
     if (realm.core.deriving === stageMarker) {
       throw recipeMakeError("a collection");
     }
+    checkName(name);
     this.check = check;
     this.merge = merge;
     // Incoming rows reject undefined before reaching a cell. Only removal
@@ -281,6 +286,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     this.order = new BoxCell<ReadonlyArray<Key>>(realm, acceptAll, keys, sameElements);
     this.changes = new BoxCell<number>(realm, acceptAll, 0, Object.is);
     this.keys = this.order;
+    if (name !== undefined) {
+      nameSource(this.order.source, `${name}.keys`);
+    }
     collectionOfOrder.set(this.order, this as KeyedCollection<unknown, unknown>);
     this.lookup = computedFunction(realm, (_read, key: Key) => this.read(key));
   }
@@ -401,6 +409,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
           return keys.map((key) => held.get(key) as Value);
         },
         sameElements,
+        this.name === undefined ? undefined : `${this.name}.rows`,
       );
       collectionReads.set(this.allRows, this.tag(true, undefined));
     }
@@ -983,6 +992,12 @@ export interface CollectionOptions<Key, Value> {
   /** The key of a row; two rows with one key are an error. */
   readonly keyOf: (value: Value) => Key;
   /**
+   * A name for tools: `inspect` reports its `keys` as `<name>.keys` and its
+   * `rows` as `<name>.rows`, and a stage's conflict error and `inspectStage`
+   * name the collection by it.
+   */
+  readonly name?: string;
+  /**
    * Compares a row written under a key with the row it holds; an equal row
    * notifies nobody and the collection keeps the row it holds. Defaults to
    * `Object.is`.
@@ -1007,6 +1022,8 @@ export const collection = <Key, Value>(
     options.equals ?? Object.is,
     options.keyOf,
     [],
+    undefined,
+    options.name,
   );
 
 /**
