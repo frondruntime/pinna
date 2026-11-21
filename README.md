@@ -60,7 +60,10 @@ A call that makes an observable, opens an update, or starts a watcher takes
 the realm first; a call about one observable, such as `useValue`, `observe`,
 or `inspect`, takes the observable. A box is written only inside `update`,
 which hands out `write`. Without Effect, import from `@frondruntime/pinna`
-and drop the schema: `box(realm, 0)`.
+and drop the schema: `box(realm, 0)`. Asynchronous work whose writes must
+not show until it succeeds stages them: `openStage`, `stageUpdate`, then
+`applyStage` lands them in one update, or `dropStage` discards them; with
+Effect, `withStage` does both.
 
 ## What it is for
 
@@ -120,7 +123,9 @@ resolve each other's `src` through the `source` export condition, so nothing
 needs a build first. The older benchmarks stay in `packages/pinna`: the
 diamond against Effect's Atom is `bun run --cwd packages/pinna bench`, the
 data benchmark against MobX `bench:data`, the graph alone `bench:graph`, and
-their Hermes forms `bench:hermes` and `bench:hermes-graph`.
+their Hermes forms `bench:hermes` and `bench:hermes-graph`. `bench:stage`
+measures a stage against the update it replaces: a refetch staged and
+replayed, and computed values read through a stage.
 
 Publishing runs from a terminal only. CI tags a release through
 release-please and publishes nothing.

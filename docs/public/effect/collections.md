@@ -79,8 +79,8 @@ writes. It starts empty and checks and compares rows as the field does.
 
 | Call | Answers |
 | --- | --- |
-| `CollectionField(schema, { keyOf })` | A field of rows by key, each checked against `schema`, a plain array on the wire. |
-| `schemaCollection(realm, schema, { keyOf, equals? })` | An empty collection of rows `schema` accepts, the one a `CollectionField` holds. A row is compared with `equals`, the schema's equivalence by default, and a `SchemaModel` row is merged into the held one. |
+| `CollectionField(schema, { keyOf, name? })` | A field of rows by key, each checked against `schema`, a plain array on the wire. `name` names every instance's collection, as `collection`'s does. |
+| `schemaCollection(realm, schema, { keyOf, equals?, name? })` | An empty collection of rows `schema` accepts, the one a `CollectionField` holds. A row is compared with `equals`, the schema's equivalence by default, and a `SchemaModel` row is merged into the held one. |
 | `reconcileSchema(previous, next, { keyOf, equals? })` | As `reconcile` on [Updates](../state/updates.md), with `equals` optional and a `SchemaModel` item merged into the held one. |
 
 ## See also

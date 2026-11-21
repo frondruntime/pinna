@@ -179,6 +179,11 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
   effect, or an autorun.
 - `... runs on a stage after it was applied`: a stage call after it
   closed. Open a new stage; `dropStage` alone does nothing there.
+- `applyStage finds that ... changed since the stage read ...`: a
+  `StageConflictError` from a stage opened with `{ conflicts: "fail" }`;
+  nothing landed. Rerun the work over the new values, if its requests are
+  safe to repeat. Name boxes and collections (`{ name }`) so the error names
+  them.
 - `... is made inside a stage recipe` or `a stage recipe writes the
   realm`: a recipe made something or wrote around its stage. Make it
   outside the recipe, and write through the recipe's own `write`.
@@ -186,7 +191,8 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
   autorun or a watch effect writes what it reads on every run. Make the
   write settle, or derive the value with `computed`.
 
-Pass `{ name }` to `computed`, `box`, or `computedFunction`
+Pass `{ name }` to `computed`, `box`, `computedFunction`, `collection`, or
+`CollectionField`
 (`computed(this.realm, (read) => ..., { name: "Todos.remaining" })`) and its
 errors name it. A `BoxField` takes no name, so its errors say
 `$observable`. `inspect($x)` reports what a value read and

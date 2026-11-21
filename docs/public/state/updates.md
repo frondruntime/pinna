@@ -87,10 +87,10 @@ through `untracked`.
 | `applyStage(stage)` | Closes the stage and replays its recipes, in order: over a realm, in one update nested in an open one; over a stage, into that stage. |
 | `dropStage(stage)` | Closes the stage and its open children, and discards them. No box changes. Does nothing to a closed stage. |
 | `stageStatus(stage)` | `"open"`, `"applied"`, or `"dropped"`. |
-| `inspectStage(stage)` | The stage's name, realm, parent, status, conflict mode, the names of the boxes it wrote, and how many collections, recipes, and open children it holds. |
+| `inspectStage(stage)` | The stage's name, realm, parent, status, and conflict mode; the names of the boxes and collections it wrote; under `{ conflicts: "fail" }`, the names of what it read and `applyStage` checks; and how many recipes and open children it holds. |
 | `Recipe` | `(read, write) => undefined`: what `update` and `stageUpdate` run. |
 | `StageClosedError` | Thrown by a call on a closed stage; `stage` is its name and `status` how it closed. |
-| `StageConflictError` | Thrown by `applyStage` on a conflict; `changed` names what changed and `observables` holds it. |
+| `StageConflictError` | Thrown by `applyStage` on a conflict; `changed` names what changed, a named box or collection by its `name`, and `observables` holds it. |
 
 ## Effects after the update
 
