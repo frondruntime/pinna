@@ -140,6 +140,10 @@ export const collectionOfOrder = new WeakMap<object, KeyedCollection<unknown, un
 export interface StagedRows<Key, Value> {
   readonly rows: ReadonlyMap<Key, Value>;
   readonly order: ReadonlyArray<Key>;
+  /** Root replay normalizes existing row cells before listeners or later reads. */
+  readonly cellValue?:
+    | ((key: Key, cell: BoxCell<Value | undefined>, value: Value, current: Value) => Value)
+    | undefined;
   setRow(key: Key, row: Value): void;
   deleteRow(key: Key): void;
   setOrder(order: ReadonlyArray<Key>): void;
@@ -790,7 +794,11 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     if (present && this.mergesStaged(previous as Value, value, read, write)) {
       return;
     }
-    const kept = this.landing(value, previous, present);
+    const cell = present ? this.cells.get(key) : undefined;
+    const kept =
+      cell !== undefined && target.cellValue !== undefined
+        ? target.cellValue(key, cell, value, previous as Value)
+        : this.landing(value, previous, present);
     if (present && Object.is(kept, previous)) {
       return;
     }
@@ -867,7 +875,11 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       if (present && Object.is(value, previous)) {
         continue;
       }
-      const kept = this.landing(value, previous, present);
+      const cell = present ? this.cells.get(key) : undefined;
+      const kept =
+        cell !== undefined && target.cellValue !== undefined
+          ? target.cellValue(key, cell, value, previous as Value)
+          : this.landing(value, previous, present);
       next.set(key, kept);
       if (!present || !Object.is(kept, previous)) {
         changed = true;

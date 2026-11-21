@@ -349,7 +349,9 @@ leaves nothing to undo (ruling 53).
   the place it runs in, so a refetched `SchemaModel` merges into the held
   instance's boxes through the stage. A recipe that throws undoes its
   overlay writes, the last first.
-- **The recipe guard.** A recipe runs twice. While it runs, the core's
+- **The recipe guard.** A recipe runs once when staged and once per
+  `applyStage` through its parents to the realm. Row listeners run for each
+  change on each run. While it runs, the core's
   `deriving` slot holds `stageMarker`, `active` is cleared, and `openDepth`
   is 0: a realm write, a watch, and an observe throw through checks the core
   already makes, a kept realm `read` throws through the place check it
@@ -371,7 +373,18 @@ leaves nothing to undo (ruling 53).
   cache releases, and undo. Each collection tracks written keys, including
   removals; landing costs O(written boxes + written rows + marked atoms),
   with no scan of unwritten rows. Over a parent: the recipes run against
-  the parent as one session, all or none.
+  the parent with one undo boundary, all or none. Each recipe has its own
+  `read` and `write`, closed in its `finally`; landing preparation runs with
+  no recipe handle open, under the guard.
+- **Write-back identity.** Root replay checks a box's incoming value before
+  comparing it with the enclosing update's original value, then with the
+  current overlay value, in the same order as an ordinary write. A value
+  equal to the original restores that original object in the overlay at
+  once, so later recipe reads see its identity; landing restores its
+  version. Without an enclosing write, the first replay write uses the
+  realm's value as the original. Existing collection row cells follow the
+  same rule; rows without cells compare only with their current row, as
+  an ordinary upsert does. A removed row no longer uses its old cell.
 - **Final values.** A box written and then written back to its realm value,
   or a row added and then removed, lands no change: no version changes and
   no watcher runs. An ordinary update restores the box's original version
@@ -387,11 +400,18 @@ leaves nothing to undo (ruling 53).
   a recipe after closing, and `dropStage` remains idempotent. Watch effects
   and autoruns settle after landing; errors go to `onError` and the stage
   stays `"applied"`.
+  An enclosing update's rollback undoes the landing and changes the closed
+  stage to `"dropped"`, with its journal still cleared. An empty journal
+  stays `"applied"`, since it had no landing to undo.
 - **Conflicts.** With `{ conflicts: "fail" }`, the first read of a realm
   value records the box's version: a box, or a collection's order and
   change counter, recorded also beneath a computed value's evaluation. A
-  child's record merges into its parent's when it applies. The check
-  compares versions before the replay.
+  child's record merges into its parent's when it applies. `write.modify`
+  records a read when it drafts a realm value, but not an overlay value.
+  A later read of a different version replaces the record with `NaN`, which
+  never matches: rollback can restore a smaller version, so numeric order
+  cannot identify the first observation. The record keeps its observable
+  for the conflict message. The check compares versions before the replay.
 
 What it cost:
 
