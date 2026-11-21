@@ -303,7 +303,13 @@ ruling carries the date it was first written down, and uses today's names.
     read runs it again. A key that leaves empties its `row(key)`, which a
     caller may still hold, and a rolled-back update empties both, which
     would otherwise keep the rows it discarded until the next read. Both
-    stay the same computed values. Before it, each
+    stay the same computed values. A `row(key)` taken while the key was
+    missing, or kept by a caller across the key's removal and return, is
+    not the key's current row computed, so nothing empties it: it keeps the
+    last row it returned until its next read, one row for each such handle
+    the caller holds, and its reads stay correct. Emptying it would need a
+    row computed per key kept after the key leaves, and a rule for dropping
+    it once nothing holds it. Before it, each
     kept its last unobserved result, so a `write.replaceAll` left the
     replaced generation reachable: in the React Native bench store, whose
     `merge` reads `rows` before `write.replaceAll`, 3,498 boxes stayed
