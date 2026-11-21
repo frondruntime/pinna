@@ -27,7 +27,7 @@ const isMergeable = (value: unknown): value is Mergeable =>
  * differ (or the class's own `[Equal.symbol]` says they differ). Otherwise
  * `held` stays, and the answer is the writes that bring its boxes to
  * `fresh`'s values. Planning writes nothing, so a refetch whose boxes all
- * hold their values needs no open update. It reads `held`'s boxes through
+ * hold their values needs no open update. It reads both instances through
  * `read`, and the writes go through `write`: an update's, or a stage
  * recipe's, so a refetch through a stage merges into the stage.
  */
@@ -43,8 +43,9 @@ export const planMerge = (
  * session puts it back on a throw; in the open update; or in one of its own.
  */
 export const writeIn = (realm: ObservableRealm, write: () => void): void => {
-  if (realm.stagedPlace !== undefined) {
-    write();
+  const place = realm.stagedPlace;
+  if (place !== undefined) {
+    place.undoOnThrow(write);
     return;
   }
   if (realm.updateDepth > 0) {

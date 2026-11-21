@@ -35,6 +35,7 @@ import {
   type Read,
   type Realm,
   recipeMakeError,
+  type StagedPlace,
   stageMarker,
   type UpsertOptions,
   update,
@@ -892,7 +893,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     if (this.check !== acceptAll) {
       verifyValue(this.realm, this.check, value, previous);
     }
-    writes?.();
+    if (writes !== undefined) {
+      (this.realm.stagedPlace as StagedPlace).undoOnThrow(writes);
+    }
     return true;
   }
 
