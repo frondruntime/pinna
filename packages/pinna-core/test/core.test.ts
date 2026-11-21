@@ -1877,6 +1877,31 @@ describe("forgetValue", () => {
     expectAtRest(local);
   });
 
+  test("a dropped value that gains an observer runs, links, and reports each change", () => {
+    const local = new Graph();
+    const source = local.cell(1);
+    let runs = 0;
+    const derived = local.derived(() => {
+      runs++;
+      return readCell(source) * 2;
+    });
+    expect(readDerived(derived)).toBe(2);
+    forgetValue(derived);
+    const seen: Array<number> = [];
+    const stop = local.watch(() => {
+      seen.push(readDerived(derived));
+    });
+    expect(observerCount(derived)).toBe(1);
+    expect(observerCount(source)).toBe(1);
+    writeCell(source, 2);
+    writeCell(source, 3);
+    expect(seen).toEqual([2, 4, 6]);
+    expect(runs).toBe(4);
+    stop();
+    expect(observerCount(source)).toBe(0);
+    expectAtRest(local);
+  });
+
   test("a value forgotten from its own run keeps its result", () => {
     const local = new Graph();
     const source = local.cell(1);

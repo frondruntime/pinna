@@ -296,19 +296,24 @@ ruling carries the date it was first written down, and uses today's names.
     rows, against 0.057 ms. Identity that outlives a call is a key, a
     collection row, or a box.
 
-55. **An unobserved `rows` lets go of the rows it returned** (2026-11-21).
-    A write that changes a collection's rows empties `rows` when nothing
-    observes it, through pinna-core's `forgetValue`; the next read runs it
-    again. `rows` itself stays the same computed value. Before it, the array
-    from the last unobserved read held every row in it: in the React Native
-    bench store, whose `merge` reads `rows` before `write.replaceAll`, 1,500
-    boxes of the replaced generation stayed reachable after a full
-    replacement (3,498 reachable, 1,998 current), and a Node probe with
-    `--expose-gc` kept 500 of 500 replaced rows. With it, 0 of 500. An
-    observed `rows` keeps its value: its observers are due the change. The
-    cost: a read of an unobserved `rows` after an update that rolled back
-    runs again and returns a new array of the same rows, where it returned
-    the kept one before; a write that changes no row empties nothing.
+55. **An unobserved `rows` or `row(key)` lets go of the rows it returned**
+    (2026-11-21). A write that changes a collection's rows empties `rows`,
+    and a write that changes a key's row empties that key's `row(key)`,
+    when nothing observes it, through pinna-core's `forgetValue`; the next
+    read runs it again. Both stay the same computed values. Before it, each
+    kept its last unobserved result, so a `write.replaceAll` left the
+    replaced generation reachable: in the React Native bench store, whose
+    `merge` reads `rows` before `write.replaceAll`, 3,498 boxes stayed
+    reachable after a full replacement where 1,998 are current, and the
+    store's Hermes retained heap was 9,465,280 bytes; with it, 1,998 boxes
+    and 5,027,168 bytes. A Node probe with `--expose-gc` kept 500 of 500
+    replaced rows read through `rows`, and 500 of 500 read through
+    `row(key)` under the same keys; with it, 0 of 500 in each. An observed
+    value keeps what it holds: its observers are due the change. The cost:
+    a read of an unobserved `rows` or `row(key)` after an update that rolled
+    back runs again and returns a new array, or the same row, where it
+    returned the kept value before; a write that changes no row empties
+    nothing.
 
 ## Build slices
 
