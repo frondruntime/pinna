@@ -73,6 +73,7 @@
     "bench:hermes-reaction": "bun --conditions=source bench/hermes-reaction.ts",
     "bench:hermes-hooks": "bun --conditions=source bench/hermes-hooks.ts",
     "bench:blackbox": "bun --conditions=source bench/blackbox.ts",
+    "bench:stage": "bun --conditions=source bench/stage.ts",
     "bench:hermes-blackbox": "bun --conditions=source bench/hermes-blackbox.ts"
   },
   "dependencies": {
