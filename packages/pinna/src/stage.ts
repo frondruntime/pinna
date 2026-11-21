@@ -45,11 +45,11 @@ import {
   nameOf,
   type ObservableRealm,
   otherRealmError,
-  type Place,
   produce,
   type Read,
   type Realm,
   type Recipe,
+  type StagedPlace,
   stageMarker,
   type UpsertOptions,
   untracked,
@@ -167,6 +167,19 @@ interface ReadVersion {
   readonly observable: object;
 }
 
+/** The realm versions a row copy came from, and the keys the stage chain replaced. */
+interface CollectionProvenance {
+  readonly changes: number;
+  readonly order: number;
+  readonly written: Set<unknown>;
+}
+
+/** A computed result, including a thrown value, kept until the overlay or realm changes. */
+interface CachedResult {
+  readonly failed: boolean;
+  readonly value: unknown;
+}
+
 class StageState implements Stage {
   declare readonly [stageBrand]: true;
   readonly realm: ObservableRealm;
@@ -181,6 +194,7 @@ class StageState implements Stage {
   boxes = new Map<BoxCell<unknown>, unknown>();
   /** The rows of each collection this stage wrote, copied on its first write. */
   rows = new Map<KeyedCollection<unknown, unknown>, Map<unknown, unknown>>();
+  provenance = new Map<KeyedCollection<unknown, unknown>, CollectionProvenance>();
   /** The recipes that ran without throwing, in order. */
   journal: Array<Recipe> = [];
   status: StageStatus = "open";
@@ -188,10 +202,12 @@ class StageState implements Stage {
   /** Set from the root's count by each write to this overlay, so a cache knows its chain changed. */
   revision = 0;
   /** Computed values evaluated through this stage, valid while `cacheClock` and `cacheRevision` hold. */
-  cache = new Map<ComputedValue<unknown>, unknown>();
+  cache = new Map<ComputedValue<unknown>, CachedResult>();
   cacheClock = -1;
   cacheRevision = -1;
   readonly evaluating = new Set<ComputedValue<unknown>>();
+  /** The innermost computed value running in this chain; held on the root alone. */
+  computing: ComputedValue<unknown> | undefined = undefined;
   /** What this stage read from the realm, by box, when its root checks conflicts. */
   reads: Map<BoxCell<unknown>, ReadVersion> | undefined;
   /** Set under `testRealm` only: tells it the stage closed. */
@@ -262,6 +278,7 @@ const close = (state: StageState, status: "applied" | "dropped"): void => {
   state.status = status;
   state.boxes = new Map();
   state.rows = new Map();
+  state.provenance = new Map();
   state.journal = [];
   state.cache = new Map();
   state.reads = undefined;
@@ -274,10 +291,16 @@ const close = (state: StageState, status: "applied" | "dropped"): void => {
 // Reading through the chain of overlays
 
 /** Records a read of the realm's `box`, when the stage's root checks conflicts. */
-const recordRead = (state: StageState, box: BoxCell<unknown>, observable: object): void => {
+const recordRead = (
+  state: StageState,
+  box: BoxCell<unknown>,
+  observable: object,
+  version = box.source.version,
+): void => {
   const reads = state.reads;
-  if (reads !== undefined && !reads.has(box)) {
-    reads.set(box, { version: box.source.version, observable });
+  const held = reads?.get(box);
+  if (reads !== undefined && (held === undefined || version < held.version)) {
+    reads.set(box, { version, observable });
   }
 };
 
@@ -286,6 +309,13 @@ const boxValue = <Value>(state: StageState, box: BoxCell<Value>, record: boolean
   const key = box as BoxCell<unknown>;
   for (let stage: StageState | undefined = state; stage !== undefined; stage = stage.parent) {
     if (stage.boxes.has(key)) {
+      if (record) {
+        const collection = collectionOfOrder.get(box);
+        const provenance = collection === undefined ? undefined : stage.provenance.get(collection);
+        if (provenance !== undefined && collection !== undefined) {
+          recordRead(state, key, collection, provenance.order);
+        }
+      }
       return stage.boxes.get(key) as Value;
     }
   }
@@ -300,11 +330,23 @@ const rowsOf = <Key, Value>(
   state: StageState,
   collection: KeyedCollection<Key, Value>,
   record: boolean,
+  rowKey?: Key,
+  singleRow = false,
 ): ReadonlyMap<Key, Value> => {
   const key = collection as KeyedCollection<unknown, unknown>;
   for (let stage: StageState | undefined = state; stage !== undefined; stage = stage.parent) {
     const rows = stage.rows.get(key);
     if (rows !== undefined) {
+      const provenance = stage.provenance.get(key);
+      if (record && provenance !== undefined && !(singleRow && provenance.written.has(rowKey))) {
+        recordRead(
+          state,
+          collection.changesCell as BoxCell<unknown>,
+          collection,
+          provenance.changes,
+        );
+        recordRead(state, collection.orderCell as BoxCell<unknown>, collection, provenance.order);
+      }
       return rows as Map<Key, Value>;
     }
   }
@@ -335,12 +377,8 @@ const chainRevision = (state: StageState): number => {
  */
 const evaluate = (state: StageState, read: Read, computed: ComputedValue<unknown>): unknown => {
   const tag = collectionReads.get(computed);
-  if (tag !== undefined) {
-    const rows = rowsOf(state, tag.collection, true);
-    if (!tag.all) {
-      return rows.get(tag.key);
-    }
-    return boxValue(state, tag.collection.orderCell, true).map((key) => rows.get(key));
+  if (tag !== undefined && !tag.all) {
+    return rowsOf(state, tag.collection, true, tag.key, true).get(tag.key);
   }
   const clock = state.realm.core.clock;
   const revision = chainRevision(state);
@@ -350,25 +388,40 @@ const evaluate = (state: StageState, read: Read, computed: ComputedValue<unknown
     state.cacheRevision = revision;
   }
   const cache = state.cache;
-  if (cache.has(computed)) {
-    return cache.get(computed);
+  const cached = cache.get(computed);
+  if (cached !== undefined) {
+    if (cached.failed) {
+      throw cached.value;
+    }
+    return cached.value;
   }
   if (state.evaluating.has(computed)) {
     throw new Error(
       `pinna: ${describeSource(computed.source)} is read while a stage evaluates it (cycle)`,
     );
   }
-  const compute = (computed.source as unknown as { readonly compute: (read: Read) => unknown })
-    .compute;
   state.evaluating.add(computed);
-  let value: unknown;
+  const computing = state.root.computing;
+  state.root.computing = computed;
   try {
-    value = compute(read);
+    let value: unknown;
+    if (tag !== undefined) {
+      const rows = rowsOf(state, tag.collection, true);
+      value = boxValue(state, tag.collection.orderCell, true).map((key) => rows.get(key));
+    } else {
+      const compute = (computed.source as unknown as { readonly compute: (read: Read) => unknown })
+        .compute;
+      value = compute(read);
+    }
+    cache.set(computed, { failed: false, value });
+    return value;
+  } catch (error) {
+    cache.set(computed, { failed: true, value: error });
+    throw error;
   } finally {
+    state.root.computing = computing;
     state.evaluating.delete(computed);
   }
-  cache.set(computed, value);
-  return value;
 };
 
 const ownRealm = (
@@ -409,7 +462,9 @@ const stageReader = (state: StageState, session: Session): Read => {
       throw keptError("read.row");
     }
     ownRealm(state, "read.row", collection as unknown as { readonly realm: ObservableRealm });
-    return rowsOf(state, collection as unknown as KeyedCollection<Key, Value>, true).get(key);
+    return rowsOf(state, collection as unknown as KeyedCollection<Key, Value>, true, key, true).get(
+      key,
+    );
   };
   const reader: Read = Object.assign(read, { row });
   return reader;
@@ -454,6 +509,24 @@ const stagedRows = <Key, Value>(
     let rows = state.rows.get(key) as Map<Key, Value> | undefined;
     if (rows === undefined) {
       rows = new Map(rowsOf(state, collection, false));
+      let ancestor = state.parent;
+      while (ancestor !== undefined && !ancestor.rows.has(key)) {
+        ancestor = ancestor.parent;
+      }
+      const inherited = ancestor?.provenance.get(key);
+      const provenance =
+        ancestor === undefined
+          ? {
+              changes: collection.changesCell.source.version,
+              order: collection.orderCell.source.version,
+              written: new Set<unknown>(),
+            }
+          : inherited === undefined
+            ? undefined
+            : { ...inherited, written: new Set(inherited.written) };
+      if (provenance !== undefined) {
+        state.provenance.set(key, provenance);
+      }
       // The order is held with the rows, so the two never disagree.
       if (!state.boxes.has(orderCell)) {
         setBox(state, session, orderCell, boxValue(state, collection.orderCell, false));
@@ -461,9 +534,19 @@ const stagedRows = <Key, Value>(
       state.rows.set(key, rows as Map<unknown, unknown>);
       session.undo.push(() => {
         state.rows.delete(key);
+        state.provenance.delete(key);
       });
     }
     return rows;
+  };
+  const wrote = (rowKey: Key): void => {
+    const written = state.provenance.get(key)?.written;
+    if (written !== undefined && !written.has(rowKey)) {
+      session.undo.push(() => {
+        written.delete(rowKey);
+      });
+      written.add(rowKey);
+    }
   };
   return {
     get rows() {
@@ -484,6 +567,7 @@ const stagedRows = <Key, Value>(
         }
       });
       rows.set(rowKey, row);
+      wrote(rowKey);
       changedOverlay(state);
     },
     deleteRow(rowKey) {
@@ -493,6 +577,7 @@ const stagedRows = <Key, Value>(
         rows.set(rowKey, prior);
       });
       rows.delete(rowKey);
+      wrote(rowKey);
       changedOverlay(state);
     },
     setOrder(order) {
@@ -502,14 +587,21 @@ const stagedRows = <Key, Value>(
     setAll(rows, order) {
       // Replaced whole: no copy of the rows held first.
       const prior = state.rows.get(key);
+      const provenance = state.provenance.get(key);
       session.undo.push(() => {
         if (prior === undefined) {
           state.rows.delete(key);
         } else {
           state.rows.set(key, prior);
         }
+        if (provenance === undefined) {
+          state.provenance.delete(key);
+        } else {
+          state.provenance.set(key, provenance);
+        }
       });
       state.rows.set(key, rows as Map<unknown, unknown>);
+      state.provenance.delete(key);
       setBox(state, session, orderCell, order);
     },
   };
@@ -518,6 +610,12 @@ const stagedRows = <Key, Value>(
 /** The `write` a stage hands out: boxes, collections, and atoms. */
 const stageWriter = (state: StageState, session: Session, reader: Read): Write => {
   const open = (verb: string): void => {
+    const computing = state.root.computing;
+    if (computing !== undefined) {
+      throw new Error(
+        `pinna: ${computing.source.label ?? "a computed value"} cannot write while it computes`,
+      );
+    }
     if (!session.open) {
       throw keptError(verb);
     }
@@ -547,6 +645,9 @@ const stageWriter = (state: StageState, session: Session, reader: Read): Write =
       return;
     }
     cell.verify(value, current);
+    if (cell.source.equals(current, value)) {
+      return;
+    }
     setBox(state, session, cell as BoxCell<unknown>, value);
   };
   const writeBox = <Value>(box: Box<Value>, value: Value): undefined => {
@@ -566,12 +667,16 @@ const stageWriter = (state: StageState, session: Session, reader: Read): Write =
       options?: UpsertOptions,
     ): undefined => {
       const keyed = ownCollection("write.upsert", collection);
-      keyed.stagedUpsert(stagedRows(state, session, keyed), value, options, reader, writer);
+      undoOnThrow(state, session, () => {
+        keyed.stagedUpsert(stagedRows(state, session, keyed), value, options, reader, writer);
+      });
       return undefined;
     },
     remove: <Key, Value>(collection: Collection<Key, Value>, key: Key): undefined => {
       const keyed = ownCollection("write.remove", collection);
-      keyed.stagedRemove(stagedRows(state, session, keyed), key, reader, writer);
+      undoOnThrow(state, session, () => {
+        keyed.stagedRemove(stagedRows(state, session, keyed), key, reader, writer);
+      });
       return undefined;
     },
     replaceAll: <Key, Value>(
@@ -579,7 +684,9 @@ const stageWriter = (state: StageState, session: Session, reader: Read): Write =
       values: ReadonlyArray<Value>,
     ): undefined => {
       const keyed = ownCollection("write.replaceAll", collection);
-      keyed.stagedReplace(stagedRows(state, session, keyed), values, reader, writer);
+      undoOnThrow(state, session, () => {
+        keyed.stagedReplace(stagedRows(state, session, keyed), values, reader, writer);
+      });
       return undefined;
     },
     // An atom holds no value to stage: the replay reruns what observed it.
@@ -592,13 +699,25 @@ const stageWriter = (state: StageState, session: Session, reader: Read): Write =
   return writer;
 };
 
-/** Puts back what a failed session wrote to the overlay, the last first. */
-const undoSession = (state: StageState, session: Session): void => {
+/** Puts back the overlay writes after a savepoint, the last first. */
+const undoSession = (state: StageState, session: Session, savepoint = 0): void => {
   const undo = session.undo;
-  for (let index = undo.length - 1; index >= 0; index--) {
+  for (let index = undo.length - 1; index >= savepoint; index--) {
     (undo[index] as () => void)();
   }
+  undo.length = savepoint;
   changedOverlay(state);
+};
+
+/** A caught failure undoes the operation and its listeners, leaving earlier writes in place. */
+const undoOnThrow = <Result>(state: StageState, session: Session, run: () => Result): Result => {
+  const savepoint = session.undo.length;
+  try {
+    return run();
+  } catch (error) {
+    undoSession(state, session, savepoint);
+    throw error;
+  }
 };
 
 /**
@@ -606,7 +725,7 @@ const undoSession = (state: StageState, session: Session): void => {
  * `write`, `update`, watches, and new observables refused, and the stage's
  * `read` and `write` where a merge looks for them.
  */
-const asPlace = <Result>(state: StageState, place: Place, run: () => Result): Result => {
+const asPlace = <Result>(state: StageState, place: StagedPlace, run: () => Result): Result => {
   const realm = state.realm;
   const core = realm.core;
   const active = core.active;
@@ -639,7 +758,7 @@ const runRecipes = (state: StageState, recipes: ReadonlyArray<Recipe>): void => 
   const read = stageReader(state, session);
   const write = stageWriter(state, session, read);
   try {
-    asPlace(state, { read, write }, () => {
+    asPlace(state, { read, write, undoOnThrow: (run) => undoOnThrow(state, session, run) }, () => {
       for (const recipe of recipes) {
         const result: unknown = recipe(read, write);
         if (result !== undefined) {
@@ -731,7 +850,15 @@ export const stageRead = <Result>(stage: Stage, run: (read: Read) => Result): Re
   const session: Session = { open: true, writable: false, undo: [] };
   const read = stageReader(state, session);
   try {
-    return asPlace(state, { read, write: stageWriter(state, session, read) }, () => run(read));
+    return asPlace(
+      state,
+      {
+        read,
+        write: stageWriter(state, session, read),
+        undoOnThrow: (run) => undoOnThrow(state, session, run),
+      },
+      () => run(read),
+    );
   } finally {
     session.open = false;
   }
@@ -799,9 +926,11 @@ export const applyStage = (stage: Stage): void => {
   const journal = state.journal;
   const parent = state.parent;
   if (parent !== undefined) {
+    const priorReads = parent.reads === undefined ? undefined : new Map(parent.reads);
     try {
       runRecipes(parent, journal);
     } catch (error) {
+      parent.reads = priorReads;
       close(state, "dropped");
       throw error;
     }
@@ -868,7 +997,11 @@ export const dropStage = (stage: Stage): void => {
 };
 
 /** Where the stage is in its life: `"open"`, `"applied"`, or `"dropped"`. */
-export const stageStatus = (stage: Stage): StageStatus => (stage as StageState).status;
+export const stageStatus = (stage: Stage): StageStatus => {
+  const state = stage as StageState;
+  assertNotInRecipe(state.realm, "stageStatus");
+  return state.status;
+};
 
 /**
  * What the stage read and `applyStage` checks, by name, once per box or
@@ -890,6 +1023,7 @@ const readNames = (state: StageState): ReadonlyArray<string> => {
 /** The stage's name, realm, parent, status, and what it holds now. */
 export const inspectStage = (stage: Stage): StageInspection => {
   const state = stage as StageState;
+  assertNotInRecipe(state.realm, "inspectStage");
   const orders = new Set<BoxCell<unknown>>();
   for (const collection of state.rows.keys()) {
     orders.add(collection.orderCell as BoxCell<unknown>);

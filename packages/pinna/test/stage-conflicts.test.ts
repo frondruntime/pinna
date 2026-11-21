@@ -4,7 +4,9 @@ import {
   box,
   collection,
   computed,
+  dropStage,
   inspect,
+  inspectStage,
   openStage,
   StageConflictError,
   stageRead,
@@ -34,6 +36,137 @@ const conflictOf = (run: () => void): StageConflictError => {
 };
 
 describe("a stage that fails on conflicts", () => {
+  for (const location of ["root", "child", "ancestor"] as const) {
+    for (const access of ["read.row", "row", "rows", "keys"] as const) {
+      for (const changedBeforeRead of [false, true]) {
+        test(`copied collection provenance: ${location}, ${access}, realm changes ${changedBeforeRead ? "before" : "after"} read`, () => {
+          using realm = testRealm();
+          const $rows = collection<string, { id: string; value: number }>(realm, {
+            keyOf: (row) => row.id,
+            name: "rows",
+          });
+          update(realm, (_read, write) => {
+            write.replaceAll($rows, [
+              { id: "a", value: 1 },
+              { id: "b", value: 2 },
+            ]);
+          });
+          const root = openStage(realm, { conflicts: "fail" });
+          const stage = location === "root" ? root : openStage(root);
+          try {
+            stageUpdate(location === "ancestor" ? root : stage, (_read, write) => {
+              write.upsert($rows, { id: "a", value: 3 });
+            });
+            const changeRealm = () =>
+              update(realm, (_read, write) => {
+                write.upsert($rows, { id: "b", value: 20 });
+                write.upsert($rows, { id: "z", value: 30 });
+              });
+            if (changedBeforeRead) changeRealm();
+            if (location === "ancestor") {
+              // This copy inherits the ancestor's versions, even after the realm moved.
+              stageUpdate(stage, (_read, write) => {
+                write.upsert($rows, { id: "c", value: 4 });
+              });
+            }
+            stageRead(stage, (read) => {
+              if (access === "read.row") expect(read.row($rows, "b")?.value).toBe(2);
+              if (access === "row") expect(read($rows.row("b"))?.value).toBe(2);
+              if (access === "rows")
+                expect(read($rows.rows).find((row) => row.id === "b")?.value).toBe(2);
+              if (access === "keys") expect(read($rows.keys)).not.toContain("z");
+            });
+            if (!changedBeforeRead) changeRealm();
+            if (stage !== root) applyStage(stage);
+            expect(conflictOf(() => applyStage(root)).changed).toEqual(["rows"]);
+          } finally {
+            dropStage(root);
+          }
+        });
+      }
+    }
+  }
+
+  for (const child of [false, true]) {
+    test(`a copied collection's blind writes and written row reads do not conflict (${child ? "child" : "root"})`, () => {
+      using realm = testRealm();
+      const $rows = collection<string, { id: string; value: number }>(realm, {
+        keyOf: (row) => row.id,
+      });
+      update(realm, (_read, write) => {
+        write.replaceAll($rows, [
+          { id: "a", value: 1 },
+          { id: "b", value: 2 },
+        ]);
+      });
+      const root = openStage(realm, { conflicts: "fail" });
+      const stage = child ? openStage(root) : root;
+      try {
+        stageUpdate(root, (_read, write) => {
+          write.upsert($rows, { id: "a", value: 3 });
+        });
+        stageUpdate(stage, (_read, write) => {
+          write.remove($rows, "b");
+        });
+        expect(stageRead(stage, (read) => read.row($rows, "a")?.value)).toBe(3);
+        expect(stageRead(stage, (read) => read($rows.row("b")))).toBeUndefined();
+        expect(inspectStage(stage).read).toEqual([]);
+        expect(inspectStage(root).read).toEqual([]);
+        update(realm, (_read, write) => {
+          write.upsert($rows, { id: "a", value: 10 });
+          write.upsert($rows, { id: "b", value: 20 });
+        });
+        if (child) applyStage(stage);
+        applyStage(root);
+        expect(untracked(realm, (read) => read($rows.rows))).toEqual([{ id: "a", value: 3 }]);
+      } finally {
+        dropStage(root);
+      }
+    });
+  }
+
+  test("replaceAll clears copied provenance and a failed recipe restores it", () => {
+    using realm = testRealm();
+    const $rows = collection<number, number>(realm, { keyOf: (row) => row, name: "rows" });
+    update(realm, (_read, write) => {
+      write.replaceAll($rows, [1, 2]);
+    });
+    const stage = openStage(realm, { conflicts: "fail" });
+    try {
+      stageUpdate(stage, (_read, write) => {
+        write.upsert($rows, 3);
+      });
+      expect(() =>
+        stageUpdate(stage, (_read, write) => {
+          write.replaceAll($rows, [4]);
+          throw new Error("refused");
+        }),
+      ).toThrow("refused");
+      update(realm, (_read, write) => {
+        write.remove($rows, 2);
+      });
+      expect(stageRead(stage, (read) => read.row($rows, 2))).toBe(2);
+      expect(conflictOf(() => applyStage(stage)).changed).toEqual(["rows"]);
+    } finally {
+      dropStage(stage);
+    }
+    const blind = openStage(realm, { conflicts: "fail" });
+    try {
+      stageUpdate(blind, (_read, write) => {
+        write.upsert($rows, 3);
+        write.replaceAll($rows, [4]);
+      });
+      stageRead(blind, (read) => [read($rows.keys), read($rows.rows), read.row($rows, 1)]);
+      expect(inspectStage(blind).read).toEqual([]);
+      update(realm, (_read, write) => {
+        write.upsert($rows, 5);
+      });
+      applyStage(blind);
+    } finally {
+      dropStage(blind);
+    }
+  });
+
   test("a box it read that changed since: applyStage throws, nothing lands, the stage is dropped", () => {
     using realm = testRealm();
     const $price = box(realm, 10, { name: "price" });

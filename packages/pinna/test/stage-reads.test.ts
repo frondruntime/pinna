@@ -7,13 +7,16 @@ import {
   computed,
   computedFunction,
   dropStage,
+  inspectStage,
   onObserved,
   openStage,
   stageRead,
   stageUpdate,
   untracked,
   update,
+  type Write,
 } from "../src/index.ts";
+import { makeBox } from "../src/internal/index.ts";
 import { record, testRealm } from "../src/testing/index.ts";
 
 /**
@@ -21,6 +24,98 @@ import { record, testRealm } from "../src/testing/index.ts";
  * computed value evaluated over the stage, and a collection's keys, rows,
  * and row (`docs/api.md`, ruling 53).
  */
+
+describe("box equality through a stage", () => {
+  for (const heldBy of ["realm", "stage", "ancestor"] as const) {
+    for (const modify of [false, true]) {
+      test(`an equal ${modify ? "modify" : "write"} keeps the object held by the ${heldBy}`, () => {
+        using realm = testRealm();
+        const initial = { id: 1, label: "initial" };
+        const held = heldBy === "realm" ? initial : { id: 2, label: "held" };
+        const $value = box(realm, initial, { equals: (left, right) => left.id === right.id });
+        const $decision = box(realm, "");
+        let runs = 0;
+        const $label = computed(realm, (read) => {
+          runs++;
+          return read($value).label;
+        });
+        const root = openStage(realm);
+        const stage = heldBy === "ancestor" ? openStage(root) : root;
+        try {
+          if (heldBy !== "realm") {
+            stageUpdate(heldBy === "ancestor" ? root : stage, (_read, write) => {
+              write($value, held);
+            });
+          }
+          expect(stageRead(stage, (read) => read($label))).toBe(held.label);
+          stageUpdate(stage, (_read, write) => {
+            if (modify) {
+              write.modify($value, (draft) => {
+                draft.label = "equal replacement";
+              });
+            } else {
+              write($value, { id: held.id, label: "equal replacement" });
+            }
+          });
+          expect(stageRead(stage, (read) => read($value))).toBe(held);
+          expect(stageRead(stage, (read) => read($label))).toBe(held.label);
+          expect(runs).toBe(1);
+          if (heldBy !== "stage") expect(inspectStage(stage).boxes).toEqual([]);
+          const decision = stageRead(stage, (read) => read($label));
+          stageUpdate(stage, (_read, write) => {
+            write($decision, decision);
+          });
+          if (stage !== root) applyStage(stage);
+          applyStage(root);
+          expect(untracked(realm, (read) => [read($value), read($decision)])).toEqual([
+            held,
+            held.label,
+          ]);
+        } finally {
+          dropStage(root);
+        }
+      });
+    }
+  }
+
+  test("a staged write skips identical values and checks before comparing equal values", () => {
+    using realm = testRealm();
+    const calls: Array<string> = [];
+    const initial = { id: 1, valid: true };
+    const $value = makeBox(
+      realm,
+      (value) => {
+        calls.push("check");
+        return (value as typeof initial).valid
+          ? undefined
+          : { message: "invalid", cause: undefined };
+      },
+      (left, right) => {
+        calls.push("equals");
+        return left.id === right.id;
+      },
+      initial,
+      undefined,
+    );
+    calls.length = 0;
+    const stage = openStage(realm);
+    try {
+      stageUpdate(stage, (_read, write) => {
+        write($value, initial);
+        expect(calls).toEqual([]);
+        expect(() => write($value, { id: 1, valid: false })).toThrow("invalid");
+        expect(calls).toEqual(["check"]);
+        calls.length = 0;
+        write($value, { id: 1, valid: true });
+        expect(calls).toEqual(["check", "equals"]);
+      });
+      expect(stageRead(stage, (read) => read($value))).toBe(initial);
+      expect(inspectStage(stage).boxes).toEqual([]);
+    } finally {
+      dropStage(stage);
+    }
+  });
+});
 
 interface Item {
   readonly id: string;
@@ -31,6 +126,102 @@ const items = (realm: Parameters<typeof collection>[0]) =>
   collection<string, Item>(realm, { keyOf: (item) => item.id });
 
 describe("a computed value through a stage", () => {
+  for (const verb of ["write", "modify", "upsert", "remove", "replaceAll", "changed"] as const) {
+    for (const parentWriter of [false, true]) {
+      test(`a computed value refuses captured ${verb} (${parentWriter ? "parent writer" : "own writer"})`, () => {
+        using realm = testRealm();
+        const $value = box(realm, { count: 0 });
+        const $rows = collection<number, number>(realm, { keyOf: (row) => row });
+        const $atom = atom(realm);
+        let captured: Write;
+        const $bad = computed(
+          realm,
+          (read) => {
+            read($value);
+            if (verb === "write") captured($value, { count: 1 });
+            if (verb === "modify")
+              captured.modify($value, (draft) => {
+                draft.count++;
+              });
+            if (verb === "upsert") captured.upsert($rows, 1);
+            if (verb === "remove") captured.remove($rows, 1);
+            if (verb === "replaceAll") captured.replaceAll($rows, [1]);
+            if (verb === "changed") captured.changed($atom);
+            return read($value).count;
+          },
+          parentWriter ? { name: "bad" } : undefined,
+        );
+        const root = openStage(realm);
+        const stage = parentWriter ? openStage(root) : root;
+        try {
+          if (parentWriter)
+            stageUpdate(root, (_read, write) => {
+              captured = write;
+            });
+          const name = parentWriter ? 'the computed value "bad"' : "a computed value";
+          expect(() =>
+            stageUpdate(stage, (read, write) => {
+              if (!parentWriter) captured = write;
+              read($bad);
+            }),
+          ).toThrow(`pinna: ${name} cannot write while it computes`);
+          expect(stageRead(root, (read) => [read($value), read($rows.keys)])).toEqual([
+            { count: 0 },
+            [],
+          ]);
+          stageUpdate(stage, (_read, write) => {
+            write($value, { count: 2 });
+          });
+          expect(stageRead(stage, (read) => read($value).count)).toBe(2);
+        } finally {
+          dropStage(root);
+        }
+      });
+    }
+  }
+
+  for (const changed of ["stage", "ancestor", "realm"] as const) {
+    test(`a computed failure keeps its error until the ${changed} changes`, () => {
+      using realm = testRealm();
+      const $gate = box(realm, false);
+      let runs = 0;
+      const $failing = computed(realm, (read) => {
+        runs++;
+        if (!read($gate)) throw new Error(`failure ${runs}`);
+        return 42;
+      });
+      const root = openStage(realm);
+      const stage = changed === "ancestor" ? openStage(root) : root;
+      const failure = () => {
+        try {
+          stageRead(stage, (read) => read($failing));
+        } catch (error) {
+          return error;
+        }
+        throw new Error("the computed value did not throw");
+      };
+      try {
+        const first = failure();
+        expect(first).toBeInstanceOf(Error);
+        expect(failure()).toBe(first);
+        expect(runs).toBe(1);
+        if (changed === "realm") {
+          update(realm, (_read, write) => {
+            write($gate, true);
+          });
+        } else {
+          stageUpdate(changed === "ancestor" ? root : stage, (_read, write) => {
+            write($gate, true);
+          });
+        }
+        expect(stageRead(stage, (read) => read($failing))).toBe(42);
+        expect(runs).toBe(2);
+      } finally {
+        dropStage(root);
+      }
+    });
+  }
+
   test("is evaluated over the stage's values, and the realm's computed value does not move", () => {
     using realm = testRealm();
     const $price = box(realm, 10);
@@ -136,6 +327,42 @@ describe("a computed value through a stage", () => {
 });
 
 describe("a collection through a stage", () => {
+  for (const changed of ["stage", "ancestor", "realm"] as const) {
+    test(`rows keep their cached array until the ${changed} changes`, () => {
+      using realm = testRealm();
+      const $rows = collection<number, number>(realm, { keyOf: (row) => row });
+      update(realm, (_read, write) => {
+        write.replaceAll($rows, [1, 2]);
+      });
+      const root = openStage(realm);
+      const stage = changed === "ancestor" ? openStage(root) : root;
+      try {
+        if (changed !== "realm") {
+          stageUpdate(changed === "ancestor" ? root : stage, (_read, write) => {
+            write.replaceAll($rows, [1, 2, 3]);
+          });
+        }
+        const first = stageRead(stage, (read) => read($rows.rows));
+        expect(stageRead(stage, (read) => read($rows.rows))).toBe(first);
+        if (changed === "realm") {
+          update(realm, (_read, write) => {
+            write.upsert($rows, 4);
+          });
+        } else {
+          stageUpdate(changed === "ancestor" ? root : stage, (_read, write) => {
+            write.upsert($rows, 4);
+          });
+        }
+        const next = stageRead(stage, (read) => read($rows.rows));
+        expect(next).not.toBe(first);
+        expect(next).toEqual(changed === "realm" ? [4, 1, 2] : [4, 1, 2, 3]);
+        expect(stageRead(stage, (read) => read($rows.rows))).toBe(next);
+      } finally {
+        dropStage(root);
+      }
+    });
+  }
+
   test("keys, rows, row, and read.row read the stage's rows; the realm keeps its own", () => {
     using realm = testRealm();
     const $items = items(realm);

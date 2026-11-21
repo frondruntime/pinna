@@ -10,6 +10,7 @@ import {
   inspectStage,
   onRowChange,
   openStage,
+  type Read,
   stageRead,
   stageUpdate,
   untracked,
@@ -36,6 +37,81 @@ const items = (realm: Parameters<typeof collection>[0]) =>
   });
 
 describe("collection writes through a stage", () => {
+  for (const verb of ["upsert", "remove", "replaceAll"] as const) {
+    for (const copied of [false, true]) {
+      test(`a caught ${verb} listener failure restores rows, listener writes, and caches (${copied ? "copied" : "first write"})`, () => {
+        using realm = testRealm();
+        const $items = items(realm);
+        const $side = collection<number, number>(realm, { keyOf: (value) => value });
+        const $count = box(realm, 0);
+        const $progress = box(realm, 0);
+        const $summary = computed(realm, (read) => [read($items.keys), read($count)]);
+        update(realm, (_read, write) => {
+          write.upsert($items, { id: 1, price: 1 });
+        });
+        using _ = held(
+          onRowChange($items, (change, read, write) => {
+            write($count, read($count) + 1);
+            if ((change.key === 1 && change.after === undefined) || change.key === 2) {
+              write.upsert($side, 2);
+              read($summary);
+              throw new Error("refused row");
+            }
+          }),
+        );
+        const stage = openStage(realm);
+        const snapshot = (read: Read) => [
+          read($items.keys),
+          read($items.rows),
+          read($count),
+          read($side.keys),
+          read($progress),
+          read($summary),
+        ];
+        try {
+          if (copied) {
+            stageUpdate(stage, (_read, write) => {
+              write.upsert($items, { id: 1, price: 10 });
+            });
+          }
+          stageUpdate(stage, (read, write) => {
+            write($progress, 1);
+            expect(() => {
+              if (verb === "upsert") write.upsert($items, { id: 2, price: 2 });
+              if (verb === "remove") write.remove($items, 1);
+              if (verb === "replaceAll") write.replaceAll($items, [{ id: 2, price: 2 }]);
+            }).toThrow("refused row");
+            expect(snapshot(read)).toEqual([
+              [1],
+              [{ id: 1, price: copied ? 10 : 1 }],
+              copied ? 2 : 1,
+              [],
+              1,
+              [[1], copied ? 2 : 1],
+            ]);
+            write.upsert($items, { id: 3, price: 3 });
+          });
+          const expected = [
+            [3, 1],
+            [
+              { id: 3, price: 3 },
+              { id: 1, price: copied ? 10 : 1 },
+            ],
+            copied ? 3 : 2,
+            [],
+            1,
+            [[3, 1], copied ? 3 : 2],
+          ];
+          expect(stageRead(stage, snapshot)).toEqual(expected);
+          applyStage(stage);
+          expect(untracked(realm, snapshot)).toEqual(expected);
+        } finally {
+          dropStage(stage);
+        }
+      });
+    }
+  }
+
   test("a refetch of 1,000 rows through replaceAll lands in one update, and the stage reads its own rows", () => {
     using realm = testRealm();
     const $items = items(realm);
