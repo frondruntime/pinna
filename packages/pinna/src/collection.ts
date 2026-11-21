@@ -18,6 +18,7 @@
 import { type Equals, forgetValue, peekCell, readCell } from "@frondruntime/pinna-core";
 import {
   acceptAll,
+  assertNotInRecipe,
   assertUpdateCanRun,
   BoxCell,
   type Check,
@@ -31,6 +32,8 @@ import {
   type ObservableRealm,
   type Read,
   type Realm,
+  recipeMakeError,
+  stageMarker,
   type UpsertOptions,
   update,
   verifyValue,
@@ -98,9 +101,47 @@ export const repeatedKeyMessage = (key: unknown): string =>
 /**
  * Plans the merge of `fresh` into `held` and writes nothing: `false` when
  * `fresh` replaces `held`, otherwise `held` stays, and the answer is the
- * writes that bring it to `fresh`, or `undefined` when there are none.
+ * writes that bring it to `fresh`, or `undefined` when there are none. It
+ * reads `held`'s boxes through `read`, and its writes go through `write`: an
+ * update's, or a stage recipe's, so a refetch merges through a stage too.
  */
-export type Merge<Value> = (held: Value, fresh: Value) => (() => void) | undefined | false;
+export type Merge<Value> = (
+  held: Value,
+  fresh: Value,
+  read: Read,
+  write: Write,
+) => (() => void) | undefined | false;
+
+/**
+ * What a computed value of a collection reads, for a stage: its own values
+ * read the collection's internals, not the `read` they are handed, so a
+ * stage reads the rows it holds in their place. `key` is `undefined` for
+ * `rows`.
+ */
+export interface CollectionRead {
+  readonly collection: KeyedCollection<unknown, unknown>;
+  readonly all: boolean;
+  readonly key: unknown;
+}
+
+/** The collection behind each `rows` and `row(key)` computed value, set once when it is made. */
+export const collectionReads = new WeakMap<object, CollectionRead>();
+
+/** The collection behind each key-order box, which `keys` is: a stage reports the collection, not the box. */
+export const collectionOfOrder = new WeakMap<object, KeyedCollection<unknown, unknown>>();
+
+/**
+ * The rows a stage holds for one collection, and how it changes them: the
+ * stage keeps them in its overlay, and puts them back when a recipe throws.
+ */
+export interface StagedRows<Key, Value> {
+  readonly rows: ReadonlyMap<Key, Value>;
+  readonly order: ReadonlyArray<Key>;
+  setRow(key: Key, row: Value): void;
+  deleteRow(key: Key): void;
+  setOrder(order: ReadonlyArray<Key>): void;
+  setAll(rows: Map<Key, Value>, order: ReadonlyArray<Key>): void;
+}
 
 /**
  * One row as one write left it. `before` is `undefined` when the write added
@@ -192,6 +233,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     values: ReadonlyArray<Value>,
     merge?: Merge<Value>,
   ) {
+    if (realm.core.deriving === stageMarker) {
+      throw recipeMakeError("a collection");
+    }
     this.check = check;
     this.merge = merge;
     // Incoming rows reject undefined before reaching a cell. Only removal
@@ -206,9 +250,14 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     this.equals =
       merge === undefined
         ? equals
-        : (previous, next) =>
-            Object.is(previous, next) ||
-            (merge(previous, previous) === false && equals(previous, next));
+        : (previous, next) => {
+            if (Object.is(previous, next)) {
+              return true;
+            }
+            // Planned where the write runs, an update or a stage recipe; it writes nothing.
+            const place = realm.place();
+            return merge(previous, previous, place.read, place.write) === false && equals(previous, next);
+          };
     this.cellEquals = (previous, next) =>
       previous === undefined || next === undefined
         ? previous === next
@@ -232,6 +281,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     this.order = new BoxCell<ReadonlyArray<Key>>(realm, acceptAll, keys, sameElements);
     this.changes = new BoxCell<number>(realm, acceptAll, 0, Object.is);
     this.keys = this.order;
+    collectionOfOrder.set(this.order, this as KeyedCollection<unknown, unknown>);
     this.lookup = computedFunction(realm, (_read, key: Key) => this.read(key));
   }
 
@@ -297,16 +347,42 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     return this.held.get(key);
   }
 
+  /** The rows held, for a stage that starts from them. Never written through. */
+  heldRows(): ReadonlyMap<Key, Value> {
+    return this.held;
+  }
+
+  /** The box of the key order: a stage holds its staged order there, and checks its version. */
+  get orderCell(): BoxCell<ReadonlyArray<Key>> {
+    return this.order;
+  }
+
+  /** The box every change to the rows writes: a stage checks its version for a read of the rows. */
+  get changesCell(): BoxCell<number> {
+    return this.changes;
+  }
+
   row(key: Key): Computed<Value | undefined> {
     if (!this.held.has(key)) {
-      return this.lookup(key);
+      const entry = this.lookup(key);
+      // Missing keys alone pay the lookup: a present key's computed is tagged once, when made.
+      if (!collectionReads.has(entry)) {
+        collectionReads.set(entry, this.tag(false, key));
+      }
+      return entry;
     }
     let row = this.rowsByKey.get(key);
     if (row === undefined) {
+      // Not `computed`, which a stage recipe refuses: reading a row there makes this one.
       row = new ComputedValue(this.realm, () => this.read(key), Object.is);
+      collectionReads.set(row, this.tag(false, key));
       this.rowsByKey.set(key, row);
     }
     return row;
+  }
+
+  private tag(all: boolean, key: unknown): CollectionRead {
+    return { collection: this as KeyedCollection<unknown, unknown>, all, key };
   }
 
   /**
@@ -326,6 +402,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
         },
         sameElements,
       );
+      collectionReads.set(this.allRows, this.tag(true, undefined));
     }
     return this.allRows;
   }
@@ -541,15 +618,20 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
 
   /** Runs every listener for one row, unless the write left the row as it was. */
   private report(key: Key, before: Value | undefined, after: Value | undefined): void {
-    this.reportTo(this.listeners, key, before, after);
+    this.reportTo(this.listeners, key, before, after, this.realm.read, this.realm.write);
   }
 
-  /** Runs `listeners` for one row, unless the write left the row as it was. */
+  /**
+   * Runs `listeners` for one row, unless the write left the row as it was,
+   * with `read` and `write`: the update's, or a stage recipe's.
+   */
   private reportTo(
     listeners: ReadonlyArray<RowListener<Key, Value>> | undefined,
     key: Key,
     before: Value | undefined,
     after: Value | undefined,
+    read: Read,
+    write: Write,
   ): void {
     if (Object.is(before, after)) {
       return;
@@ -561,7 +643,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     try {
       const change: RowChange<Key, Value> = { key, before, after };
       for (const listener of listeners) {
-        this.call(listener, change);
+        this.call(listener, change, read, write);
       }
     } finally {
       this.reporting = false;
@@ -574,16 +656,25 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     this.reporting = true;
     try {
       for (const key of peekCell(this.order.source)) {
-        this.call(listener, { key, before: undefined, after: held.get(key) as Value });
+        this.call(
+          listener,
+          { key, before: undefined, after: held.get(key) as Value },
+          this.realm.read,
+          this.realm.write,
+        );
       }
     } finally {
       this.reporting = false;
     }
   }
 
-  private call(listener: RowListener<Key, Value>, change: RowChange<Key, Value>): void {
-    const realm = this.realm;
-    const result: unknown = listener(change, realm.read, realm.write);
+  private call(
+    listener: RowListener<Key, Value>,
+    change: RowChange<Key, Value>,
+    read: Read,
+    write: Write,
+  ): void {
+    const result: unknown = listener(change, read, write);
     if (result !== undefined) {
       if (typeof (result as { readonly then?: unknown }).then === "function") {
         (result as PromiseLike<unknown>).then(undefined, ignore);
@@ -601,14 +692,16 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     heldOrder: ReadonlyArray<Key>,
     held: ReadonlyMap<Key, Value>,
     next: ReadonlyMap<Key, Value>,
+    read: Read = this.realm.read,
+    write: Write = this.realm.write,
   ): void {
     const listeners = this.listeners;
     for (const key of heldOrder) {
-      this.reportTo(listeners, key, held.get(key), next.get(key));
+      this.reportTo(listeners, key, held.get(key), next.get(key), read, write);
     }
     for (const [key, after] of next) {
       if (!held.has(key)) {
-        this.reportTo(listeners, key, undefined, after);
+        this.reportTo(listeners, key, undefined, after, read, write);
       }
     }
   }
@@ -646,7 +739,8 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     if (Object.is(previous, value)) {
       return false;
     }
-    const writes = merge(previous, value);
+    const place = this.realm.place();
+    const writes = merge(previous, value, place.read, place.write);
     if (writes === false) {
       return false;
     }
@@ -659,6 +753,128 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       // even when the caller catches the error.
       this.realm.undoOnThrow(writes);
     }
+    return true;
+  }
+
+  /**
+   * `write.upsert` through a stage: the same check, equality, merge, and
+   * reports as `upsertRow`, over the rows the stage holds, with the stage
+   * recipe's `read` and `write`.
+   */
+  stagedUpsert(
+    target: StagedRows<Key, Value>,
+    value: Value,
+    options: UpsertOptions | undefined,
+    read: Read,
+    write: Write,
+  ): void {
+    this.assertNotReporting("write.upsert");
+    if (value === undefined) {
+      throw new Error("pinna: a collection row cannot be undefined");
+    }
+    const key = this.keyOf(value);
+    const present = target.rows.has(key);
+    const previous = target.rows.get(key);
+    if (present && this.mergesStaged(previous as Value, value, read, write)) {
+      return;
+    }
+    const kept = this.landing(value, previous, present);
+    if (present && Object.is(kept, previous)) {
+      return;
+    }
+    target.setRow(key, kept);
+    if (!present) {
+      const order = target.order.slice();
+      if (options?.at === "end") {
+        order.push(key);
+      } else {
+        order.unshift(key);
+      }
+      target.setOrder(order);
+    }
+    this.reportTo(this.listeners, key, previous, kept, read, write);
+  }
+
+  /** `write.remove` through a stage. */
+  stagedRemove(target: StagedRows<Key, Value>, key: Key, read: Read, write: Write): void {
+    this.assertNotReporting("write.remove");
+    if (!target.rows.has(key)) {
+      return;
+    }
+    const previous = target.rows.get(key);
+    target.deleteRow(key);
+    const index = indexOfKey(target.order, key);
+    if (index !== -1) {
+      const order = target.order.slice();
+      order.splice(index, 1);
+      target.setOrder(order);
+    }
+    this.reportTo(this.listeners, key, previous, undefined, read, write);
+  }
+
+  /** `write.replaceAll` through a stage. */
+  stagedReplace(
+    target: StagedRows<Key, Value>,
+    values: ReadonlyArray<Value>,
+    read: Read,
+    write: Write,
+  ): void {
+    this.assertNotReporting("write.replaceAll");
+    const keyOf = this.keyOf;
+    const count = values.length;
+    const keys = new Array<Key>(count);
+    const next = new Map<Key, Value>();
+    for (let index = 0; index < count; index++) {
+      const value = values[index] as Value;
+      if (value === undefined) {
+        throw new Error("pinna: a collection row cannot be undefined");
+      }
+      const key = keyOf(value);
+      if (next.has(key)) {
+        throw new Error(repeatedKeyMessage(key));
+      }
+      next.set(key, value);
+      keys[index] = key;
+    }
+    const held = target.rows;
+    const heldOrder = target.order;
+    let changed = held.size !== count;
+    for (let index = 0; index < count; index++) {
+      const key = keys[index] as Key;
+      const value = values[index] as Value;
+      const present = held.has(key);
+      const previous = held.get(key);
+      if (present && this.mergesStaged(previous as Value, value, read, write)) {
+        next.set(key, previous as Value);
+        continue;
+      }
+      if (present && Object.is(value, previous)) {
+        continue;
+      }
+      const kept = this.landing(value, previous, present);
+      next.set(key, kept);
+      changed ||= !present || !Object.is(kept, previous);
+    }
+    target.setAll(next, keys);
+    if (changed && this.listeners !== undefined) {
+      this.reportReplaced(heldOrder, held, next, read, write);
+    }
+  }
+
+  /** `merges` over a stage's row: the merge's writes go to the stage. */
+  private mergesStaged(previous: Value, value: Value, read: Read, write: Write): boolean {
+    const merge = this.merge;
+    if (merge === undefined || Object.is(previous, value)) {
+      return false;
+    }
+    const writes = merge(previous, value, read, write);
+    if (writes === false) {
+      return false;
+    }
+    if (this.check !== acceptAll) {
+      verifyValue(this.realm, this.check, value, previous);
+    }
+    writes?.();
     return true;
   }
 
@@ -831,6 +1047,7 @@ export const onRowChange = <Key, Value>(
   const keyed = collection as KeyedCollection<Key, Value>;
   const realm = keyed.realm;
   assertUpdateCanRun(realm, "onRowChange");
+  assertNotInRecipe(realm, "onRowChange");
   let stop: () => void = () => undefined;
   // A recipe failure undoes replay writes; a settle failure keeps them.
   // Both remove the listener, since the caller receives no stop function.

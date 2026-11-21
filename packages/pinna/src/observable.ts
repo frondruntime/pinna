@@ -216,7 +216,7 @@ export interface Inspection {
  */
 const names = new WeakMap<Source, string>();
 
-const nameOf = (source: Source): string => names.get(source) ?? "<anonymous>";
+export const nameOf = (source: Source): string => names.get(source) ?? "<anonymous>";
 
 /** Why a named computed value runs. An atom nothing observes counts as changed on every check. */
 const explain = (cause: Source | null): string => {
@@ -229,13 +229,45 @@ const explain = (cause: Source | null): string => {
   return `${nameOf(cause)} changed`;
 };
 
+/**
+ * Stands in the core's `deriving` slot while a stage's recipe or read
+ * function runs. The core already refuses a write, a watch, and an observe
+ * while `deriving` is set, so a recipe cannot write the realm around its
+ * stage, and `update` and `read` pay nothing for the check. Only `label` is
+ * ever read from it.
+ */
+export const stageMarker = { label: "a stage recipe" } as unknown as NonNullable<
+  CoreGraph["deriving"]
+>;
+
+/** Thrown by a realm's own `read` inside a stage recipe, where it would skip the stage's values. */
+const recipeReadError = (verb: string): Error =>
+  new Error(
+    `pinna: ${verb} of the realm runs inside a stage recipe, where it would skip the stage's values; read through the recipe's own read`,
+  );
+
+/** Thrown by what makes an observable inside a stage recipe, which runs again when the stage is applied. */
+export const recipeMakeError = (what: string): Error =>
+  new Error(
+    `pinna: ${what} is made inside a stage recipe, which runs again when the stage is applied, so it would be made twice; make it outside the recipe and close over it`,
+  );
+
+/** Throws when a stage recipe runs in `realm`: for a call whose effect a replay would repeat. */
+export const assertNotInRecipe = (realm: ObservableRealm, call: string): void => {
+  if (realm.core.deriving === stageMarker) {
+    throw new Error(
+      `pinna: ${call} runs inside a stage recipe, which runs again when the stage is applied; call it outside the recipe`,
+    );
+  }
+};
+
 /** Thrown by `read.row` outside every place of its realm. */
 const readRowError = (): Error =>
   new Error(
     "pinna: read.row($collection, key) runs outside a place. In a handler, use untracked; elsewhere, read inside computed, computedFunction, watch, autorun, or update of its own realm",
   );
 
-const checkName = (name: string | undefined): void => {
+export const checkName = (name: string | undefined): void => {
   if (name === "") {
     throw new Error("pinna: a name is a non-empty string");
   }
@@ -248,7 +280,10 @@ export const describeSource = (source: Source): string => {
 };
 
 /** Thrown by a read outside every place of its realm; names the observable when it has a name. */
-const readError = (source: Source): Error => {
+const readError = (source: Source, owner: ObservableRealm): Error => {
+  if (owner.core.deriving === stageMarker) {
+    return recipeReadError(`read(${describeSource(source)})`);
+  }
   const name = names.get(source);
   const what = name === undefined ? "$observable" : `"${name}"`;
   return new Error(
@@ -900,6 +935,23 @@ export class ObservableRealm implements Realm {
    * the stop to hand out.
    */
   running: ((label: string, stop: () => void) => () => void) | undefined = undefined;
+  /**
+   * The `read` and `write` of the stage recipe or read function running now,
+   * or `undefined`. Only slow paths ask it: a merge into a held model and
+   * `reconcileSchema`'s writes, which have no `read` or `write` of their own.
+   */
+  stagedPlace: Place | undefined = undefined;
+  /** What a merge reads and writes outside a stage: the held values, and the update's `write`. */
+  private realmPlace: Place | undefined = undefined;
+
+  /** Where a merge reads and writes now: the running stage recipe, or the realm. */
+  place(): Place {
+    if (this.stagedPlace !== undefined) {
+      return this.stagedPlace;
+    }
+    this.realmPlace ??= { read: peekReader(), write: this.write };
+    return this.realmPlace;
+  }
 
   /** The realm's verbs, made once: each throws for an observable of another realm. */
   readonly read: Read;
@@ -929,7 +981,11 @@ export class ObservableRealm implements Realm {
     const core = this.core;
     // Read inline: a write pays no call to ask.
     if (core.deriving !== undefined) {
-      throw core.derivingWriteError();
+      throw core.deriving === stageMarker
+        ? new Error(
+            "pinna: a stage recipe writes the realm, through update or a write kept from one; write through the recipe's own write, which the stage holds until applyStage",
+          )
+        : core.derivingWriteError();
     }
     if (this.updateDepth === 0) {
       throw new Error("pinna: write inside update");
@@ -1143,8 +1199,13 @@ export const computed = <Value>(
   realm: Realm,
   compute: (read: Read) => Value,
   options?: Options<Value>,
-): Computed<Value> =>
-  new ComputedValue(realm as ObservableRealm, compute, options?.equals ?? Object.is, options?.name);
+): Computed<Value> => {
+  const owner = realm as ObservableRealm;
+  if (owner.core.deriving === stageMarker) {
+    throw recipeMakeError("a computed value");
+  }
+  return new ComputedValue(owner, compute, options?.equals ?? Object.is, options?.name);
+};
 
 /**
  * A computed value per argument tuple. Arguments are compared by identity,
@@ -1158,6 +1219,9 @@ export const computedFunction = <Args extends ReadonlyArray<unknown>, Value>(
   options?: Options<Value>,
 ): ((...args: Args) => Computed<Value>) => {
   const owner = realm as ObservableRealm;
+  if (owner.core.deriving === stageMarker) {
+    throw recipeMakeError("a computed function");
+  }
   const equals = options?.equals ?? Object.is;
   const name = options?.name;
   checkName(name);
@@ -1195,7 +1259,13 @@ export const computedFunction = <Args extends ReadonlyArray<unknown>, Value>(
  * An atom for state kept outside Pinna. Pair it with `onObserved` to listen
  * to that state only while something observes the atom.
  */
-export const atom = (realm: Realm): Atom => new AtomCell(realm as ObservableRealm);
+export const atom = (realm: Realm): Atom => {
+  const owner = realm as ObservableRealm;
+  if (owner.core.deriving === stageMarker) {
+    throw recipeMakeError("an atom");
+  }
+  return new AtomCell(owner);
+};
 
 /**
  * Why `update`, or `name` that runs one, refuses to run where reads are
@@ -1231,10 +1301,7 @@ export const assertUpdateCanRun = (realm: ObservableRealm, name: string): void =
  * subscribe the autorun, and the body tracks again once it ends. A function
  * of its own, so `update` keeps no closure or second scope.
  */
-const updateInAutorun = (
-  owner: ObservableRealm,
-  recipe: (read: Read, write: Write) => undefined,
-): void => {
+const updateInAutorun = (owner: ObservableRealm, recipe: Recipe): void => {
   const core = owner.core;
   const active = core.active;
   core.active = undefined;
@@ -1250,7 +1317,7 @@ const updateInAutorun = (
  * watchers see its end state once. If `recipe` throws, every box it wrote
  * gets its old value back and the error is rethrown.
  */
-export const update = (realm: Realm, recipe: (read: Read, write: Write) => undefined): void => {
+export const update = (realm: Realm, recipe: Recipe): void => {
   const owner = realm as ObservableRealm;
   // The batch is opened and closed by hand: a closure here would cost
   // every update its scope on Hermes.
@@ -1311,6 +1378,9 @@ export const update = (realm: Realm, recipe: (read: Read, write: Write) => undef
 /** Reads observables without tracking them: for event handlers and effects. */
 export const untracked = <Result>(realm: Realm, run: (read: Read) => Result): Result => {
   const owner = realm as ObservableRealm;
+  if (owner.core.deriving === stageMarker) {
+    throw recipeReadError("untracked");
+  }
   owner.openDepth++;
   try {
     return owner.core.untracked(run);
@@ -1437,8 +1507,9 @@ export const onObserved = (
   observable: Box<unknown> | Computed<unknown> | Atom,
   start: () => (() => void) | undefined,
 ): (() => void) => {
-  const node = sourceNode("onObserved", observable);
-  return node.graph.onObserved(node, start);
+  const cell = madeByPinna("onObserved", observable);
+  assertNotInRecipe(cell.realm, "onObserved");
+  return cell.source.graph.onObserved(cell.source, start);
 };
 
 /**
@@ -1554,6 +1625,10 @@ export class BoxCell<Value> implements Box<Value> {
     /** True only where a decode by the same schema made `value`: its check ran there. */
     checked?: boolean,
   ) {
+    // A recipe runs twice, so a box it made would split in two.
+    if (realm.core.deriving === stageMarker) {
+      throw recipeMakeError("a box");
+    }
     // A check that accepts every value rejects nothing: a plain box skips the call.
     if (checked !== true && check !== acceptAll) {
       verifyValue(realm, check, value, undefined);
@@ -1826,6 +1901,38 @@ export interface Read {
   row<Key, Value>(collection: Collection<Key, Value>, key: NoInfer<Key>): Value | undefined;
 }
 
+/**
+ * What `update` and `stageUpdate` run: it reads and writes through what it is
+ * handed, and returns nothing. A function that hands back a change for its
+ * caller to run returns a `Recipe`.
+ */
+export type Recipe = (read: Read, write: Write) => undefined;
+
+/** Where a merge into a held model reads and writes: a stage recipe's place, or the realm's. */
+export interface Place {
+  readonly read: Read;
+  readonly write: Write;
+}
+
+/**
+ * A `read` that reads what the realm holds and subscribes nothing, for a
+ * merge planned outside any place: a box's value, a computed value's, and a
+ * collection's held row.
+ */
+const peekReader = (): Read => {
+  function read<Value>(observable: Computed<Value>): Value;
+  function read(atom: Atom): undefined;
+  function read(observable: Computed<unknown> | Atom): unknown {
+    if (observable instanceof AtomCell) {
+      return undefined;
+    }
+    return peek(observable as Computed<unknown>);
+  }
+  const row = <Key, Value>(collection: Collection<Key, Value>, key: Key): Value | undefined =>
+    (collection as unknown as CollectionReader<Key, Value>).heldRow(key);
+  return Object.assign(read, { row });
+};
+
 /** Writes, handed out by `update` alone. Each returns `undefined`, so a recipe can end in one. */
 export interface Write {
   /** Replaces the box's value, through the box's check: pinna-effect's `schemaBox` checks its schema. */
@@ -1863,7 +1970,7 @@ const readIn = (owner: ObservableRealm): Read => {
       throw otherRealmError("read", cell.source, cell.realm, owner);
     }
     if (owner.core.active === undefined && owner.openDepth === 0) {
-      throw readError(cell.source);
+      throw readError(cell.source, owner);
     }
     // A method on each wrapper class: the kind is chosen by its class, not by a branch.
     return cell.read();
@@ -1877,7 +1984,7 @@ const readIn = (owner: ObservableRealm): Read => {
       return (reader.row(key) as ComputedValue<Value | undefined>).read();
     }
     if (owner.openDepth === 0) {
-      throw readRowError();
+      throw owner.core.deriving === stageMarker ? recipeReadError("read.row") : readRowError();
     }
     return reader.heldRow(key);
   };

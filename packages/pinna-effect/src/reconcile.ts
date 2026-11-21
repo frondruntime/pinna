@@ -57,17 +57,19 @@ export const reconcileSchema = <Item, Key>(
   const result = reconcile(previous, next, {
     keyOf: options.keyOf,
     equals: (held, fresh) => {
-      const writes = planMerge(held, fresh);
+      const realm = realmOfMergeable(held);
+      // A held model reads and writes where its realm writes now: a stage recipe, or the realm.
+      const place = realm?.place();
+      const writes = place === undefined ? false : planMerge(held, fresh, place.read, place.write);
       if (writes === false) {
         // A model that cannot merge requires replacement, even if its own Equal agrees.
         return realmOfMergeable(held) === undefined && sameValue(held, fresh);
       }
       if (writes !== undefined) {
-        const realm = realmOfMergeable(held) as ObservableRealm;
         pending ??= new Map();
-        const list = pending.get(realm);
+        const list = pending.get(realm as ObservableRealm);
         if (list === undefined) {
-          pending.set(realm, [writes]);
+          pending.set(realm as ObservableRealm, [writes]);
         } else {
           list.push(writes);
         }
