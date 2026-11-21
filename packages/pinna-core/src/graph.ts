@@ -2212,6 +2212,25 @@ export const dependenciesOf = (derived: DerivedNode<unknown>): ReadonlyArray<Sou
 /** Whether a run's value or error is kept. Runs nothing. */
 export const hasRun = (derived: DerivedNode<unknown>): boolean => derived.status !== EMPTY;
 
+/**
+ * Drops the value or error a derived value nothing observes keeps, so it
+ * stops holding what its last run returned; the next read runs it again.
+ * Its edges stay, as a run that waited keeps them. An observed or running
+ * value is left as it is: an observer is due its change, and a run its
+ * result.
+ */
+export const forgetValue = (derived: DerivedNode<unknown>): void => {
+  if (derived.observers !== 0 || derived.computing || derived.status === EMPTY) {
+    return;
+  }
+  derived.status = EMPTY;
+  derived.value = undefined;
+  // Not current at any clock, nor checked in any walk: a read that found
+  // either would return the dropped value without a run.
+  derived.checkedAt = -1;
+  derived.walkedClock = -1;
+};
+
 /** The source whose change made the last run, `undefined` for the first. */
 export const lastReason = (derived: DerivedNode<unknown>): Source | undefined =>
   derived.cause as Source | undefined;

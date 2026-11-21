@@ -40,6 +40,7 @@ stop();
 | --- | --- |
 | Classes | `Graph`, `Reaction` |
 | Reads and writes | `readCell`, `readDerived`, `readAtom`, `peekCell`, `peekDerived`, `writeCell`, `restoreCell`, `touchSource` |
+| Memory | `forgetValue` |
 | Inspection | `dependenciesOf`, `observerCount`, `lastReason`, `hasRun`, `isAtom`, `isDerived` |
 | Errors | `reportUncaught` |
 | Types | `AtomNode`, `CellNode`, `DerivedNode`, `Source`, `Equals` |
