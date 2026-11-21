@@ -128,6 +128,27 @@ describe("collection writes through a stage", () => {
     dropStage(stage);
   });
 
+  test("an undefined row throws, as in an update, and leaves the stage's rows as they were", () => {
+    using realm = testRealm();
+    const $items = items(realm);
+    const stage = openStage(realm);
+    stageUpdate(stage, (_read, write) => {
+      write.upsert($items, { id: 1, price: 1 });
+    });
+    expect(() =>
+      stageUpdate(stage, (_read, write) => {
+        write.upsert($items, undefined as unknown as Item);
+      }),
+    ).toThrow("pinna: a collection row cannot be undefined");
+    expect(() =>
+      stageUpdate(stage, (_read, write) => {
+        write.replaceAll($items, [{ id: 2, price: 2 }, undefined as unknown as Item]);
+      }),
+    ).toThrow("pinna: a collection row cannot be undefined");
+    expect(stageRead(stage, (read) => read($items.keys))).toEqual([1]);
+    dropStage(stage);
+  });
+
   test("a repeated key throws and leaves the stage's rows as they were", () => {
     using realm = testRealm();
     const $items = items(realm);

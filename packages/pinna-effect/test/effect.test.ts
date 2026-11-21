@@ -97,7 +97,9 @@ for (const kind of ["whileObserved", "fromStream"] as const) {
           });
           const observable =
             kind === "fromStream"
-              ? yield* Scope.provide(scope)(fromStream(Stream.fromEffect(program), undefined))
+              ? yield* Scope.provide(scope)(
+                  fromStream(realm, Stream.fromEffect(program), undefined),
+                )
               : box(realm, 0);
           if (kind === "whileObserved") {
             yield* Scope.provide(scope)(whileObserved(observable, program));
@@ -144,6 +146,7 @@ describe("watchScoped", () => {
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* watchScoped(
+              realm,
               (read) => read($count),
               (value) => {
                 seen.push(value);

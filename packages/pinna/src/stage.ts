@@ -54,6 +54,7 @@ import {
   type UpsertOptions,
   untracked,
   update,
+  updateRefused,
   type Write,
 } from "./observable.ts";
 
@@ -230,7 +231,8 @@ const keptError = (verb: string): Error =>
 /** Why `stageRead` and `realmRead` refuse a derivation: their reads are not tracked, so it would go stale. */
 const assertReadCanRun = (realm: ObservableRealm, call: string): void => {
   const core = realm.core;
-  if (core.active !== undefined && core.active !== realm.autorunRun) {
+  // Where an update is refused, an untracked read inside a derivation included.
+  if (updateRefused(realm)) {
     throw new Error(
       core.deriving !== undefined
         ? `pinna: ${call} cannot run in a computed value; a stage's reads are not tracked, so read it from an event, a watch's effect, or an autorun`
