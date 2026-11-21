@@ -430,7 +430,7 @@ What it cost:
   copying the held rows; replay runs it and its merges a second time. A
   refetch of 10,000 rows still does the recipe work twice. Written-key
   tracking costs O(written rows); preparing final order equality can scan
-  the keys. `bench:stage` in `packages/pinna` measures staging and applying
+  the keys. `bench:stage` in `packages/pinna-effect` measures staging and applying
   against the update they replace. On the same machine with Bun 1.4.4,
   applying one upsert of a held row in a 100,000-row collection took a
   median 0.014709 ms before guarded overlay replay and 0.265375 ms after
@@ -704,7 +704,7 @@ not.
 
 ## Benchmarks
 
-`bun run --cwd packages/pinna bench:data`: a 10,000-todo model in three
+`bun run --cwd packages/pinna-effect bench:data`: a 10,000-todo model in three
 subjects, each in its own process, medians of seven runs. One run, Apple
 silicon, Bun; differences under about 15% are noise.
 
@@ -729,7 +729,7 @@ silicon, Bun; differences under about 15% are noise.
 | add 1000 in one update, observed | 1.33 ms | 1.00 ms | 1.52 ms |
 
 The run fails when bare Pinna over MobX, or schema Pinna over bare Pinna,
-passes a row's ceiling in `bench/data.ts`. Ratios hold across machines where
+passes a row's ceiling in `packages/pinna-effect/bench/data.ts`. Ratios hold across machines where
 milliseconds do not. Each ceiling sits about twice above the ratio measured
 when it was set; memory rows have none. The benchmark is not part of
 `bun run check`: it takes about a minute.
@@ -776,17 +776,17 @@ Reading the table:
 
 ### On Hermes
 
-`bun run --cwd packages/pinna bench:hermes <hermes-ios destroot>` runs the
+`bun run --cwd packages/pinna-effect bench:hermes <hermes-ios destroot>` runs the
 same subjects the way a React Native release build would, with no app:
 Bun bundles them, React Native 0.88.1's `@react-native/babel-preset` (a
 devDependency, run with the Babel 7 it depends on) lowers them for Hermes,
 `hermesc -O` compiles bytecode, and Hermes runs each subject in its own
-process (`bench/hermes-toolchain.ts`). Times come from the host's `now`, a
+process (`packages/pinna/bench/hermes-toolchain.ts`). Times come from the host's `now`, a
 steady clock to the microsecond, since Hermes has no `performance`; memory
 is allocated bytes after two collections. No ceilings: the table is read
 next to Bun's. It takes about six minutes.
 
-`bench:hermes-graph <hermes-ios destroot>` does the same for the graph
+`bench:hermes-graph <hermes-ios destroot>`, in `packages/pinna`, does the same for the graph
 benchmark (`bench/graph-model.ts`; `bench:graph` runs it on Bun): Pinna
 against alien-signals and MobX, with a second table of bytes allocated per
 run, garbage included, from `HermesInternal.getInstrumentedStats()`'s

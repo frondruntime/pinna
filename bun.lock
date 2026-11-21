@@ -112,7 +112,6 @@
       },
       "devDependencies": {
         "@frondruntime/pinna-core": "workspace:*",
-        "@frondruntime/pinna-effect": "workspace:*",
         "@legendapp/state": "3.0.0-beta.48",
         "@react-native/babel-preset": "0.88.1",
         "alien-signals": "3.2.1",

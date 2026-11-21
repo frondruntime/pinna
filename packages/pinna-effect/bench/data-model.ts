@@ -9,6 +9,8 @@
  * with bare Pinna, so what the schema costs shows on its own.
  */
 
+import { Schema } from "effect";
+import { makeAutoObservable, observable, reaction, runInAction } from "mobx";
 import {
   type Box,
   BoxField,
@@ -24,9 +26,7 @@ import {
   untracked,
   update,
   watch,
-} from "@frondruntime/pinna-effect";
-import { Schema } from "effect";
-import { makeAutoObservable, observable, reaction, runInAction } from "mobx";
+} from "../src/index.ts";
 
 export const rows = 10_000;
 const operations = 1_000;

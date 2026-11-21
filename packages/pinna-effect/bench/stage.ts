@@ -9,8 +9,7 @@
  *
  * bun run bench:stage
  */
-import { BoxField, CollectionField, decode, SchemaModel } from "@frondruntime/pinna-effect";
-import { Schema } from "effect";
+
 import {
   applyStage,
   box,
@@ -22,7 +21,9 @@ import {
   stageUpdate,
   untracked,
   update,
-} from "../src/index.ts";
+} from "@frondruntime/pinna";
+import { Schema } from "effect";
+import { BoxField, CollectionField, decode, SchemaModel } from "../src/index.ts";
 
 const rows = 10_000;
 const runs = 15;

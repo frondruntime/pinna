@@ -4,6 +4,7 @@
  * reads, its effect a render.
  */
 
+import { Schema } from "effect";
 import {
   autorun,
   type Computed,
@@ -18,8 +19,7 @@ import {
   untracked,
   update,
   watch,
-} from "@frondruntime/pinna-effect";
-import { Schema } from "effect";
+} from "../../src/index.ts";
 import { type Built, expectEqual, type Scenario, seeded } from "./harness.ts";
 import {
   Balance,

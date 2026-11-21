@@ -49,7 +49,12 @@
     "build": "bun ../../scripts/release.ts build pinna-effect",
     "prepack": "bun run build",
     "test": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test ./test",
-    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "bench:data": "bun --conditions=source bench/data.ts",
+    "bench:hermes": "bun --conditions=source bench/hermes.ts",
+    "bench:blackbox": "bun --conditions=source bench/blackbox.ts",
+    "bench:stage": "bun --conditions=source bench/stage.ts",
+    "bench:hermes-blackbox": "bun --conditions=source bench/hermes-blackbox.ts"
   },
   "peerDependencies": {
     "@frondruntime/pinna": "0.0.1",

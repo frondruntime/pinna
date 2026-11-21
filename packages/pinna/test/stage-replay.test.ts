@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { schemaBox } from "@frondruntime/pinna-effect";
-import { Schema } from "effect";
 import * as Pinna from "../src/index.ts";
-import { type BoxCell, openParts } from "../src/internal/index.ts";
+import { type BoxCell, type Check, makeBox, openParts } from "../src/internal/index.ts";
 import { held, record, testRealm } from "../src/testing/index.ts";
+
+/** Accepts numbers only, as pinna-effect's `schemaBox` over `Schema.Number` does. */
+const numbersOnly: Check = (value) =>
+  typeof value === "number"
+    ? undefined
+    : { message: `Expected number, got ${typeof value}`, cause: undefined };
 
 const message = (run: () => unknown): string | undefined => {
   try {
@@ -513,7 +517,7 @@ describe("root replay differential", () => {
       const run = (staged: boolean) => {
         using realm = testRealm();
         const first = Pinna.box(realm, 1);
-        const second = schemaBox(realm, Schema.Number, 2);
+        const second = makeBox<number>(realm, numbersOnly, Object.is, 2, undefined);
         const object = Pinna.box(realm, { count: 1 });
         const rows = Pinna.collection(realm, {
           keyOf: (row: { id: number; value: number }) => row.id,

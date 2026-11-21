@@ -3,6 +3,7 @@
  * slow leak shows as live growth. Each also reports its time per step.
  */
 
+import { Schema } from "effect";
 import {
   type Box,
   computed,
@@ -15,8 +16,7 @@ import {
   untracked,
   update,
   watch,
-} from "@frondruntime/pinna-effect";
-import { Schema } from "effect";
+} from "../../src/index.ts";
 import { type Built, expectEqual, type Scenario, seeded } from "./harness.ts";
 import { type Market, Markets, marketsWire, tick } from "./market.ts";
 

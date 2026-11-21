@@ -122,10 +122,13 @@ Nothing in the workspace reads `dist`: the packages, apps, tests, and benches
 resolve each other's `src` through the `source` export condition, so nothing
 needs a build first. The older benchmarks stay in `packages/pinna`: the
 diamond against Effect's Atom is `bun run --cwd packages/pinna bench`, the
-data benchmark against MobX `bench:data`, the graph alone `bench:graph`, and
-their Hermes forms `bench:hermes` and `bench:hermes-graph`. `bench:stage`
-measures a stage against the update it replaces: a refetch staged and
-replayed, and computed values read through a stage.
+graph alone `bench:graph`, and its Hermes form `bench:hermes-graph`. The
+benchmarks that load Effect Schema run from `packages/pinna-effect`, so
+`packages/pinna` does not depend on the package built on it, a cycle
+release-please refuses: the data benchmark against MobX `bench:data`, its
+Hermes form `bench:hermes`, `bench:blackbox` and `bench:hermes-blackbox`, and
+`bench:stage`, which measures a stage against the update it replaces: a
+refetch staged and replayed, and computed values read through a stage.
 
 Publishing runs from a terminal only. CI tags a release through
 release-please and publishes nothing.
