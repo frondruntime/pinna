@@ -349,7 +349,8 @@ What it cost: no conflict detection. A recipe that read a box another
 update changed since reads the new value on replay, so a value read through
 the stage can differ from what lands, and a recipe that branches on a value
 can take another branch. Detecting it would need a version per read box and
-a rule for what a conflict does; no use has asked for either. Staged values
+a rule for what a conflict does; the first build left both out, and the
+complete build settles them (ruling 53). Staged values
 are not observable either: that would need a second graph per stage.
 
 ## Checked writes
