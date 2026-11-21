@@ -22,6 +22,59 @@ import { record, testRealm } from "../src/testing/index.ts";
  */
 
 describe("a child stage", () => {
+  test("a failed child replay restores the parent's read record with its overlay and journal", () => {
+    using realm = testRealm();
+    const $gate = box(realm, false, { name: "gate" });
+    const $kept = box(realm, 1, { name: "kept" });
+    const $value = box(realm, 0, { name: "value" });
+    const $rows = collection<number, number>(realm, { keyOf: (value) => value });
+    const parent = openStage(realm, { conflicts: "fail" });
+    const child = openStage(parent);
+    try {
+      stageUpdate(parent, (read, write) => {
+        write($value, read($kept) * 10);
+        write.upsert($rows, 1);
+      });
+      stageUpdate(child, (read, write) => {
+        write($value, 20);
+        write.upsert($rows, 2);
+        read($kept);
+        if (read($gate)) throw new Error("replay refused");
+      });
+      const before = inspectStage(parent);
+      update(realm, (_read, write) => {
+        write($gate, true);
+      });
+      expect(() => applyStage(child)).toThrow("replay refused");
+      expect(inspectStage(parent)).toEqual({ ...before, children: 0 });
+      expect(stageRead(parent, (read) => [read($value), read($rows.keys)])).toEqual([10, [1]]);
+      update(realm, (_read, write) => {
+        write($gate, false);
+      });
+      applyStage(parent);
+      expect(untracked(realm, (read) => [read($value), read($rows.keys)])).toEqual([10, [1]]);
+    } finally {
+      dropStage(parent);
+    }
+  });
+
+  test("a failed ordinary recipe still keeps its reads", () => {
+    using realm = testRealm();
+    const $gate = box(realm, false, { name: "gate" });
+    const stage = openStage(realm, { conflicts: "fail" });
+    try {
+      expect(() =>
+        stageUpdate(stage, (read) => {
+          read($gate);
+          throw new Error("refused");
+        }),
+      ).toThrow("refused");
+      expect(inspectStage(stage).read).toEqual(["gate"]);
+    } finally {
+      dropStage(stage);
+    }
+  });
+
   test("reads through its parent, and applies into the parent, not the realm", () => {
     using realm = testRealm();
     const $a = box(realm, 1);
@@ -188,8 +241,8 @@ describe("inspectStage", () => {
       write($anonymous, 2);
       write.upsert($rows, "x");
       write.upsert($unnamed, "y");
-      // Read from the realm, so applyStage checks them; $a and $unnamed were
-      // written first, so they read the stage and are not checked.
+      // The box reads the stage alone; the collection's order still depends
+      // on the realm order copied by its first upsert.
       read($a);
       read($unnamed.keys);
       read($price);
@@ -207,7 +260,7 @@ describe("inspectStage", () => {
       boxes: ["a", "<anonymous>"],
       collections: ["rows", "a collection"],
       // One entry for the collection's two boxes; one for each unnamed box.
-      read: ["price", "a collection", "<anonymous>", "<anonymous>"],
+      read: ["a collection", "price", "a collection", "<anonymous>", "<anonymous>"],
       recipes: 1,
       children: 1,
     });

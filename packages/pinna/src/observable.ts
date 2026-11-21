@@ -138,7 +138,11 @@ export interface ClassInstance {
  */
 export abstract class Model {
   declare readonly [classInstance]: true;
-  constructor(readonly realm: Realm) {}
+  constructor(readonly realm: Realm) {
+    if ((realm as ObservableRealm).core.deriving === stageMarker) {
+      throw recipeMakeError("a model");
+    }
+  }
 }
 
 /** A `Date` without its `set` methods. */
@@ -945,7 +949,7 @@ export class ObservableRealm implements Realm {
    * or `undefined`. Only slow paths ask it: a merge into a held model and
    * `reconcileSchema`'s writes, which have no `read` or `write` of their own.
    */
-  stagedPlace: Place | undefined = undefined;
+  stagedPlace: StagedPlace | undefined = undefined;
   /** What a merge reads and writes outside a stage: the held values, and the update's `write`. */
   private realmPlace: Place | undefined = undefined;
 
@@ -1929,6 +1933,11 @@ export type Recipe = (read: Read, write: Write) => undefined;
 export interface Place {
   readonly read: Read;
   readonly write: Write;
+}
+
+/** A stage's place can put back an operation's overlay writes when it throws. */
+export interface StagedPlace extends Place {
+  readonly undoOnThrow: <Result>(run: () => Result) => Result;
 }
 
 /**

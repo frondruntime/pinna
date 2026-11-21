@@ -7,6 +7,7 @@ import {
   computed,
   computedFunction,
   dropStage,
+  inspectStage,
   Model,
   observe,
   onObserved,
@@ -15,6 +16,7 @@ import {
   type Read,
   type Recipe,
   stageRead,
+  stageStatus,
   stageUpdate,
   untracked,
   update,
@@ -31,6 +33,48 @@ import { expectRealmAtRest } from "./rest.ts";
  */
 
 describe("inside a stage recipe", () => {
+  for (const place of ["recipe", "stageRead"] as const) {
+    test(`making a plain model in ${place} throws before its initializers`, () => {
+      using realm = testRealm();
+      let initializers = 0;
+      class Item extends Model {
+        readonly id = ++initializers;
+      }
+      const stage = openStage(realm);
+      try {
+        const make = (): undefined => {
+          new Item(realm);
+        };
+        expect(() =>
+          place === "recipe" ? stageUpdate(stage, make) : stageRead(stage, make),
+        ).toThrow("pinna: a model is made inside a stage recipe");
+        expect(initializers).toBe(0);
+      } finally {
+        dropStage(stage);
+      }
+      expect(new Item(realm).id).toBe(1);
+    });
+
+    for (const query of [stageStatus, inspectStage]) {
+      test(`${query.name} refuses ${place} and remains callable after closing`, () => {
+        using realm = testRealm();
+        const stage = openStage(realm);
+        try {
+          const inspect = (): undefined => {
+            query(stage);
+          };
+          expect(() =>
+            place === "recipe" ? stageUpdate(stage, inspect) : stageRead(stage, inspect),
+          ).toThrow(`pinna: ${query.name} runs inside a stage recipe`);
+        } finally {
+          dropStage(stage);
+        }
+        expect(stageStatus(stage)).toBe("dropped");
+        expect(inspectStage(stage).status).toBe("dropped");
+      });
+    }
+  }
+
   test("update writing the realm throws, and nothing reaches the realm", () => {
     using realm = testRealm();
     const $a = box(realm, 1);
@@ -101,7 +145,7 @@ describe("inside a stage recipe", () => {
     const stage = openStage(realm);
     const makers: ReadonlyArray<readonly [string, () => unknown]> = [
       ["a box", () => box(realm, 0)],
-      ["a box", () => new Todo(realm)],
+      ["a model", () => new Todo(realm)],
       ["a computed value", () => computed(realm, () => 1)],
       ["a computed function", () => computedFunction(realm, () => 1)],
       ["an atom", () => atom(realm)],
