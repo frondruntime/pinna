@@ -2461,9 +2461,8 @@ store's Hermes retained heap at that stage, after load minus empty.
   9,465,280. The ceilings above were measured before the fix and count the
   retained generation.
 
-The harness, its raw data, and the full report are on the local branch
-`experiment/2026-11-21-cold-box-census` (`085e962`), at
-`experiments/cold-box-census/README.md`. Bun 1.4.4, Hermes
+The harness, its raw data, and the full report are not in this
+repository; the counts and bytes above are its results. Bun 1.4.4, Hermes
 260318099.0.5 with `hermesc -O`, Node 26.13.1 with `--expose-gc` for the
 cross-check (3.816 MB loaded, as before), Apple M1 Pro.
 
