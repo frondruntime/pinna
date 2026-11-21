@@ -54,6 +54,12 @@ class MergeRow extends SchemaModel<MergeRow>("MergeRow")({
   $items: CollectionField(Schema.Number, { keyOf: (value) => value }),
 }) {}
 
+class Basket extends SchemaModel<Basket>("Basket")({
+  id: Schema.String,
+  label: Schema.String,
+  $items: CollectionField(Schema.Number, { keyOf: (value) => value }),
+}) {}
+
 const quotesJson = (...quotes: ReadonlyArray<readonly [string, number]>) =>
   quotes.map(([id, price]) => ({ id, symbol: id.toUpperCase(), price }));
 
@@ -140,6 +146,37 @@ describe("a refetch through a stage", () => {
     dropStage(stage);
     expect(untracked(realm, (read) => read(heldA.$price))).toBe(1);
   });
+
+  // Landing compares the held row with the staged one through the field
+  // codecs, which read; a plain field that differs replaces the row.
+  for (const over of ["realm", "child"] as const) {
+    test(`upsert of a model whose plain field differs replaces the held row on apply (${over})`, () => {
+      using realm = testRealm();
+      const quotes = schemaCollection(realm, Quote, { keyOf: (quote) => quote.id });
+      const baskets = schemaCollection(realm, Basket, { keyOf: (basket) => basket.id });
+      const heldQuote = Quote.make({ id: "a", symbol: "A", price: 1, realm });
+      const heldBasket = Basket.make({ id: "a", label: "old", items: [1], realm });
+      update(realm, (_read, write) => {
+        write.upsert(quotes, heldQuote);
+        write.upsert(baskets, heldBasket);
+      });
+      const freshQuote = Quote.make({ id: "a", symbol: "RENAMED", price: 2, realm });
+      const freshBasket = Basket.make({ id: "a", label: "new", items: [2], realm });
+      const root = openStage(realm);
+      const stage = over === "child" ? openStage(root) : root;
+      stageUpdate(stage, (_read, write) => {
+        write.upsert(quotes, freshQuote);
+        write.upsert(baskets, freshBasket);
+      });
+      if (over === "child") applyStage(stage);
+      applyStage(root);
+      expect(stageStatus(root)).toBe("applied");
+      expect(untracked(realm, (read) => [read.row(quotes, "a"), read.row(baskets, "a")])).toEqual([
+        freshQuote,
+        freshBasket,
+      ]);
+    });
+  }
 
   test("reconcileSchema inside a recipe merges into the stage", () => {
     using realm = testRealm();
