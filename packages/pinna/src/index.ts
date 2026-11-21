@@ -17,6 +17,7 @@ export type {
   Read,
   Realm,
   RealmOptions,
+  Recipe,
   UpsertOptions,
   Write,
 } from "./observable.ts";
@@ -40,9 +41,16 @@ export { type ReconcileOptions, reconcile } from "./reconcile.ts";
 export {
   applyStage,
   dropStage,
+  inspectStage,
   openStage,
   realmRead,
   type Stage,
+  StageClosedError,
+  StageConflictError,
+  type StageInspection,
+  type StageOptions,
+  type StageStatus,
   stageRead,
+  stageStatus,
   stageUpdate,
 } from "./stage.ts";

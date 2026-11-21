@@ -17,7 +17,7 @@
  * another realm's box or another instance's.
  */
 
-import type { Box, Collection, Realm } from "@frondruntime/pinna";
+import type { Box, Collection, Read, Realm, Write } from "@frondruntime/pinna";
 import {
   BoxCell,
   type ClassInstance,
@@ -52,7 +52,7 @@ interface FieldCodec {
    * The writes that bring the `held` box to the value of the `fresh` one,
    * or `undefined` when it holds an equal value already. Plans, writes nothing.
    */
-  readonly merge: (held: unknown, fresh: unknown) => MergeWrites;
+  readonly merge: (held: unknown, fresh: unknown, read: Read, write: Write) => MergeWrites;
 }
 
 /**
@@ -119,13 +119,13 @@ export const BoxField = <S extends Schema.Top>(schema: S) => {
       // The decode or make before this one checked `value` against `schema`.
       make: (realm, value) => new BoxCell(realm, check, value as S["Type"], equals, true),
       read: (box) => peekCell((box as BoxCell<S["Type"]>).source),
-      merge: (held, fresh) => {
+      merge: (held, fresh, read, write) => {
         const target = held as BoxCell<S["Type"]>;
         const value = peekCell((fresh as BoxCell<S["Type"]>).source);
-        return equals(peekCell(target.source), value)
+        return equals(read(target), value)
           ? undefined
           : () => {
-              target.write(value);
+              write(target, value);
             };
       },
     },
@@ -143,6 +143,8 @@ const sameRows = <Key, Value>(
   fresh: ReadonlyArray<Value>,
   keyOf: (value: Value) => Key,
   equals: (self: Value, that: Value) => boolean,
+  read: Read,
+  write: Write,
 ): boolean => {
   if (held.length !== fresh.length) {
     return false;
@@ -156,7 +158,7 @@ const sameRows = <Key, Value>(
     if (!Object.is(keyOf(row), keyOf(next))) {
       return false;
     }
-    const writes = planMerge(row, next);
+    const writes = planMerge(row, next, read, write);
     if (
       writes === false
         ? realmOfMergeable(row) !== undefined || !equals(row, next)
@@ -209,13 +211,15 @@ export const CollectionField = <S extends Schema.Top, Key>(
           planMerge,
         ),
       read: (collection) => (collection as KeyedCollection<Key, S["Type"]>).values(),
-      merge: (held, fresh) => {
+      merge: (held, fresh, read, write) => {
         const target = held as KeyedCollection<Key, S["Type"]>;
         const rows = (fresh as KeyedCollection<Key, S["Type"]>).values();
-        return sameRows(target.values(), rows, keyOf, equals)
+        // The rows held where the merge runs: the realm's, or a stage's.
+        const current = read(target.keys).map((key) => read.row(target, key) as S["Type"]);
+        return sameRows(current, rows, keyOf, equals, read, write)
           ? undefined
           : () => {
-              target.replaceRows(rows);
+              write.replaceAll(target, rows);
             };
       },
     },
@@ -461,7 +465,7 @@ export const SchemaModel =
        * field (or `[Equal.symbol]` says it differs); otherwise the writes
        * that bring each box here to its value in `fresh`.
        */
-      [mergeKey](fresh: unknown): MergeWrites | false {
+      [mergeKey](fresh: unknown, read: Read, write: Write): MergeWrites | false {
         if (
           typeof fresh !== "object" ||
           fresh === null ||
@@ -478,13 +482,15 @@ export const SchemaModel =
         }
         let writes: Array<() => void> | undefined;
         for (const [index, key] of heldKeys.entries()) {
-          const write = (heldCodecs[index] as FieldCodec).merge(
+          const fieldWrites = (heldCodecs[index] as FieldCodec).merge(
             this[key],
             (fresh as Record<string, unknown>)[key],
+            read,
+            write,
           );
-          if (write !== undefined) {
+          if (fieldWrites !== undefined) {
             writes ??= [];
-            writes.push(write);
+            writes.push(fieldWrites);
           }
         }
         if (writes === undefined) {

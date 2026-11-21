@@ -13,7 +13,9 @@ import {
   type Read,
   type Realm,
   realmRead,
+  StageClosedError,
   stageRead,
+  stageStatus,
   stageUpdate,
   untracked,
   update,
@@ -291,22 +293,6 @@ describe("stageRead and realmRead", () => {
     dropStage(stage);
   });
 
-  test("a read through a stage refuses a computed value, which would return the realm's value", () => {
-    using realm = testRealm();
-    const $held = box(realm, 1);
-    const $double = computed(realm, (read) => read($held) * 2, { name: "double" });
-    const stage = openStage(realm);
-    expect(() => stageRead(stage, (read) => read($double))).toThrow(
-      'pinna: read("double") of a computed value does not run through a stage',
-    );
-    expect(() =>
-      stageUpdate(stage, (read, write) => {
-        write($held, read($double));
-      }),
-    ).toThrow('pinna: read("double") of a computed value does not run through a stage');
-    dropStage(stage);
-  });
-
   test("read.row through a stage reads the realm's row, and an atom reads as undefined", () => {
     using realm = testRealm();
     const $rows = collection<string, { readonly id: string; readonly size: number }>(realm, {
@@ -337,32 +323,6 @@ describe("stageRead and realmRead", () => {
     );
     dropStage(stage);
     expectRealmAtRest(realm);
-  });
-});
-
-describe("what a stage refuses", () => {
-  test("collection and atom writes throw a message naming the limit, and leave the overlay as it was", () => {
-    using realm = testRealm();
-    const $a = box(realm, 1);
-    const $rows = collection<string, { readonly id: string }>(realm, { keyOf: (row) => row.id });
-    const $feed = atom(realm);
-    const stage = openStage(realm);
-    const refusals: Array<[string, (write: Write) => undefined]> = [
-      ["write.upsert", (write) => write.upsert($rows, { id: "a" })],
-      ["write.remove", (write) => write.remove($rows, "a")],
-      ["write.replaceAll", (write) => write.replaceAll($rows, [])],
-      ["write.changed", (write) => write.changed($feed)],
-    ];
-    for (const [verb, call] of refusals) {
-      expect(() =>
-        stageUpdate(stage, (_read, write) => {
-          write($a, 2);
-          return call(write);
-        }),
-      ).toThrow(`pinna: ${verb} does not run in a stage, which writes boxes only`);
-    }
-    expect(stageRead(stage, (read) => read($a))).toBe(1);
-    dropStage(stage);
   });
 });
 
@@ -420,7 +380,7 @@ describe("applyStage", () => {
     expect(pairs.values).toEqual([[2, 4]]);
   });
 
-  test("a recipe that throws on replay rolls back the update it joined, and the stage is closed", () => {
+  test("a recipe that throws on replay rolls back the stage's writes alone: an outer update that catches keeps its own", () => {
     using realm = testRealm();
     const $staged = box(realm, 1);
     const $own = box(realm, 1);
@@ -440,9 +400,32 @@ describe("applyStage", () => {
     ).toThrow("changed under the stage");
     expect(untracked(realm, (read) => [read($staged), read($own)])).toEqual([1, 1]);
     expect(values.values).toEqual([]);
-    expect(() => dropStage(stage)).toThrow(
-      "pinna: dropStage runs on a stage that was already applied or dropped",
-    );
+    expect(stageStatus(stage)).toBe("dropped");
+
+    // The host catches inside its own update and records the failure there.
+    const second = openStage(realm);
+    stageUpdate(second, (read, write) => {
+      if (read($own) > 1) {
+        throw new Error("changed under the stage");
+      }
+      write($staged, 3);
+    });
+    const $failed = box(realm, false);
+    update(realm, (_read, write) => {
+      write($own, 2);
+      try {
+        applyStage(second);
+      } catch {
+        write($failed, true);
+      }
+    });
+    expect(untracked(realm, (read) => [read($staged), read($own), read($failed)])).toEqual([
+      1,
+      2,
+      true,
+    ]);
+    expect(values.values).toEqual([2]);
+    expect(stageStatus(second)).toBe("dropped");
     expectRealmAtRest(realm);
   });
 
@@ -480,8 +463,11 @@ describe("dropStage and closing", () => {
     expectRealmAtRest(realm);
   });
 
-  test("9: after applyStage or dropStage every stage call throws, and so do a kept read and write", () => {
-    for (const close of [applyStage, dropStage]) {
+  test("9: after applyStage or dropStage every stage call throws a StageClosedError, dropStage does nothing, and a kept read and write throw", () => {
+    for (const [close, status] of [
+      [applyStage, "applied"],
+      [dropStage, "dropped"],
+    ] as const) {
       using realm = testRealm();
       const $a = box(realm, 1);
       const stage = openStage(realm);
@@ -498,12 +484,16 @@ describe("dropStage and closing", () => {
         keptRealmRead = read;
       });
       close(stage);
-      const closed = "runs on a stage that was already applied or dropped";
+      expect(stageStatus(stage)).toBe(status);
+      const closed = `runs on a stage after it was ${status}`;
       expect(() => stageUpdate(stage, () => undefined)).toThrow(`pinna: stageUpdate ${closed}`);
       expect(() => stageRead(stage, () => undefined)).toThrow(`pinna: stageRead ${closed}`);
       expect(() => realmRead(stage, () => undefined)).toThrow(`pinna: realmRead ${closed}`);
       expect(() => applyStage(stage)).toThrow(`pinna: applyStage ${closed}`);
-      expect(() => dropStage(stage)).toThrow(`pinna: dropStage ${closed}`);
+      expect(() => openStage(stage)).toThrow(`pinna: openStage ${closed}`);
+      expect(() => applyStage(stage)).toThrow(StageClosedError);
+      dropStage(stage);
+      expect(stageStatus(stage)).toBe(status);
       const kept = "of a stage runs after its recipe returned";
       expect(() => (keptRead as Read)($a)).toThrow(`pinna: read ${kept}`);
       expect(() => (keptWrite as Write)($a, 3)).toThrow(`pinna: write ${kept}`);
@@ -534,22 +524,27 @@ describe("dropStage and closing", () => {
     dropStage(stage);
   });
 
-  test("a stage call on the same stage inside its own recipe throws", () => {
+  test("a stage call inside a stage recipe throws, on its own stage or another", () => {
     using realm = testRealm();
     const $a = box(realm, 1);
     const stage = openStage(realm);
-    for (const call of [
-      () => applyStage(stage),
-      () => dropStage(stage),
-      () => stageUpdate(stage, () => undefined),
-    ]) {
+    const other = openStage(realm);
+    for (const [name, call] of [
+      ["applyStage", () => applyStage(stage)],
+      ["dropStage", () => dropStage(stage)],
+      ["stageUpdate", () => stageUpdate(other, () => undefined)],
+      ["stageRead", () => stageRead(other, () => undefined)],
+      ["realmRead", () => realmRead(other, () => undefined)],
+      ["openStage", () => openStage(realm)],
+    ] as const) {
       expect(() =>
         stageUpdate(stage, (_read, write) => {
           write($a, 2);
           call();
         }),
-      ).toThrow("runs inside a recipe of the same stage");
+      ).toThrow(`pinna: ${name} runs inside a stage recipe`);
     }
+    dropStage(other);
     expect(stageRead(stage, (read) => read($a))).toBe(1);
     applyStage(stage);
     expect(untracked(realm, (read) => read($a))).toBe(1);
@@ -577,10 +572,16 @@ describe("a stage left open", () => {
     expect(() => realm[Symbol.dispose]()).toThrow(
       "The test realm is not at rest: stage still running.",
     );
-    expect(() => stageRead(stage, () => undefined)).toThrow(
-      "pinna: stageRead runs on a stage that was already applied or dropped",
-    );
+    expect(stageStatus(stage)).toBe("dropped");
     expect(untracked(realm, (read) => read($a))).toBe(1);
+  });
+
+  test("a named stage is reported by its name", () => {
+    const realm = testRealm();
+    openStage(realm, { name: "save" });
+    expect(() => realm[Symbol.dispose]()).toThrow(
+      'The test realm is not at rest: stage "save" still running.',
+    );
   });
 
   test("a stage applied or dropped is not reported", () => {
