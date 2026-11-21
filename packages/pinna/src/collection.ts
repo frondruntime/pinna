@@ -261,7 +261,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
             }
             // Planned where the write runs, an update or a stage recipe; it writes nothing.
             const place = realm.place();
-            return merge(previous, previous, place.read, place.write) === false && equals(previous, next);
+            return (
+              merge(previous, previous, place.read, place.write) === false && equals(previous, next)
+            );
           };
     this.cellEquals = (previous, next) =>
       previous === undefined || next === undefined

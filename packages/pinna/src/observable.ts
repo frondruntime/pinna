@@ -1278,26 +1278,38 @@ export const atom = (realm: Realm): Atom => {
  */
 const refusedUpdate = (core: CoreGraph, name = "update"): Error =>
   new Error(
-    core.deriving !== undefined
-      ? `pinna: ${name} cannot run in a computed value; write from an event, a watch's effect, or an autorun`
-      : `pinna: ${name} cannot run in a watch's select or a selector; write from an event, a watch's effect, or an autorun`,
+    core.deriving === stageMarker
+      ? name === "update"
+        ? "pinna: a stage recipe writes the realm, through update or a write kept from one; write through the recipe's own write, which the stage holds until applyStage"
+        : `pinna: ${name} runs inside a stage recipe, which runs again when the stage is applied; call it outside the recipe`
+      : core.deriving !== undefined
+        ? `pinna: ${name} cannot run in a computed value; write from an event, a watch's effect, or an autorun`
+        : `pinna: ${name} cannot run in a watch's select or a selector; write from an event, a watch's effect, or an autorun`,
   );
+
+/**
+ * Whether `update` refuses to run here: in a derivation, a watch's select, a
+ * selector, or an `untracked` call inside one, but not in an autorun's body.
+ */
+export const updateRefused = (realm: ObservableRealm): boolean => {
+  const core = realm.core;
+  const untracked = core.untrackedActive;
+  return (
+    core.deriving !== undefined ||
+    (core.active !== undefined && core.active !== realm.autorunRun) ||
+    (untracked !== undefined &&
+      untracked !== realm.autorunRun &&
+      (untracked.effect !== undefined || untracked.compute === undefined))
+  );
+};
 
 /**
  * Throws what `update` would, named for `name`, where an update cannot run:
  * for a function that runs one on the caller's behalf.
  */
 export const assertUpdateCanRun = (realm: ObservableRealm, name: string): void => {
-  const core = realm.core;
-  const untracked = core.untrackedActive;
-  if (
-    core.deriving !== undefined ||
-    (core.active !== undefined && core.active !== realm.autorunRun) ||
-    (untracked !== undefined &&
-      untracked !== realm.autorunRun &&
-      (untracked.effect !== undefined || untracked.compute === undefined))
-  ) {
-    throw refusedUpdate(core, name);
+  if (updateRefused(realm)) {
+    throw refusedUpdate(realm.core, name);
   }
 };
 

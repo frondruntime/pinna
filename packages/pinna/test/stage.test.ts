@@ -309,6 +309,20 @@ describe("stageRead and realmRead", () => {
     dropStage(stage);
   });
 
+  test("stageRead inside an untracked call in a computed value throws, as update does there", () => {
+    using realm = testRealm();
+    const $a = box(realm, 1);
+    const stage = openStage(realm);
+    const $staged = computed(realm, () =>
+      untracked(realm, () => stageRead(stage, (read) => read($a))),
+    );
+    expect(() => untracked(realm, (read) => read($staged))).toThrow(
+      "pinna: stageRead cannot run in a computed value",
+    );
+    dropStage(stage);
+    expectRealmAtRest(realm);
+  });
+
   test("stageRead and realmRead inside a computed value throw", () => {
     using realm = testRealm();
     const $a = box(realm, 1);
