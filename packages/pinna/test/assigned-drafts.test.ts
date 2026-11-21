@@ -129,6 +129,32 @@ describe("finalizing assigned containers read through a draft", () => {
     expect(before.items.map((item) => item.count)).toEqual([0, 0, 0]);
   });
 
+  test("a written supplied object that reaches itself splits at the written key, and the supplied object stays as it was", () => {
+    // Ruling 54: an object at two keys is two values once one is written, and
+    // a self-reference is a second key.
+    using realm = testRealm();
+    interface Node {
+      label: string;
+      self: Node | undefined;
+    }
+    const before = { child: undefined as Node | undefined };
+    const $state = box(realm, before);
+    const supplied: Node = { label: "old", self: undefined };
+    supplied.self = supplied;
+    update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.child = supplied;
+        draft.child.label = "new";
+      });
+    });
+    const result = untracked(realm, (read) => read($state));
+    expect(result.child).not.toBe(supplied);
+    expect(result.child?.label).toBe("new");
+    expect(result.child?.self).toBe(supplied);
+    expect(supplied.label).toBe("old");
+    expect(supplied.self).toBe(supplied);
+  });
+
   test("editing a nested supplied container finalizes its untouched draft child", () => {
     using realm = testRealm();
     interface Wrapper {
