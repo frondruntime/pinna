@@ -180,8 +180,9 @@ this project and not by Effect's maintainers.
 ## The decision
 
 Where a guarantee and speed conflict, the guarantee wins and the budget says
-by how much. No API is added until a use needs it, so the surface an agent
-has to learn stays small. The rules an agent follows while writing code ship
+by how much. No API is speculative: nothing is added that nobody asked for,
+so the surface an agent has to learn stays small, and what is added is
+complete. The rules an agent follows while writing code ship
 with the package, in
 [AGENTS.md](https://github.com/frondruntime/pinna/blob/main/packages/pinna/AGENTS.md).
 

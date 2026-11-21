@@ -38,15 +38,15 @@ ruling carries the date it was first written down, and uses today's names.
 - No hook of Pinna's own takes part in transitions (2026-11-15): one would
   let two components of a render see different values. A slow render after
   a write takes `useDeferredValue`.
-- No API is added until a use needs it. The uses so far: isolated tests and
+- No speculative API, and what is asked for is built complete (ruling 55,
+  `AGENTS.md` rule 7 and "Done"). What each part was asked for: isolated tests and
   server rendering for the realm; a live list of thousands of priced rows,
   refetched without losing row identity, for the keyed collection and
   `reconcile`; derived values that take arguments, MobX's `computedFn`, for
   `computedFunction`; a service that reacts to state as a stream for the
   Effect programs; view-only logic and components that read several values
   for `useSelect` and `useValues`; finding why a value recomputed for
-  `inspect`; a host that runs asynchronous programs over a realm, and the
-  desk's requests that fail and time out, for stages.
+  `inspect`; Frond's asynchronous programs over a realm, for stages.
 
 ## Rulings
 
@@ -271,10 +271,11 @@ ruling carries the date it was first written down, and uses today's names.
     `make-and-dispose`). `retainedKeys` joined the entry on 2026-11-17.
 53. **Stages** (2026-11-20). `openStage(realm)` makes a stage;
     `stageUpdate`, `stageRead`, `realmRead`, `applyStage`, and `dropStage`
-    take it first, from the root of `@frondruntime/pinna` (45). The use is a
-    host that runs asynchronous programs over a realm, Frond, whose writes
+    take it first, from the root of `@frondruntime/pinna` (45). Frond asked for
+    it: a host that runs asynchronous programs over a realm, whose writes
     must appear together when a program succeeds and never when it fails or
-    is interrupted, and the desk's requests that fail and time out.
+    is interrupted. The desk's orders write optimistically, which a stage
+    does not.
     - Explicit, like `update(realm, recipe)`: the realm keeps no current
       stage, and `update` and `readIn` gain no field read and no branch.
     - A stage is an overlay, a value for each box it wrote, and a journal of
@@ -310,11 +311,10 @@ ruling carries the date it was first written down, and uses today's names.
     - A stage left open is reported by a test realm's dispose as
       `stage still running`, through the hook `onRowChange` already uses, so
       an application's realm keeps no record of its stages and no counter.
-    - The scoped form in `pinna-effect` is not built: a host wires
-      `Effect.acquireUseRelease` over the synchronous calls (7). Nested
-      stages, a stage over two realms, conflict detection, and computed
-      values and collections through a stage stay out until a use needs
-      them.
+    - The first build leaves out the Effect form, conflict detection,
+      computed values and collections through a stage, nested stages, and
+      a stage over two realms. The complete build (55) settles each with
+      Frond's answers.
 54. **`changes` takes its realm from the observable** (2026-11-20).
     `changes($box)` reads the realm with `realmOf($box)`, as `observeScoped`
     and `whileObserved` do, and requires nothing: `Stream<Value>`, not
@@ -322,6 +322,15 @@ ruling carries the date it was first written down, and uses today's names.
     requirement but `Scope` watches a box while its work awaits.
     `watchScoped` and `fromStream` take no observable and still read
     `RealmService`. Amends 11.
+55. **Rules by purpose** (2026-11-21). `AGENTS.md` states each rule with
+    what it protects, and the owner's instruction overrides every default:
+    a feature the owner asks for needs no use case, and is built to the
+    "Done" list in `AGENTS.md`. "No API is added until a use needs it" read
+    as a gate: the stage plan named the desk as a use it does not have, and
+    the first build deferred parts as unasked. It is replaced by "no
+    speculative API; what is asked for is built complete". Rules that
+    protect users or cannot be taken back are marked hard. Replaces the
+    gate wording of the settled point on new API.
 
 53. **A collection row cannot be `undefined`** (2026-11-18).
     `write.upsert` and `write.replaceAll` reject an `undefined` row in every
