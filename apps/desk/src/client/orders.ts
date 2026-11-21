@@ -385,6 +385,7 @@ export const makeOrders = (
   Effect.gen(function* () {
     const realm = yield* RealmService;
     const $feed: Computed<number> = yield* fromStream(
+      realm,
       Stream.callback<number>(() =>
         Effect.gen(function* () {
           yield* transport.subscribe("orders").pipe(

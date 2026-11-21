@@ -276,6 +276,7 @@ export const makeTradeBook = (transport: Transport) =>
   Effect.gen(function* () {
     const realm = yield* RealmService;
     const $feed: Computed<number> = yield* fromStream(
+      realm,
       Stream.callback<number>(() =>
         Effect.gen(function* () {
           // Subscribe first; snapshot merging preserves newer topic updates.

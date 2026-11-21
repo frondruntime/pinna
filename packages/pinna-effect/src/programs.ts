@@ -12,9 +12,10 @@
  * runs a program while something observes `$x`, such as a feed that writes
  * the rows of a collection.
  *
- * `watchScoped` and `fromStream` read the realm from `RealmService`;
- * `changes`, `observeScoped`, and `whileObserved` take it from the
- * observable, so they require nothing but what their caller runs in.
+ * None requires `RealmService`: `watchScoped` and `fromStream` take the
+ * realm first, as `watch` does, and `changes`, `observeScoped`, and
+ * `whileObserved` take it from the observable. A program that refuses every
+ * requirement but `Scope` runs each of them.
  */
 
 import {
@@ -27,12 +28,12 @@ import {
   observe,
   onObserved,
   type Read,
+  type Realm,
   update,
   watch,
 } from "@frondruntime/pinna";
 import { peek, realmOf } from "@frondruntime/pinna/internal";
 import { Cause, type Context, Effect, Fiber, Queue, type Scope, Stream } from "effect";
-import { RealmService } from "./decode.ts";
 
 /**
  * Runs `effect` whenever `select`'s result changes, not for the current
@@ -47,12 +48,12 @@ import { RealmService } from "./decode.ts";
  * interrupts it, and `name` names the watch in its error messages.
  */
 export const watchScoped = <Value>(
+  realm: Realm,
   select: (read: Read) => Value,
   effect: (value: Value, previous: Value) => Effect.Effect<void>,
   options?: Options<Value>,
-): Effect.Effect<void, never, Scope.Scope | RealmService> =>
+): Effect.Effect<void, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const realm = yield* RealmService;
     // Subscribed before this returns, so a write right after it is seen.
     const values = yield* Queue.sliding<Value>(1);
     // What the effect last ran with; the value the watch started from until then.
@@ -219,13 +220,13 @@ export const whileObserved = <Requirements = never>(
  * the value for `inspect`.
  */
 export const fromStream = <Value, Requirements = never>(
+  realm: Realm,
   stream: Stream.Stream<Value, never, Requirements>,
   initial: Value,
   options?: Options<Value>,
-): Effect.Effect<Computed<Value>, never, Scope.Scope | RealmService | Requirements> =>
+): Effect.Effect<Computed<Value>, never, Scope.Scope | Requirements> =>
   Effect.gen(function* () {
-    const realm = yield* RealmService;
-    const context = yield* Effect.context<RealmService | Requirements>();
+    const context = yield* Effect.context<Requirements>();
     // Lifecycle state cannot belong to an update's rollback journal: closing
     // the scope inside an update that throws must not restore a stale value.
     // An atom tracks the closure, and its invalidation survives rollback too.

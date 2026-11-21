@@ -131,7 +131,7 @@ describe("fromStream in a component", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const queue = yield* Queue.unbounded<number>();
-            const $value = yield* fromStream(Stream.fromQueue(queue), 0);
+            const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
             function Price(): ReactNode {
               const price = read($value);
               return (
@@ -189,7 +189,7 @@ describe("fromStream in a component", () => {
                   : Stream.fromQueue(queue);
               }),
             );
-            const $value = yield* fromStream(stream, 0);
+            const $value = yield* fromStream(realm, stream, 0);
             onObserved($value, () => {
               events.push(untracked(realm, (read) => read($value)));
               return () => {
@@ -230,7 +230,7 @@ describe("fromStream in a component", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const queue = yield* Queue.unbounded<number>();
-            const $value = yield* fromStream(Stream.fromQueue(queue), 0);
+            const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
             onObserved($value, () => {
               events.push("start");
               return () => {
@@ -279,7 +279,7 @@ describe("fromStream in a component", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<number>();
-          const $value = yield* fromStream(Stream.fromQueue(queue), 0);
+          const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
           onObserved($value, () => {
             events.push("start");
             return () => {

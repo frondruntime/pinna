@@ -186,6 +186,7 @@ describe("watchScoped", () => {
       Effect.scoped(
         Effect.gen(function* () {
           yield* watchScoped(
+            realm,
             (read) => read($count),
             (value) =>
               Effect.sync(() => {
@@ -218,6 +219,7 @@ describe("watchScoped", () => {
       Effect.scoped(
         Effect.gen(function* () {
           yield* watchScoped(
+            realm,
             (read) => ({ even: read($count) % 2 === 0 }),
             (value) =>
               Effect.sync(() => {
@@ -262,6 +264,7 @@ describe("watchScoped", () => {
         Effect.gen(function* () {
           const done = yield* Deferred.make<number>();
           yield* watchScoped(
+            realm,
             (read) => read($count),
             (value) => Deferred.succeed(done, value),
           );
@@ -289,6 +292,7 @@ describe("watchScoped", () => {
       Effect.scoped(
         Effect.gen(function* () {
           yield* watchScoped(
+            realm,
             (read) => read($count),
             (value, previous) =>
               Effect.sync(() => {
@@ -325,6 +329,7 @@ describe("watchScoped", () => {
           const started = yield* Deferred.make<void>();
           const done = yield* Deferred.make<void>();
           yield* watchScoped(
+            realm,
             (read) => read($count),
             (value) =>
               value === 1
@@ -365,6 +370,7 @@ describe("watchScoped", () => {
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* watchScoped(
+              realm,
               (read) => read($count),
               (value) =>
                 Effect.sync(() => {
@@ -409,6 +415,7 @@ describe("watchScoped", () => {
         Effect.gen(function* () {
           const done = yield* Deferred.make<number>();
           yield* watchScoped(
+            realm,
             (read) => read($count),
             (value) => (value === 1 ? Effect.die(failure) : Deferred.succeed(done, value)),
           );
@@ -446,6 +453,7 @@ describe("watchScoped", () => {
           const started = yield* Deferred.make<void>();
           const done = yield* Deferred.make<void>();
           yield* watchScoped(
+            realm,
             (read) => read($count),
             (value) =>
               value === 1
@@ -613,7 +621,7 @@ describe("fromStream", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<number>();
-          const $value = yield* fromStream(logged(log, queue), 0);
+          const $value = yield* fromStream(realm, logged(log, queue), 0);
           yield* settle;
           expect(log).toEqual([]);
           expect(untracked(realm, (read) => read($value))).toBe(0);
@@ -648,6 +656,7 @@ describe("fromStream", () => {
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<{ readonly id: number }>();
           const $value = yield* fromStream(
+            realm,
             Stream.fromQueue(queue),
             { id: 0 },
             { equals: (previous, next) => previous.id === next.id, name: "Quote.latest" },
@@ -686,7 +695,7 @@ describe("fromStream", () => {
               return Stream.fromQueue(queue);
             }),
           );
-          const $value = yield* fromStream(counted, 0);
+          const $value = yield* fromStream(realm, counted, 0);
           const $double = computed(realm, (read) => read($value) * 2);
           const release = observe($value);
           const second = observe($value);
@@ -730,7 +739,7 @@ describe("fromStream", () => {
       await run(
         Effect.scoped(
           Effect.gen(function* () {
-            const $value = yield* fromStream(Stream.concat(Stream.make(1), Stream.never), 0);
+            const $value = yield* fromStream(realm, Stream.concat(Stream.make(1), Stream.never), 0);
             const stop = watch(
               realm,
               (read) => read($value),
@@ -762,7 +771,7 @@ describe("fromStream", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<number>();
-          const $value = yield* fromStream(Stream.fromQueue(queue), 0);
+          const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
           const $visible = computed(realm, (read) => (read($show) ? read($value) : -1));
           const stop = watch(
             realm,
@@ -790,7 +799,7 @@ describe("fromStream", () => {
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const $value = yield* fromStream(Stream.concat(Stream.make(1), Stream.never), 0);
+          const $value = yield* fromStream(realm, Stream.concat(Stream.make(1), Stream.never), 0);
           const release = observe($value);
           yield* settle;
           expect(untracked(realm, (read) => read($value))).toBe(1);
@@ -816,7 +825,7 @@ describe("fromStream", () => {
     await run(
       Effect.gen(function* () {
         const scope = yield* Scope.make();
-        const $value = yield* fromStream(Stream.make(1), 0).pipe(
+        const $value = yield* fromStream(realm, Stream.make(1), 0).pipe(
           Effect.provideService(Scope.Scope, scope),
         );
         const $double = computed(realm, (read) => read($value) * 2);
@@ -859,7 +868,7 @@ describe("fromStream", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<{ readonly id: number }>();
-          const $value = yield* fromStream(Stream.fromQueue(queue), initial, {
+          const $value = yield* fromStream(realm, Stream.fromQueue(queue), initial, {
             equals: (previous, next) => next === initial || previous.id === next.id,
           });
           const release = observe($value);
@@ -883,7 +892,7 @@ describe("fromStream", () => {
     const seen = await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const $value = yield* fromStream(Stream.make(1, 2, 3), 0);
+          const $value = yield* fromStream(realm, Stream.make(1, 2, 3), 0);
           const $double = computed(realm, (read) => read($value) * 2);
           const release = observe($double);
           yield* settle;
@@ -911,7 +920,7 @@ describe("fromStream", () => {
             Stream.fromQueue(queue).pipe(Stream.take(1)),
             Stream.die(failure),
           );
-          const $value = yield* fromStream(stream, 0);
+          const $value = yield* fromStream(realm, stream, 0);
           const release = observe($value);
           yield* Queue.offer(queue, 1);
           yield* settle;
@@ -953,7 +962,7 @@ describe("fromStream", () => {
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const $value = yield* fromStream(Stream.make(1, 2), 0);
+          const $value = yield* fromStream(realm, Stream.make(1, 2), 0);
           const release = observe($value);
           yield* settle;
           expect(untracked(realm, (read) => read($value))).toBe(2);
@@ -974,7 +983,7 @@ describe("fromStream", () => {
         const queue = yield* Queue.unbounded<number>();
         const held = yield* Effect.scoped(
           Effect.gen(function* () {
-            const $value = yield* fromStream(logged(log, queue), 0);
+            const $value = yield* fromStream(realm, logged(log, queue), 0);
             const release = watch(
               realm,
               (read) => read($value),
@@ -1009,6 +1018,7 @@ describe("fromStream", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const $value = yield* fromStream(
+            realm,
             Stream.fromEffect(
               Effect.gen(function* () {
                 return yield* Greeting;

@@ -7,7 +7,6 @@ import {
   createRealm,
   fromStream,
   observeScoped,
-  RealmService,
   schemaBox,
   schemaCollection,
   untracked,
@@ -15,14 +14,12 @@ import {
   watchScoped,
   whileObserved,
 } from "@frondruntime/pinna-effect";
-import { Context, Data, Effect, Layer, Schedule, Schema, Stream } from "effect";
+import { Context, Data, Effect, Schedule, Schema, Stream } from "effect";
 
 // #region layer
+// Every program below takes the realm, or an observable that carries it,
+// so none requires a service for it; a test makes a realm of its own.
 const realm = createRealm();
-
-// Every program below reads the realm from the context;
-// a test provides a realm of its own.
-const RealmLive = Layer.succeed(RealmService, realm);
 // #endregion
 
 const catalog = ["Write the docs", "Ship the site", "Measure Hermes"];
@@ -35,6 +32,7 @@ const $query = schemaBox(realm, Schema.String, "");
 const $results = schemaBox(realm, Schema.Array(Schema.String), []);
 
 const searchAsTyped = watchScoped(
+  realm,
   (read) => read($query),
   (query) =>
     Effect.gen(function* () {
@@ -61,6 +59,7 @@ const priceInEuros = Effect.gen(function* () {
   // only while $rate is observed. Losing the last observer resets $rate
   // to undefined, so a stale rate never shows as current.
   const $rate = yield* fromStream<number | undefined>(
+    realm,
     Stream.fromEffectSchedule(fetchRate, Schedule.spaced("1 minute")),
     undefined,
   );
@@ -130,8 +129,7 @@ const main = Effect.gen(function* () {
 
 // Every watch, stream, and hold above stops when the scope
 // closes: here, when the fiber is interrupted.
-const start = () =>
-  Effect.runFork(main.pipe(Effect.andThen(Effect.never), Effect.scoped, Effect.provide(RealmLive)));
+const start = () => Effect.runFork(main.pipe(Effect.andThen(Effect.never), Effect.scoped));
 
 // #endregion
 
@@ -142,6 +140,7 @@ class Rates extends Context.Service<Rates, { readonly latest: Effect.Effect<numb
 // context of the program that makes the value, and the stream runs with it
 // on every observation, whatever program observes the value later.
 const makeRate = fromStream<number | undefined, Rates>(
+  realm,
   Stream.fromEffectSchedule(
     Effect.gen(function* () {
       const rates = yield* Rates;
@@ -167,6 +166,7 @@ type RateState =
 
 const showRate = (rates: Stream.Stream<number, RateUnavailable>) =>
   fromStream<RateState>(
+    realm,
     rates.pipe(
       Stream.map((rate): RateState => ({ _tag: "Rate", rate })),
       // The failure becomes the last element: the stream ends on it, and the
@@ -199,7 +199,7 @@ const sendOrder = (amount: number) =>
 // application was given, its clock among them.
 const orders = Effect.gen(function* () {
   const scope = yield* Effect.scope;
-  const context = yield* Effect.context<RealmService>();
+  const context = yield* Effect.context<never>();
   const send = (amount: number): void => {
     Effect.runForkWith(context)(Effect.forkIn(sendOrder(amount), scope));
   };
