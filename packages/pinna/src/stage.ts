@@ -95,8 +95,13 @@ export interface StageInspection {
   readonly conflicts: "replay" | "fail";
   /** The boxes this stage wrote, by name; an unnamed box is `"<anonymous>"`. */
   readonly boxes: ReadonlyArray<string>;
-  /** How many collections this stage wrote. */
-  readonly collections: number;
+  /** The collections this stage wrote, by name; an unnamed one is `"a collection"`. */
+  readonly collections: ReadonlyArray<string>;
+  /**
+   * What this stage read from the realm and `applyStage` checks, by name:
+   * filled only under `{ conflicts: "fail" }`, empty otherwise.
+   */
+  readonly read: ReadonlyArray<string>;
   /** How many recipes this stage keeps for its replay. */
   readonly recipes: number;
   /** How many child stages are open over this one. */
@@ -129,7 +134,7 @@ export class StageClosedError extends Error {
 export class StageConflictError extends Error {
   /** The stage's name, when it has one. */
   readonly stage: string | undefined;
-  /** The name of each box that changed, or `"<anonymous>"`; a collection is `"a collection"`. */
+  /** The name of each box or collection that changed: `"<anonymous>"` for an unnamed box, `"a collection"` for an unnamed collection. */
   readonly changed: ReadonlyArray<string>;
   /** The boxes and collections that changed, for code that compares them. */
   readonly observables: ReadonlyArray<object>;
@@ -148,6 +153,12 @@ export class StageConflictError extends Error {
     this.observables = observables;
   }
 }
+
+/** How a stage's reports name a box or a collection. */
+const describeRead = (observable: object, box: BoxCell<unknown>): string =>
+  observable instanceof KeyedCollection
+    ? ((observable as KeyedCollection<unknown, unknown>).name ?? "a collection")
+    : nameOf(box.source);
 
 /** A version the stage read, and what to report when it changed. */
 interface ReadVersion {
@@ -815,9 +826,7 @@ export const applyStage = (stage: Stage): void => {
     for (const [box, read] of reads) {
       if (box.source.version !== read.version && !observables.includes(read.observable)) {
         observables.push(read.observable);
-        changed.push(
-          read.observable instanceof KeyedCollection ? "a collection" : nameOf(box.source),
-        );
+        changed.push(describeRead(read.observable, box));
       }
     }
     if (changed.length > 0) {
@@ -879,7 +888,14 @@ export const inspectStage = (stage: Stage): StageInspection => {
     status: state.status,
     conflicts: state.conflicts,
     boxes,
-    collections: state.rows.size,
+    collections: [...state.rows.keys()].map((collection) => collection.name ?? "a collection"),
+    read: [
+      ...new Set(
+        [...(state.reads ?? new Map<BoxCell<unknown>, ReadVersion>())].map(([box, read]) =>
+          describeRead(read.observable, box),
+        ),
+      ),
+    ],
     recipes: state.journal.length,
     children: state.children.size,
   };

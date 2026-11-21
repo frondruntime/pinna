@@ -104,7 +104,7 @@ describe("collection writes through a stage", () => {
     });
     expect(stageRead(stage, (read) => read($sum))).toBe(3);
     expect(runs).toBe(1);
-    expect(inspectStage(stage).collections).toBe(0);
+    expect(inspectStage(stage).collections).toEqual([]);
     // The same rows in another order stage the order alone.
     stageUpdate(stage, (_read, write) => {
       write.replaceAll($items, [rows[1] as Item, rows[0] as Item]);

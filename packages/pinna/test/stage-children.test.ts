@@ -176,12 +176,22 @@ describe("inspectStage", () => {
     using realm = testRealm({ name: "app" });
     const $a = box(realm, 1, { name: "a" });
     const $anonymous = box(realm, 1);
-    const $rows = collection<string, string>(realm, { keyOf: (row) => row });
+    const $rows = collection<string, string>(realm, { keyOf: (row) => row, name: "rows" });
+    const $unnamed = collection<string, string>(realm, { keyOf: (row) => row });
+    const $price = box(realm, 1, { name: "price" });
+    const $readOnly = collection<string, string>(realm, { keyOf: (row) => row });
     const stage = openStage(realm, { name: "save", conflicts: "fail" });
-    stageUpdate(stage, (_read, write) => {
+    stageUpdate(stage, (read, write) => {
       write($a, 2);
       write($anonymous, 2);
       write.upsert($rows, "x");
+      write.upsert($unnamed, "y");
+      // Read from the realm, so applyStage checks them; $a and $unnamed were
+      // written first, so they read the stage and are not checked.
+      read($a);
+      read($unnamed.keys);
+      read($price);
+      read($readOnly.keys);
     });
     const child = openStage(stage);
     expect(inspectStage(stage)).toEqual({
@@ -191,12 +201,24 @@ describe("inspectStage", () => {
       status: "open",
       conflicts: "fail",
       boxes: ["a", "<anonymous>"],
-      collections: 1,
+      collections: ["rows", "a collection"],
+      read: ["price", "a collection"],
       recipes: 1,
       children: 1,
     });
     expect(inspectStage(child)).toMatchObject({ name: undefined, parent: "save", recipes: 0 });
     dropStage(stage);
-    expect(inspectStage(stage)).toMatchObject({ status: "dropped", boxes: [], recipes: 0 });
+    expect(inspectStage(stage)).toMatchObject({
+      status: "dropped",
+      boxes: [],
+      read: [],
+      recipes: 0,
+    });
+    using unchecked = testRealm();
+    const $zero = box(unchecked, 0);
+    const plain = openStage(unchecked);
+    stageRead(plain, (read) => read($zero));
+    expect(inspectStage(plain).read).toEqual([]);
+    dropStage(plain);
   });
 });

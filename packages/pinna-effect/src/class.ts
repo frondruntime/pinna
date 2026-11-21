@@ -185,11 +185,15 @@ const realmOfService = (realm: unknown): ObservableRealm => {
  */
 export const CollectionField = <S extends Schema.Top, Key>(
   schema: S,
-  options: { readonly keyOf: (value: S["Type"]) => Key },
+  options: {
+    readonly keyOf: (value: S["Type"]) => Key;
+    /** Names every instance's collection, as `collection`'s `name` does. */
+    readonly name?: string;
+  },
 ) => {
   const check = checkOf(schema);
   const equals = equalsOf<S["Type"]>(schema);
-  const { keyOf } = options;
+  const { keyOf, name } = options;
   // The undefined row fails here, before `keyOf` runs on it and before
   // `make` builds the collection, whose constructor would throw a defect.
   const noRepeatedKey = Schema.makeFilter((values: ReadonlyArray<S["Type"]>) => {
@@ -209,6 +213,7 @@ export const CollectionField = <S extends Schema.Top, Key>(
           keyOf,
           values as ReadonlyArray<S["Type"]>,
           planMerge,
+          name,
         ),
       read: (collection) => (collection as KeyedCollection<Key, S["Type"]>).values(),
       merge: (held, fresh, read, write) => {

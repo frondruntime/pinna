@@ -24,4 +24,5 @@ export const schemaCollection = <S extends Schema.Top, Key>(
     options.keyOf,
     [],
     planMerge,
+    options.name,
   );
