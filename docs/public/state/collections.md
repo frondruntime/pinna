@@ -132,7 +132,7 @@ and rolls back with the row.
 
 | Call | Answers |
 | --- | --- |
-| `collection(realm, { keyOf, equals? })` | An empty collection with no schema; `undefined` rows are rejected. `equals` defaults to `Object.is`. |
+| `collection(realm, { keyOf, equals?, name? })` | An empty collection with no schema; `undefined` rows are rejected. `equals` defaults to `Object.is`. `name` names its `keys` (`<name>.keys`) and `rows` (`<name>.rows`) for `inspect` and errors, and the collection in a stage's conflict error and `inspectStage`. |
 | `$items.row(key)` | A computed value of that row, or `undefined`. |
 | `read.row($items, key)` | That row, or `undefined`: tracked as `read($items.row(key))` in a tracked place, and read without making a box where nothing tracks. |
 | `$items.keys`, `$items.rows` | Computed values of the keys, and of every row, in order. |

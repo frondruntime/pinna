@@ -378,7 +378,8 @@ What it cost:
   estimates 1 to 20 boxes and 1 to 50 recipes per stage.
 - A collection costs O(n) to copy on a stage's first write to it, and the
   replay runs a `replaceAll`, and its merges, a second time: a refetch of
-  10,000 rows does the work twice.
+  10,000 rows does the work twice. `bench:stage` in `packages/pinna`
+  measures it against the update it replaces.
 - Conflicts replay unless asked. A value read through the stage can differ
   from what lands; `{ conflicts: "fail" }` turns that into an error, and the
   author decides whether rerunning the work, requests included, is safe.

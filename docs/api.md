@@ -341,6 +341,13 @@ ruling carries the date it was first written down, and uses today's names.
       recipe throws (43).
     - A schema box checks a staged write at `stageUpdate`, where the work
       wrote it, and again at `applyStage`, where it lands.
+    - `inspectStage` reports a stage's name, parent, status, the boxes and
+      collections it wrote, and, under `{ conflicts: "fail" }`, what it
+      read. A collection takes `{ name }` (`collection`, `schemaCollection`,
+      `CollectionField`), so a conflict names it: without one, every
+      collection read "a collection". `bun run --cwd packages/pinna
+      bench:stage` measures a refetch staged and replayed, and computed
+      values read through a stage.
     - A stage left open is reported by a test realm's dispose by its name,
       through the hook `onRowChange` already uses, so an application's
       realm keeps no record of its stages.
