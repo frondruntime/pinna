@@ -84,9 +84,11 @@ mind while writing code.
    - A read through the stage sees its own writes: boxes, collections
      (`keys`, `rows`, `row`, `read.row`), and computed values. It writes
      boxes, collections, and atoms, as an update does.
-   - A recipe runs twice, staged and applied. Make ids, times, models, and
-     boxes outside it and close over them; inside it, making an observable,
-     `update`, `untracked`, a kept `read` or `write`, and a watch throw.
+   - A recipe runs once when staged and once per `applyStage` through its
+     parents to the realm; row listeners run for each change on each run.
+     Make ids, times, models, and boxes outside it and close over them;
+     inside it, making an observable, `update`, `untracked`, a kept `read` or
+     `write`, and a watch throw.
    - A method that hands back a change returns a `Recipe`, so it runs in
      `update(realm, recipe)` and `stageUpdate(stage, recipe)` alike.
    - A section that may fail on its own opens a child stage,

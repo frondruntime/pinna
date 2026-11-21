@@ -36,6 +36,144 @@ const conflictOf = (run: () => void): StageConflictError => {
 };
 
 describe("a stage that fails on conflicts", () => {
+  test("two observed versions conflict even after the first version is restored", () => {
+    using realm = testRealm();
+    const value = box(realm, 0);
+    const stage = openStage(realm, { conflicts: "fail" });
+    try {
+      stageRead(stage, (read) => read(value));
+      expect(() =>
+        update(realm, (_read, write) => {
+          write(value, 1);
+          stageRead(stage, (read) => read(value));
+          throw new Error("rollback");
+        }),
+      ).toThrow("rollback");
+      expect(() => applyStage(stage)).toThrow(StageConflictError);
+    } finally {
+      dropStage(stage);
+    }
+  });
+
+  test("failed child replay restores a parent's first version after observing another", () => {
+    using realm = testRealm();
+    const value = box(realm, 0);
+    const parent = openStage(realm, { conflicts: "fail" });
+    const child = openStage(parent);
+    let fail = false;
+    stageRead(parent, (read) => read(value));
+    stageUpdate(child, (read) => {
+      read(value);
+      if (fail) throw new Error("child replay");
+    });
+    expect(() =>
+      update(realm, (_read, write) => {
+        write(value, 1);
+        fail = true;
+        expect(() => applyStage(child)).toThrow("child replay");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+    applyStage(parent);
+    expect(stageStatus(parent)).toBe("applied");
+  });
+
+  for (const child of [false, true]) {
+    test(`a restored version cannot erase a first read (${child ? "child" : "root"})`, () => {
+      using realm = testRealm();
+      const source = box(realm, 0, { name: "source" });
+      const result = box(realm, -1);
+      const root = openStage(realm, { conflicts: "fail" });
+      const stage = child ? openStage(root) : root;
+      try {
+        expect(() =>
+          update(realm, (_read, write) => {
+            write(source, 1);
+            stageUpdate(stage, (read, stagedWrite) => stagedWrite(result, read(source)));
+            throw new Error("rollback");
+          }),
+        ).toThrow("rollback");
+        if (child) applyStage(stage);
+        expect(stageRead(root, (read) => read(source))).toBe(0);
+        const conflict = conflictOf(() => applyStage(root));
+        expect(conflict.changed).toEqual(["source"]);
+        expect(conflict.observables).toEqual([source]);
+        expect(stageStatus(root)).toBe("dropped");
+        expect(untracked(realm, (read) => read(result))).toBe(-1);
+      } finally {
+        dropStage(root);
+      }
+    });
+  }
+
+  test("copied-row provenance cannot erase a read of a rolled-back version", () => {
+    using realm = testRealm();
+    const rows = collection<number, number>(realm, { keyOf: (value) => value, name: "rows" });
+    const stage = openStage(realm, { conflicts: "fail" });
+    try {
+      expect(() =>
+        update(realm, (_read, write) => {
+          write.upsert(rows, 1);
+          expect(stageRead(stage, (read) => read(rows.rows))).toEqual([1]);
+          throw new Error("rollback");
+        }),
+      ).toThrow("rollback");
+      stageUpdate(stage, (_read, write) => write.upsert(rows, 2));
+      expect(stageRead(stage, (read) => read(rows.rows))).toEqual([2]);
+      expect(conflictOf(() => applyStage(stage)).changed).toEqual(["rows"]);
+      expect(untracked(realm, (read) => read(rows.rows))).toEqual([]);
+    } finally {
+      dropStage(stage);
+    }
+  });
+
+  test("modify reads its realm base before a decision on the drafted result", () => {
+    using realm = testRealm();
+    const list = box<ReadonlyArray<string>>(realm, ["a"], { name: "list" });
+    const stage = openStage(realm, { conflicts: "fail" });
+    try {
+      stageUpdate(stage, (_read, write) =>
+        write.modify(list, (draft) => {
+          draft.push("staged");
+        }),
+      );
+      expect(stageRead(stage, (read) => read(list).length)).toBe(2);
+      update(realm, (_read, write) =>
+        write.modify(list, (draft) => {
+          draft.push("other");
+        }),
+      );
+      expect(conflictOf(() => applyStage(stage)).changed).toEqual(["list"]);
+      expect(untracked(realm, (read) => read(list))).toEqual(["a", "other"]);
+    } finally {
+      dropStage(stage);
+    }
+  });
+
+  for (const child of [false, true]) {
+    test(`modify of an overlay value records no realm read (${child ? "child" : "root"})`, () => {
+      using realm = testRealm();
+      const list = box<ReadonlyArray<string>>(realm, ["a"]);
+      const root = openStage(realm, { conflicts: "fail" });
+      const stage = child ? openStage(root) : root;
+      try {
+        stageUpdate(root, (_read, write) => write(list, ["own"]));
+        stageUpdate(stage, (_read, write) =>
+          write.modify(list, (draft) => {
+            draft.push("staged");
+          }),
+        );
+        expect(inspectStage(stage).read).toEqual([]);
+        update(realm, (_read, write) => write(list, ["other"]));
+        if (child) applyStage(stage);
+        applyStage(root);
+        expect(untracked(realm, (read) => read(list))).toEqual(["own", "staged"]);
+      } finally {
+        dropStage(root);
+      }
+    });
+  }
+
   for (const location of ["root", "child", "ancestor"] as const) {
     for (const access of ["read.row", "row", "rows", "keys"] as const) {
       for (const changedBeforeRead of [false, true]) {

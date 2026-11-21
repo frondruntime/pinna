@@ -19,9 +19,10 @@
  * stage, opened over a stage, replays into its parent instead: a savepoint.
  * `dropStage` discards a stage and its open children.
  *
- * A recipe runs twice, once staged and once applied, so it is a function of
- * its `read`: while it runs, the realm's own `read`, `write`, `update`, a
- * watch, and making an observable all throw. The core's `deriving` slot
+ * A recipe runs once when staged and once per apply through its parents to
+ * the realm, so it is a function of its `read`: while it runs, the realm's
+ * own `read`, `write`, `update`, a watch, and making an observable all throw.
+ * The core's `deriving` slot
  * carries the check, so `update` and `read` pay nothing for it.
  */
 import { peekCell } from "@frondruntime/pinna-core";
@@ -198,6 +199,8 @@ class StageState implements Stage {
   rows = new Map<KeyedCollection<unknown, unknown>, Map<unknown, unknown>>();
   /** Keys written in this overlay, including removed keys: landing visits these alone. */
   rowWrites = new Map<KeyedCollection<unknown, unknown>, Set<unknown>>();
+  /** A removed row no longer uses its realm cell's write-back value during replay. */
+  rowRemovals = new Map<KeyedCollection<unknown, unknown>, Set<unknown>>();
   atoms = new Set<AtomCell>();
   provenance = new Map<KeyedCollection<unknown, unknown>, CollectionProvenance>();
   /** The recipes that ran without throwing, in order. */
@@ -223,6 +226,7 @@ class StageState implements Stage {
     parent: StageState | undefined,
     name: string | undefined,
     conflicts: "replay" | "fail",
+    readonly replaying = false,
   ) {
     this.realm = realm;
     this.parent = parent;
@@ -234,9 +238,9 @@ class StageState implements Stage {
 }
 
 /**
- * The `read` and `write` handed to one recipe, read function, or replay into
- * a parent: good while it runs. `undo` puts back what it wrote to the
- * overlay, the last first.
+ * The `read` and `write` handed to one recipe or read function: good while
+ * it runs. Replayed recipes share `undo`, which puts back their overlay
+ * writes, the last first.
  */
 interface Session {
   open: boolean;
@@ -284,6 +288,7 @@ const close = (state: StageState, status: "applied" | "dropped"): void => {
   state.boxes = new Map();
   state.rows = new Map();
   state.rowWrites = new Map();
+  state.rowRemovals = new Map();
   state.atoms = new Set();
   state.provenance = new Map();
   state.journal = [];
@@ -306,8 +311,13 @@ const recordRead = (
 ): void => {
   const reads = state.reads;
   const held = reads?.get(box);
-  if (reads !== undefined && (held === undefined || version < held.version)) {
+  if (reads === undefined) return;
+  if (held === undefined) {
     reads.set(box, { version, observable });
+  } else if (held.version !== version) {
+    // Rollback restores earlier versions. Two observed versions cannot
+    // both match at apply; NaN matches neither, and keeps the first name.
+    reads.set(box, { version: Number.NaN, observable: held.observable });
   }
 };
 
@@ -570,6 +580,24 @@ const stagedRows = <Key, Value>(
       written.add(rowKey);
     }
   };
+  const removed = (rowKey: Key): void => {
+    if (!state.replaying) return;
+    let keys = state.rowRemovals.get(key);
+    if (keys === undefined) {
+      keys = new Set();
+      state.rowRemovals.set(key, keys);
+      session.undo.push(() => {
+        state.rowRemovals.delete(key);
+      });
+    }
+    if (!keys.has(rowKey)) {
+      const removals = keys;
+      removals.add(rowKey);
+      session.undo.push(() => {
+        removals.delete(rowKey);
+      });
+    }
+  };
   return {
     get rows() {
       return rowsOf(state, collection, false);
@@ -577,6 +605,16 @@ const stagedRows = <Key, Value>(
     get order() {
       return boxValue(state, collection.orderCell, false);
     },
+    cellValue: state.replaying
+      ? (rowKey, cell, value, current) =>
+          checkedValue(
+            cell,
+            current,
+            value,
+            !state.rowRemovals.get(key)?.has(rowKey),
+            state.rowWrites.get(key)?.has(rowKey) ?? false,
+          ) as Value
+      : undefined,
     setRow(rowKey, row) {
       const rows = own();
       const had = rows.has(rowKey);
@@ -599,6 +637,7 @@ const stagedRows = <Key, Value>(
         rows.set(rowKey, prior);
       });
       rows.delete(rowKey);
+      removed(rowKey);
       wrote(rowKey);
       changedOverlay(state);
     },
@@ -608,7 +647,10 @@ const stagedRows = <Key, Value>(
     },
     setAll(rows, order, written) {
       // Replaced whole: no copy of the rows held first.
-      for (const rowKey of written) wrote(rowKey);
+      for (const rowKey of written) {
+        wrote(rowKey);
+        if (!rows.has(rowKey)) removed(rowKey);
+      }
       const prior = state.rows.get(key);
       const provenance = state.provenance.get(key);
       session.undo.push(() => {
@@ -628,6 +670,34 @@ const stagedRows = <Key, Value>(
       setBox(state, session, orderCell, order);
     },
   };
+};
+
+/** The value an overlay write keeps, checked before either equality comparison. */
+const checkedValue = <Value>(
+  cell: BoxCell<Value>,
+  current: Value,
+  value: Value,
+  replaying: boolean,
+  written: boolean,
+): Value => {
+  if (Object.is(value, current)) return current;
+  cell.verify(value, current);
+  if (replaying) {
+    const recorded = cell.nextRecorded !== undefined;
+    if (recorded || written) {
+      // An enclosing write supplies the outermost update's original;
+      // otherwise the first replay write would record the realm's value.
+      const before = recorded ? (cell.valueBefore as Value) : peekCell(cell.source);
+      // Before an overlay write, the realm's versions decide whether a
+      // write-back is possible. After one, original identity means its
+      // version was restored; any other overlay value has a new version.
+      const changed = written
+        ? !Object.is(current, before)
+        : cell.versionBefore !== cell.source.version;
+      if (changed && cell.source.equals(before, value)) return before;
+    }
+  }
+  return cell.source.equals(current, value) ? current : value;
 };
 
 /** The `write` a stage hands out: boxes, collections, and atoms. */
@@ -664,14 +734,9 @@ const stageWriter = (state: StageState, session: Session, reader: Read): Write =
   };
   const writeValue = <Value>(cell: BoxCell<Value>, value: Value): void => {
     const current = boxValue(state, cell, false);
-    if (Object.is(value, current)) {
-      return;
-    }
-    cell.verify(value, current);
-    if (cell.source.equals(current, value)) {
-      return;
-    }
-    setBox(state, session, cell as BoxCell<unknown>, value);
+    const key = cell as BoxCell<unknown>;
+    const kept = checkedValue(cell, current, value, state.replaying, state.boxes.has(key));
+    if (!Object.is(kept, current)) setBox(state, session, key, kept);
   };
   const writeBox = <Value>(box: Box<Value>, value: Value): undefined => {
     writeValue(ownBox("write", box), value);
@@ -681,7 +746,7 @@ const stageWriter = (state: StageState, session: Session, reader: Read): Write =
     modify: <Value>(box: Box<Value>, recipe: (draft: Draft<Value>) => undefined): undefined => {
       const cell = ownBox("write.modify", box);
       // Drafted from the stage's value: a draft of the realm's would change it in place.
-      writeValue(cell, produce(boxValue(state, cell, false), recipe));
+      writeValue(cell, produce(boxValue(state, cell, true), recipe));
       return undefined;
     },
     upsert: <Key, Value>(
@@ -780,40 +845,59 @@ const asPlace = <Result>(state: StageState, place: StagedPlace, run: () => Resul
 const ignore = (): void => {};
 
 /**
- * Runs `recipes` against `state` as one session, and keeps them: all of them,
- * or, when one throws, none, with the overlay as it was. Root replay prepares
- * its landing under the same guard, before closing the session.
+ * Runs `recipes` with one undo boundary and a session per recipe: all of
+ * them, or none, with the overlay as it was. Root replay prepares its
+ * landing under the same guard, with every recipe's handles closed.
  */
 const runRecipes = (
   state: StageState,
   recipes: ReadonlyArray<Recipe>,
   prepare?: () => void,
 ): void => {
-  const session: Session = { open: true, writable: true, undo: [] };
-  const read = stageReader(state, session);
-  const write = stageWriter(state, session, read);
+  const boundary: Session = { open: false, writable: false, undo: [] };
   try {
-    asPlace(state, { read, write, undoOnThrow: (run) => undoOnThrow(state, session, run) }, () => {
-      for (const recipe of recipes) {
-        const result: unknown = recipe(read, write);
-        if (result !== undefined) {
-          if (typeof (result as { readonly then?: unknown }).then === "function") {
-            (result as PromiseLike<unknown>).then(undefined, ignore);
-            throw new Error(
-              "pinna: stageUpdate recipes are synchronous; await outside, then stageUpdate",
-            );
-          }
-          throw new Error("pinna: a stageUpdate recipe returns nothing");
-        }
+    for (const recipe of recipes) {
+      const session: Session = { open: true, writable: true, undo: boundary.undo };
+      const read = stageReader(state, session);
+      const write = stageWriter(state, session, read);
+      try {
+        asPlace(
+          state,
+          { read, write, undoOnThrow: (run) => undoOnThrow(state, session, run) },
+          () => {
+            const result: unknown = recipe(read, write);
+            if (result !== undefined) {
+              if (typeof (result as { readonly then?: unknown }).then === "function") {
+                (result as PromiseLike<unknown>).then(undefined, ignore);
+                throw new Error(
+                  "pinna: stageUpdate recipes are synchronous; await outside, then stageUpdate",
+                );
+              }
+              throw new Error("pinna: a stageUpdate recipe returns nothing");
+            }
+          },
+        );
+      } finally {
+        session.open = false;
       }
-      prepare?.();
-    });
+    }
+    if (prepare !== undefined) {
+      const read = stageReader(state, boundary);
+      asPlace(
+        state,
+        {
+          read,
+          write: stageWriter(state, boundary, read),
+          undoOnThrow: (run) => undoOnThrow(state, boundary, run),
+        },
+        prepare,
+      );
+    }
   } catch (error) {
-    undoSession(state, session);
+    undoSession(state, boundary);
     throw error;
   } finally {
-    session.open = false;
-    session.undo.length = 0;
+    boundary.undo.length = 0;
   }
   for (const recipe of recipes) {
     state.journal.push(recipe);
@@ -1004,6 +1088,8 @@ export const realmRead = <Result>(stage: Stage, run: (read: Read) => Result): Re
  * An open child, or a call where `update` is refused, throws and leaves the
  * stage open. Apply or drop the child first. After landing, watch effects
  * and autoruns report errors to `onError`; the stage stays `"applied"`.
+ * An enclosing update's rollback undoes the landing and marks the stage
+ * `"dropped"`; an empty journal has no landing to undo and stays `"applied"`.
  */
 export const applyStage = (stage: Stage): void => {
   const state = openState(stage, "applyStage");
@@ -1024,16 +1110,12 @@ export const applyStage = (stage: Stage): void => {
       close(state, "dropped");
       throw error;
     }
-    // The replay recorded what it read at today's versions; what the child
-    // read earlier, and decided on, keeps its older version.
+    // Replay and the child's earlier decisions must agree on one version.
     const reads = state.reads;
     const parentReads = parent.reads;
     if (reads !== undefined && parentReads !== undefined) {
       for (const [box, read] of reads) {
-        const held = parentReads.get(box);
-        if (held === undefined || read.version < held.version) {
-          parentReads.set(box, read);
-        }
+        recordRead(parent, box, read.observable, read.version);
       }
     }
     close(state, "applied");
@@ -1059,7 +1141,7 @@ export const applyStage = (stage: Stage): void => {
     close(state, "applied");
     return;
   }
-  const replay = new StageState(realm, undefined, state.name, "replay");
+  const replay = new StageState(realm, undefined, state.name, "replay", true);
   let land: () => void = () => undefined;
   try {
     runRecipes(replay, journal, () => {
@@ -1073,6 +1155,9 @@ export const applyStage = (stage: Stage): void => {
   close(state, "applied");
   try {
     update(realm, () => {
+      realm.recordUndo(() => {
+        state.status = "dropped";
+      });
       land();
     });
   } finally {

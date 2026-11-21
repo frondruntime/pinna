@@ -46,6 +46,64 @@ const forbidden = [
   "inspectStage",
 ] as const;
 
+describe("documented stage boundaries", () => {
+  test("child recipes and row listeners run at staging and at each apply", () => {
+    using realm = testRealm();
+    const rows = Pinna.collection(realm, { keyOf: (value: number) => value });
+    let recipes = 0;
+    let listeners = 0;
+    using _listener = held(
+      Pinna.onRowChange(rows, () => {
+        listeners++;
+      }),
+    );
+    const parent = Pinna.openStage(realm);
+    const child = Pinna.openStage(parent);
+    Pinna.stageUpdate(child, (_read, write) => {
+      recipes++;
+      write.upsert(rows, 1);
+    });
+    expect([recipes, listeners]).toEqual([1, 1]);
+    Pinna.applyStage(child);
+    expect([recipes, listeners]).toEqual([2, 2]);
+    Pinna.applyStage(parent);
+    expect([recipes, listeners]).toEqual([3, 3]);
+  });
+
+  test("the recipe guard covers computed evaluation but only its own realm", () => {
+    using realm = testRealm();
+    using other = testRealm();
+    const value = Pinna.box(realm, 1);
+    const count = Pinna.box(other, 0);
+    const untracked = Pinna.computed(realm, () => Pinna.untracked(realm, (read) => read(value)));
+    const makesComputed = Pinna.computed(realm, (read) =>
+      read(Pinna.computed(realm, (innerRead) => innerRead(value))),
+    );
+    expect(Pinna.untracked(realm, (read) => [read(untracked), read(makesComputed)])).toEqual([
+      1, 1,
+    ]);
+    const stage = Pinna.openStage(realm);
+    expect(() => Pinna.stageRead(stage, (read) => read(untracked))).toThrow("stage recipe");
+    expect(() => Pinna.stageRead(stage, (read) => read(makesComputed))).toThrow("stage recipe");
+    Pinna.stageUpdate(stage, () => {
+      Pinna.update(other, (read, write) => write(count, read(count) + 1));
+    });
+    Pinna.applyStage(stage);
+    expect(Pinna.untracked(other, (read) => read(count))).toBe(2);
+  });
+
+  test("realmRead does not record reads for conflicts", () => {
+    using realm = testRealm();
+    const value = Pinna.box(realm, 0);
+    const stage = Pinna.openStage(realm, { conflicts: "fail" });
+    expect(Pinna.realmRead(stage, (read) => read(value))).toBe(0);
+    expect(Pinna.inspectStage(stage).read).toEqual([]);
+    Pinna.update(realm, (_read, write) => write(value, 1));
+    Pinna.applyStage(stage);
+    expect(Pinna.stageStatus(stage)).toBe("applied");
+  });
+});
+
 describe("root replay guards", () => {
   for (const depth of [0, 1, 2]) {
     for (const name of forbidden) {
@@ -239,6 +297,217 @@ const cases: ReadonlyArray<readonly [string, (state: Fixture) => ReadonlyArray<P
 ];
 
 describe("root replay differential", () => {
+  test("landing equality runs after the last recipe's handles close", () => {
+    using realm = testRealm();
+    const target = Pinna.box(realm, 0);
+    let keptRead: Pinna.Read | undefined;
+    let keptWrite: Pinna.Write | undefined;
+    let running = false;
+    const errors: Array<string | undefined> = [];
+    const value = Pinna.box(realm, 0, {
+      equals: (left, right) => {
+        if (!running && keptRead !== undefined && keptWrite !== undefined) {
+          const read = keptRead;
+          const write = keptWrite;
+          errors.push(
+            message(() => read(target)),
+            message(() => write(target, 1)),
+          );
+        }
+        return left === right;
+      },
+    });
+    const stage = Pinna.openStage(realm);
+    Pinna.stageUpdate(stage, (read, write) => {
+      keptRead = read;
+      keptWrite = write;
+      running = true;
+      try {
+        write(value, 1);
+      } finally {
+        running = false;
+      }
+    });
+    Pinna.applyStage(stage);
+    expect(errors).toEqual(
+      ["read", "write"].map(
+        (handle) =>
+          `pinna: ${handle} of a stage runs after its recipe returned; read and write inside the recipe`,
+      ),
+    );
+    expect(Pinna.untracked(realm, (read) => read(target))).toBe(0);
+  });
+
+  for (const existingCell of [false, true]) {
+    test(`row equality uses no old cell after ${existingCell ? "removal" : "an unread row"}`, () => {
+      const run = (staged: boolean) => {
+        using realm = testRealm();
+        const original = { id: 1, count: 0 };
+        const rows = Pinna.collection(realm, {
+          keyOf: (row: typeof original) => row.id,
+          equals: (left, right) => left.count === right.count,
+        });
+        Pinna.update(realm, (_read, write) => write.upsert(rows, original));
+        if (existingCell) Pinna.untracked(realm, (read) => read(rows.row(1)));
+        const decision = Pinna.box(realm, true);
+        const recipe: Pinna.Recipe = (read, write) => {
+          if (existingCell) write.remove(rows, 1);
+          write.upsert(rows, { id: 1, count: 1 });
+          write.upsert(rows, { id: 1, count: 0 });
+          write(decision, read.row(rows, 1) === original);
+        };
+        if (staged) {
+          const stage = Pinna.openStage(realm);
+          Pinna.stageUpdate(stage, recipe);
+          Pinna.applyStage(stage);
+        } else Pinna.update(realm, recipe);
+        return Pinna.untracked(realm, (read) => read(decision));
+      };
+      expect(run(false)).toBe(false);
+      expect(run(true)).toBe(false);
+    });
+  }
+
+  test("write-back equality precedes current equality and skips an already restored version", () => {
+    const run = (staged: boolean) => {
+      using realm = testRealm();
+      const original = { count: 0 };
+      const comparisons: Array<readonly [number, number]> = [];
+      const value = Pinna.box(realm, original, {
+        equals: (left, right) => {
+          comparisons.push([left.count, right.count]);
+          return left.count === right.count || right.count === 2;
+        },
+      });
+      const decisions: boolean[] = [];
+      const recipe: Pinna.Recipe = (read, write) => {
+        write(value, { count: 1 });
+        write(value, { count: 2 });
+        decisions.push(read(value) === original);
+        write(value, { count: 3 });
+      };
+      if (staged) {
+        const stage = Pinna.openStage(realm);
+        Pinna.stageUpdate(stage, recipe);
+        comparisons.length = 0;
+        decisions.length = 0;
+        Pinna.applyStage(stage);
+      } else Pinna.update(realm, recipe);
+      expect(decisions).toEqual([true]);
+      expect(comparisons.slice(0, 3)).toEqual([
+        [0, 1],
+        [0, 2],
+        [0, 3],
+      ]);
+    };
+    run(false);
+    run(true);
+  });
+
+  for (const child of [false, true]) {
+    for (const handle of ["read", "write"] as const) {
+      test(`expired ${handle} stays expired during ${child ? "child and root" : "root"} replay`, () => {
+        using realm = testRealm();
+        const target = Pinna.box(realm, 0);
+        const root = Pinna.openStage(realm);
+        const stage = child ? Pinna.openStage(root) : root;
+        let keptRead!: Pinna.Read;
+        let keptWrite!: Pinna.Write;
+        const errors: Array<string | undefined> = [];
+        Pinna.stageUpdate(stage, (read, write) => {
+          keptRead = read;
+          keptWrite = write;
+        });
+        Pinna.stageUpdate(stage, (_read, write) => {
+          errors.push(
+            message(() => {
+              if (handle === "write") keptWrite(target, 1);
+              else write(target, keptRead(target) + 1);
+            }),
+          );
+        });
+        if (child) Pinna.applyStage(stage);
+        Pinna.applyStage(root);
+        expect(errors).toEqual(
+          Array(child ? 3 : 2).fill(
+            `pinna: ${handle} of a stage runs after its recipe returned; read and write inside the recipe`,
+          ),
+        );
+        expect(Pinna.untracked(realm, (read) => read(target))).toBe(0);
+      });
+    }
+  }
+
+  for (const enclosingWrite of [false, true]) {
+    test(`write-back identity agrees with update (${enclosingWrite ? "enclosing write" : "replay writes first"})`, () => {
+      const run = (staged: boolean) => {
+        using realm = testRealm();
+        const original = { count: 0 };
+        const value = Pinna.box(realm, original, {
+          equals: (left, right) => left.count === right.count,
+        });
+        const decision = Pinna.box(realm, false);
+        const isOriginal = Pinna.computed(realm, (read) => read(value) === original);
+        const version = (value as BoxCell<typeof original>).source.version;
+        const recipe: Pinna.Recipe = (read, write) => {
+          if (!enclosingWrite) write(value, { count: 1 });
+          write(value, { count: 0 });
+          write(decision, read(isOriginal));
+        };
+        const stage = Pinna.openStage(realm);
+        if (staged) Pinna.stageUpdate(stage, recipe);
+        Pinna.update(realm, (_read, write) => {
+          if (enclosingWrite) write(value, { count: 1 });
+          if (staged) Pinna.applyStage(stage);
+          else Pinna.update(realm, recipe);
+        });
+        Pinna.dropStage(stage);
+        expect((value as BoxCell<typeof original>).source.version).toBe(version);
+        return Pinna.untracked(realm, (read) => [read(value) === original, read(decision)]);
+      };
+      expect(run(false)).toEqual([true, true]);
+      expect(run(true)).toEqual([true, true]);
+    });
+  }
+
+  for (const verb of ["upsert", "replaceAll"] as const) {
+    for (const enclosingWrite of [false, true]) {
+      test(`${verb} restores a row cell's identity before replay reads (${enclosingWrite ? "enclosing write" : "replay writes first"})`, () => {
+        const run = (staged: boolean) => {
+          using realm = testRealm();
+          const original = { id: 1, count: 0 };
+          const rows = Pinna.collection(realm, {
+            keyOf: (row: typeof original) => row.id,
+            equals: (left, right) => left.count === right.count,
+          });
+          Pinna.update(realm, (_read, write) => write.upsert(rows, original));
+          Pinna.untracked(realm, (read) => read(rows.row(1)));
+          const decision = Pinna.box(realm, false);
+          const writeRow = (write: Pinna.Write, count: number) => {
+            if (verb === "upsert") write.upsert(rows, { id: 1, count });
+            else write.replaceAll(rows, [{ id: 1, count }]);
+          };
+          const recipe: Pinna.Recipe = (read, write) => {
+            if (!enclosingWrite) writeRow(write, 1);
+            writeRow(write, 0);
+            write(decision, read.row(rows, 1) === original);
+          };
+          const stage = Pinna.openStage(realm);
+          if (staged) Pinna.stageUpdate(stage, recipe);
+          Pinna.update(realm, (_read, write) => {
+            if (enclosingWrite) writeRow(write, 1);
+            if (staged) Pinna.applyStage(stage);
+            else Pinna.update(realm, recipe);
+          });
+          Pinna.dropStage(stage);
+          return Pinna.untracked(realm, (read) => [read.row(rows, 1) === original, read(decision)]);
+        };
+        expect(run(false)).toEqual([true, true]);
+        expect(run(true)).toEqual([true, true]);
+      });
+    }
+  }
+
   for (const [name, recipesFor] of cases) {
     test(`${name}: ordinary updates and stage apply agree`, () => {
       const run = (staged: boolean) => {
@@ -459,6 +728,38 @@ describe("callbacks during root replay", () => {
 });
 
 describe("landing invariants", () => {
+  test("a rolled-back landing drops the stage and refuses a later apply", () => {
+    using realm = testRealm();
+    const value = Pinna.box(realm, 0);
+    const stage = Pinna.openStage(realm, { name: "landing" });
+    Pinna.stageUpdate(stage, (_read, write) => write(value, 1));
+    expect(() =>
+      Pinna.update(realm, () => {
+        Pinna.applyStage(stage);
+        expect(Pinna.stageStatus(stage)).toBe("applied");
+        throw new Error("host rollback");
+      }),
+    ).toThrow("host rollback");
+    expect(Pinna.untracked(realm, (read) => read(value))).toBe(0);
+    expect(Pinna.stageStatus(stage)).toBe("dropped");
+    expect(Pinna.inspectStage(stage).recipes).toBe(0);
+    expect(() => Pinna.applyStage(stage)).toThrow(Pinna.StageClosedError);
+    expect(message(() => Pinna.applyStage(stage))).toContain("after it was dropped");
+    Pinna.dropStage(stage);
+  });
+
+  test("an empty journal stays applied when its enclosing update rolls back", () => {
+    using realm = testRealm();
+    const stage = Pinna.openStage(realm);
+    expect(() =>
+      Pinna.update(realm, () => {
+        Pinna.applyStage(stage);
+        throw new Error("host rollback");
+      }),
+    ).toThrow("host rollback");
+    expect(Pinna.stageStatus(stage)).toBe("applied");
+  });
+
   test("row readers track only their own changes, including removal and later reinsertion", () => {
     using realm = testRealm();
     const rows = Pinna.collection(realm, { keyOf: (row: { id: number; value: number }) => row.id });

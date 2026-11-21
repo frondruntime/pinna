@@ -301,8 +301,10 @@ ruling carries the date it was first written down, and uses today's names.
       rows inside an operation. A merge and `reconcileSchema` read and write
       through the running recipe's place, which the realm exposes to those
       slow paths alone.
-    - A recipe runs twice, staged and applied, so it is a function of its
-      `read`. While a recipe or a `stageRead` function runs, the core's
+    - A recipe runs once when staged and once per `applyStage` through its
+      parents to the realm, so it is a function of its `read`. Row listeners
+      run for each change on each run. While a recipe or a `stageRead`
+      function runs, the core's
       `deriving` slot holds a stage marker: a realm write, `watch`,
       `autorun`, and `observe` already refuse there, and the stage-specific
       messages live in the throw paths. Clearing `openDepth` for the run
@@ -327,11 +329,17 @@ ruling carries the date it was first written down, and uses today's names.
       value equal to the realm's value changes no version and notifies
       nobody. Watch effects and autoruns settle after landing; their errors
       go to `onError` and the stage stays `"applied"`.
+      An enclosing update that rolls back undoes the landing and changes
+      the stage's status to `"dropped"`; stage the work again in a new stage.
+      An empty journal stays `"applied"`, since it had no landing to undo.
     - Conflicts replay by default. `{ conflicts: "fail" }` records the
       version of each box and collection the stage, or a child, read from
       the realm, underneath computed values too, and `applyStage` throws a
       `StageConflictError` naming what changed, landing nothing. A box
-      written without reading is the last writer's. Nothing retries on its
+      written without reading is the last writer's. `write.modify` reads
+      its base when it comes from the realm. Two different observed versions
+      conflict even after a rollback restores the first; version order is
+      not observation order. Nothing retries on its
       own: a retry reruns requests, and only the author knows whether one is
       safe to repeat.
     - A child stage, `openStage(stage)`, is a savepoint. It reads through
