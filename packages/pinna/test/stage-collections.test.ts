@@ -5,7 +5,9 @@ import {
   autorun,
   box,
   collection,
+  computed,
   dropStage,
+  inspectStage,
   onRowChange,
   openStage,
   stageRead,
@@ -75,6 +77,40 @@ describe("collection writes through a stage", () => {
     const kept = initial[600] as Item;
     expect(untracked(realm, (read) => read.row($items, 600))).toBe(kept);
     expect(retainedKeys($items).size).toBe(1000);
+  });
+
+  test("a replaceAll that changes nothing leaves the stage's overlay and cache as they were", () => {
+    using realm = testRealm();
+    const $items = items(realm);
+    const rows = [
+      { id: 1, price: 1 },
+      { id: 2, price: 2 },
+    ];
+    update(realm, (_read, write) => {
+      write.replaceAll($items, rows);
+    });
+    let runs = 0;
+    const $sum = computed(realm, (read) => {
+      runs++;
+      return read($items.rows).reduce((total, item) => total + item.price, 0);
+    });
+    const stage = openStage(realm);
+    expect(stageRead(stage, (read) => read($sum))).toBe(3);
+    stageUpdate(stage, (_read, write) => {
+      write.replaceAll($items, [
+        { id: 1, price: 1 },
+        { id: 2, price: 2 },
+      ]);
+    });
+    expect(stageRead(stage, (read) => read($sum))).toBe(3);
+    expect(runs).toBe(1);
+    expect(inspectStage(stage).collections).toBe(0);
+    // The same rows in another order stage the order alone.
+    stageUpdate(stage, (_read, write) => {
+      write.replaceAll($items, [rows[1] as Item, rows[0] as Item]);
+    });
+    expect(stageRead(stage, (read) => [read($items.keys), read($sum)])).toEqual([[2, 1], 3]);
+    dropStage(stage);
   });
 
   test("a row equal to the one held keeps the held object through the stage", () => {

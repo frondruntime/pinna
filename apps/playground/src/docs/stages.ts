@@ -107,11 +107,9 @@ const placeOrder = (stage: Stage) => {
 // #endregion
 
 // #region savepoint
-const transferWithNote = async (
-  amount: number,
-  describe: () => Promise<string>,
-  $note: typeof $status,
-) => {
+const $note = box<string | undefined>(realm, undefined);
+
+const transferWithNote = async (amount: number, describe: () => Promise<string>) => {
   const stage = openStage(realm);
   try {
     stageUpdate(stage, (read, write) => {
@@ -120,9 +118,10 @@ const transferWithNote = async (
     // A child stage is a savepoint: dropped, it leaves the outer stage as it was.
     const section = openStage(stage);
     try {
-      await describe();
+      // A note that fails to load leaves the transfer to land without one.
+      const note = await describe();
       stageUpdate(section, (_read, write) => {
-        write($note, "sent");
+        write($note, note);
       });
       applyStage(section);
     } catch {

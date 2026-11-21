@@ -155,13 +155,14 @@ interface ReadVersion {
   readonly observable: object;
 }
 
-/** Bumped by every write to any stage's overlay, so a cache knows its chain changed. */
-let revisions = 0;
-
 class StageState implements Stage {
   declare readonly [stageBrand]: true;
   readonly realm: ObservableRealm;
   readonly parent: StageState | undefined;
+  /** The stage over the realm at the top of the chain: it numbers the chain's revisions. */
+  readonly root: StageState;
+  /** The last revision the root handed out; read on the root alone. */
+  revisions = 0;
   readonly name: string | undefined;
   readonly conflicts: "replay" | "fail";
   /** The value of each box this stage wrote, a collection's key order among them. */
@@ -172,7 +173,7 @@ class StageState implements Stage {
   journal: Array<Recipe> = [];
   status: StageStatus = "open";
   readonly children = new Set<StageState>();
-  /** Raised by each write to this overlay. */
+  /** Set from the root's count by each write to this overlay, so a cache knows its chain changed. */
   revision = 0;
   /** Computed values evaluated through this stage, valid while `cacheClock` and `cacheRevision` hold. */
   cache = new Map<ComputedValue<unknown>, unknown>();
@@ -192,6 +193,7 @@ class StageState implements Stage {
   ) {
     this.realm = realm;
     this.parent = parent;
+    this.root = parent === undefined ? this : parent.root;
     this.name = name;
     this.conflicts = conflicts;
     this.reads = conflicts === "fail" ? new Map() : undefined;
@@ -403,7 +405,7 @@ const stageReader = (state: StageState, session: Session): Read => {
 // Writing to the overlay
 
 const changedOverlay = (state: StageState): void => {
-  state.revision = ++revisions;
+  state.revision = ++state.root.revisions;
 };
 
 /** Puts `value` in this stage's overlay for `box`, and keeps what it replaced for the undo. */
@@ -485,10 +487,14 @@ const stagedRows = <Key, Value>(
       setBox(state, session, orderCell, order);
     },
     setAll(rows, order) {
-      own();
+      // Replaced whole: no copy of the rows held first.
       const prior = state.rows.get(key);
       session.undo.push(() => {
-        state.rows.set(key, prior as Map<unknown, unknown>);
+        if (prior === undefined) {
+          state.rows.delete(key);
+        } else {
+          state.rows.set(key, prior);
+        }
       });
       state.rows.set(key, rows as Map<unknown, unknown>);
       setBox(state, session, orderCell, order);
@@ -656,6 +662,10 @@ const runRecipes = (state: StageState, recipes: ReadonlyArray<Recipe>): void => 
  */
 export const openStage = (over: Realm | Stage, options?: StageOptions): Stage => {
   checkName(options?.name);
+  const conflicts = options?.conflicts;
+  if (conflicts !== undefined && conflicts !== "replay" && conflicts !== "fail") {
+    throw new Error(`pinna: conflicts is "replay" or "fail", not ${JSON.stringify(conflicts)}`);
+  }
   let state: StageState;
   if (over instanceof StageState) {
     const parent = openState(over, "openStage");
@@ -782,11 +792,15 @@ export const applyStage = (stage: Stage): void => {
       close(state, "dropped");
       throw error;
     }
+    // The replay recorded what it read at today's versions; what the child
+    // read earlier, and decided on, keeps its older version.
     const reads = state.reads;
-    if (reads !== undefined && parent.reads !== undefined) {
+    const parentReads = parent.reads;
+    if (reads !== undefined && parentReads !== undefined) {
       for (const [box, read] of reads) {
-        if (!parent.reads.has(box)) {
-          parent.reads.set(box, read);
+        const held = parentReads.get(box);
+        if (held === undefined || read.version < held.version) {
+          parentReads.set(box, read);
         }
       }
     }

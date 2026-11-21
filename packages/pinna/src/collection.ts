@@ -855,8 +855,15 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       next.set(key, kept);
       changed ||= !present || !Object.is(kept, previous);
     }
+    if (!changed) {
+      // The same rows: only the order can differ, and the stage keeps its overlay otherwise.
+      if (!sameElements(keys, heldOrder)) {
+        target.setOrder(keys);
+      }
+      return;
+    }
     target.setAll(next, keys);
-    if (changed && this.listeners !== undefined) {
+    if (this.listeners !== undefined) {
       this.reportReplaced(heldOrder, held, next, read, write);
     }
   }
