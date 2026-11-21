@@ -109,7 +109,8 @@ Each of them stops when its scope closes.
 | `observeScoped($x)` | An effect that holds `$x`, a box, a computed value, or an atom, observed until the scope closes. |
 | `whileObserved($x, program)` | An effect that runs `program` while `$x`, a box, a computed value, or an atom, is observed, each run in a scope of its own. A defect is logged at the error level, and the next observation starts the program again. Closing the caller's scope interrupts a run and waits for it; later observation does not start it again. |
 | `fromStream(realm, stream, initial, { equals?, name? })` | A read-only value: `initial`, then the stream's latest element; needs the stream's services. The stream runs with the services of the program that made the value, and restarts each time the value is observed again. The value resets to `initial` when the last observer leaves or the scope closes; closing the scope stops the stream for good. An element equal under `equals`, `Object.is` by default, notifies nobody; `name` names the value for `inspect`. |
-| `withStage(realmOrStage, (stage) => section, { name?, conflicts? })` | The section's value, with its stage applied; on a failure, a defect, or interruption the stage is dropped and the outcome stands. Over a stage, a savepoint. A conflict fails with `StageConflict`; a recipe that throws on replay is a defect. |
+| `withStage(realm, (stage) => section, { name?, conflicts? })` | The section's value, with its stage applied; a section failure, defect, or interruption drops the stage and the outcome stands. A conflict fails with `StageConflict`; a recipe that throws on replay is a defect. An interruption once landing began leaves the stage applied; the exit still contains `Interrupt`. |
+| `withStage(stage, (child) => section, { name? })` | A savepoint over `stage`, with the same success and failure behavior. The child inherits its root's conflict mode and takes no `conflicts` option. |
 | `StageConflict` | The tagged error `withStage` fails with when a stage opened with `{ conflicts: "fail" }` finds that what it read changed: `stage`, `changed`, and `observables`, as on `StageConflictError`. |
 
 ## Lifetimes
@@ -208,8 +209,9 @@ its scope closes; the fix is `return await`.
 
 `withStage` holds a section's writes in a stage
 ([Updates](../state/updates.md#stages)) and lands them when the section
-succeeds. A failure, a defect, or an interruption drops them, so nothing the
-section staged reaches the realm.
+succeeds. A section failure, defect, or interruption drops
+them, so nothing the section staged reaches the realm. An interruption
+once landing began leaves the stage applied; the exit still contains `Interrupt`.
 
 <!-- region stagesEffect.ts#withStage -->
 

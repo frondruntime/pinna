@@ -19,6 +19,7 @@ import {
   type Stage,
   StageConflict,
   StageConflictError,
+  type StageOptions,
   schemaBox,
   schemaCollection,
   stageRead,
@@ -372,6 +373,83 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
 }
 
 describe("withStage", () => {
+  test("interruption during landing leaves the stage applied and the exit interrupted", async () => {
+    using realm = testRealm();
+    const value = box(realm, 0);
+    const started = Deferred.makeUnsafe<void>();
+    const gate = Deferred.makeUnsafe<void>();
+    let kept!: Stage;
+    const fiber = Effect.runFork(
+      withStage(realm, (stage) =>
+        Effect.gen(function* () {
+          kept = stage;
+          stageUpdate(stage, (_read, write) => write(value, 1));
+          Deferred.doneUnsafe(started, Exit.void);
+          yield* Deferred.await(gate);
+          return "landed";
+        }),
+      ),
+    );
+    await Effect.runPromise(Deferred.await(started));
+    using _watch = held(
+      watch(
+        realm,
+        (read) => read(value),
+        () => {
+          Effect.runFork(Fiber.interrupt(fiber));
+        },
+      ),
+    );
+    await Effect.runPromise(Deferred.succeed(gate, undefined));
+    const exit = await Effect.runPromise(Fiber.await(fiber));
+    expect(Exit.hasInterrupts(exit)).toBe(true);
+    expect(stageStatus(kept)).toBe("applied");
+    expect(untracked(realm, (read) => read(value))).toBe(1);
+  });
+
+  test("child options exclude conflicts at the type boundary", () => {
+    using realm = testRealm();
+    const parent = openStage(realm);
+    using _parent = held(() => dropStage(parent));
+    const root: Effect.Effect<number, StageConflict> = withStage(realm, () => Effect.succeed(1), {
+      name: "root",
+      conflicts: "fail",
+    });
+    const child: Effect.Effect<number, StageConflict> = withStage(parent, () => Effect.succeed(2), {
+      name: "child",
+    });
+    // @ts-expect-error A child inherits the root's conflicts option.
+    withStage(parent, () => Effect.void, { conflicts: "fail" });
+    const options: StageOptions = { name: "child", conflicts: "fail" };
+    // @ts-expect-error A named options variable cannot override the root either.
+    withStage(parent, () => Effect.void, options);
+    expect(Effect.runSync(root)).toBe(1);
+    expect(Effect.runSync(child)).toBe(2);
+  });
+
+  test("release preserves dropped status after an enclosing update rolls back", () => {
+    using realm = testRealm();
+    const value = box(realm, 0);
+    let kept!: Stage;
+    expect(() =>
+      update(realm, () => {
+        Effect.runSync(
+          withStage(realm, (stage) =>
+            Effect.sync(() => {
+              kept = stage;
+              stageUpdate(stage, (_read, write) => write(value, 1));
+            }),
+          ),
+        );
+        throw new Error("host rollback");
+      }),
+    ).toThrow("host rollback");
+    expect(untracked(realm, (read) => read(value))).toBe(0);
+    expect(stageStatus(kept)).toBe("dropped");
+    dropStage(kept);
+    expect(stageStatus(kept)).toBe("dropped");
+  });
+
   test("applies the stage when the section succeeds", async () => {
     using realm = testRealm();
     const $status = box(realm, "idle");
