@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { testRealm } from "@frondruntime/pinna/testing";
+import { held, testRealm } from "@frondruntime/pinna/testing";
 import { Cause, Deferred, Effect, Exit, Fiber, Schema, Stream } from "effect";
 import {
   applyStage,
@@ -7,14 +7,19 @@ import {
   box,
   CollectionField,
   changes,
+  computed,
   decode,
   dropStage,
+  onRowChange,
   openStage,
+  type Read,
   reconcileSchema,
   SchemaModel,
   type Stage,
   StageConflict,
+  StageConflictError,
   schemaBox,
+  schemaCollection,
   stageRead,
   stageStatus,
   stageUpdate,
@@ -38,6 +43,12 @@ class Quote extends SchemaModel<Quote>("Quote")({
 
 class Book extends SchemaModel<Book>("Book")({
   $quotes: CollectionField(Quote, { keyOf: (quote) => quote.id }),
+}) {}
+
+class MergeRow extends SchemaModel<MergeRow>("MergeRow")({
+  id: Schema.String,
+  $price: BoxField(NonNegative),
+  $items: CollectionField(Schema.Number, { keyOf: (value) => value }),
 }) {}
 
 const quotesJson = (...quotes: ReadonlyArray<readonly [string, number]>) =>
@@ -160,6 +171,203 @@ describe("a refetch through a stage", () => {
     dropStage(stage);
   });
 });
+
+for (const entry of ["reconcileSchema", "write.upsert"] as const) {
+  describe(`${entry} through a stage`, () => {
+    for (const destination of ["realm", "parent"] as const) {
+      test(`reads incoming staged fields across recipes and applies through the ${destination}`, () => {
+        using realm = testRealm();
+        const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
+        const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
+        const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
+        update(realm, (_read, write) => write.upsert($rows, previous));
+        const parent = openStage(realm);
+        using _parent = held(() => dropStage(parent));
+        const stage = destination === "parent" ? openStage(parent) : parent;
+        stageUpdate(parent, (_read, write) => {
+          write(fresh.$price, 20);
+          write.replaceAll(fresh.$items, [2]);
+        });
+        stageUpdate(stage, (_read, write) => {
+          if (entry === "reconcileSchema") {
+            expect(reconcileSchema([previous], [fresh], { keyOf: (row) => row.id })).toEqual([
+              previous,
+            ]);
+          } else {
+            write.upsert($rows, fresh);
+          }
+        });
+        const inspect = (read: Read) => [
+          read(previous.$price),
+          read(previous.$items.rows),
+          read.row($rows, "a") === previous,
+        ];
+        const preview = stageRead(stage, inspect);
+        expect(untracked(realm, inspect)).toEqual([0, [], true]);
+        applyStage(stage);
+        if (destination === "parent") {
+          expect(stageRead(parent, inspect)).toEqual([20, [2], true]);
+          expect(untracked(realm, inspect)).toEqual([0, [], true]);
+          applyStage(parent);
+        }
+        expect(untracked(realm, inspect)).toEqual([20, [2], true]);
+        expect(preview).toEqual([20, [2], true]);
+      });
+    }
+
+    for (const field of ["box", "collection", "copied collection"] as const) {
+      test(`conflicts when the incoming ${field} changes after the merge`, () => {
+        using realm = testRealm();
+        const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
+        const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
+        const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
+        update(realm, (_read, write) => write.upsert($rows, previous));
+        const stage = openStage(realm, { conflicts: "fail" });
+        using _stage = held(() => dropStage(stage));
+        if (field === "copied collection") {
+          stageUpdate(stage, (_read, write) => write.upsert(fresh.$items, 2));
+        }
+        stageUpdate(stage, (_read, write) => {
+          if (entry === "reconcileSchema") {
+            reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+          } else {
+            write.upsert($rows, fresh);
+          }
+        });
+        update(realm, (_read, write) => {
+          if (field === "box") {
+            write(fresh.$price, 99);
+          } else {
+            write.replaceAll(fresh.$items, [99]);
+          }
+        });
+        expect(() => applyStage(stage)).toThrow(StageConflictError);
+        expect(stageStatus(stage)).toBe("dropped");
+        expect(
+          untracked(realm, (read) => [read(previous.$price), read(previous.$items.rows)]),
+        ).toEqual([0, []]);
+      });
+    }
+
+    test("reads incoming writes and collection order in an ordinary update", () => {
+      using realm = testRealm();
+      const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
+      const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
+      const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
+      update(realm, (_read, write) => {
+        write.upsert($rows, previous);
+        write(fresh.$price, 20);
+        write.replaceAll(fresh.$items, [3, 2]);
+        if (entry === "reconcileSchema") {
+          reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+        } else {
+          write.upsert($rows, fresh);
+        }
+      });
+      expect(
+        untracked(realm, (read) => [read(previous.$price), read(previous.$items.rows)]),
+      ).toEqual([20, [3, 2]]);
+    });
+
+    for (const nested of [false, true]) {
+      test(`a caught merge failure restores fields and decisions${nested ? " after a listener catches a failed write" : ""}`, () => {
+        using realm = testRealm();
+        const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
+        const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
+        const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
+        const $nested = schemaCollection(realm, Schema.Number, { keyOf: (value) => value });
+        const $listener = box(realm, 0);
+        const $nestedListener = box(realm, 0);
+        const $earlier = box(realm, 0);
+        const $decision = box(realm, false);
+        const $total = computed(
+          realm,
+          (read) =>
+            read(previous.$price) +
+            read(previous.$items.rows).length +
+            read($listener) +
+            read($nestedListener) +
+            read($nested.rows).length,
+        );
+        const innerFailure = new Error("inner refused");
+        const outerFailure = new Error("merge refused");
+        const innerReads: Array<ReadonlyArray<unknown>> = [];
+        const caught: Array<unknown> = [];
+        update(realm, (_read, write) => write.upsert($rows, previous));
+        using _nested = held(
+          onRowChange($nested, (_change, read, write) => {
+            write($nestedListener, 99);
+            read($total);
+            throw innerFailure;
+          }),
+        );
+        using _listener = held(
+          onRowChange(previous.$items, (_change, read, write) => {
+            write($listener, 1);
+            if (nested) {
+              try {
+                write.upsert($nested, 1);
+              } catch (error) {
+                expect(error).toBe(innerFailure);
+              }
+              innerReads.push([
+                read($nested.rows),
+                read($nestedListener),
+                read($listener),
+                read($total),
+              ]);
+            }
+            read($total);
+            throw outerFailure;
+          }),
+        );
+        const stage = openStage(realm);
+        using _stage = held(() => dropStage(stage));
+        stageUpdate(stage, (read, write) => {
+          write($earlier, 7);
+          write(previous.$price, 3);
+          try {
+            if (entry === "reconcileSchema") {
+              reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+            } else {
+              write.upsert($rows, fresh);
+            }
+          } catch (error) {
+            caught.push(error);
+          }
+          write($decision, read($total) !== 3);
+        });
+        const inspect = (read: Read) => [
+          read(previous.$price),
+          read(previous.$items.rows),
+          read($listener),
+          read($nestedListener),
+          read($nested.rows),
+          read($earlier),
+          read($total),
+        ];
+        const preview = stageRead(stage, inspect);
+        const decision = stageRead(stage, (read) => read($decision));
+        stageUpdate(stage, (_read, write) => write($decision, decision));
+        expect(untracked(realm, inspect)).toEqual([0, [], 0, 0, [], 0, 0]);
+        applyStage(stage);
+        expect(caught).toEqual([outerFailure, outerFailure]);
+        expect(innerReads).toEqual(
+          nested
+            ? [
+                [[], 0, 1, 12],
+                [[], 0, 1, 12],
+              ]
+            : [],
+        );
+        expect(untracked(realm, inspect)).toEqual([3, [], 0, 0, [], 7, 3]);
+        expect(preview).toEqual([3, [], 0, 0, [], 7, 3]);
+        expect(untracked(realm, (read) => read($decision))).toBe(false);
+        expect(decision).toBe(false);
+      });
+    }
+  });
+}
 
 describe("withStage", () => {
   test("applies the stage when the section succeeds", async () => {

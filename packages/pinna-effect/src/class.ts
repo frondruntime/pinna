@@ -121,7 +121,7 @@ export const BoxField = <S extends Schema.Top>(schema: S) => {
       read: (box) => peekCell((box as BoxCell<S["Type"]>).source),
       merge: (held, fresh, read, write) => {
         const target = held as BoxCell<S["Type"]>;
-        const value = peekCell((fresh as BoxCell<S["Type"]>).source);
+        const value = read(fresh as BoxCell<S["Type"]>);
         return equals(read(target), value)
           ? undefined
           : () => {
@@ -218,8 +218,9 @@ export const CollectionField = <S extends Schema.Top, Key>(
       read: (collection) => (collection as KeyedCollection<Key, S["Type"]>).values(),
       merge: (held, fresh, read, write) => {
         const target = held as KeyedCollection<Key, S["Type"]>;
-        const rows = (fresh as KeyedCollection<Key, S["Type"]>).values();
-        // The rows held where the merge runs: the realm's, or a stage's.
+        const incoming = fresh as KeyedCollection<Key, S["Type"]>;
+        // Both sides read where the merge runs: the realm's values, or a stage's.
+        const rows = read(incoming.keys).map((key) => read.row(incoming, key) as S["Type"]);
         const current = read(target.keys).map((key) => read.row(target, key) as S["Type"]);
         return sameRows(current, rows, keyOf, equals, read, write)
           ? undefined
