@@ -847,7 +847,8 @@ const ignore = (): void => {};
 /**
  * Runs `recipes` with one undo boundary and a session per recipe: all of
  * them, or none, with the overlay as it was. Root replay prepares its
- * landing under the same guard, with every recipe's handles closed.
+ * landing under the same guard, with every recipe's handles closed, through
+ * a read-only session of its own.
  */
 const runRecipes = (
   state: StageState,
@@ -882,16 +883,23 @@ const runRecipes = (
       }
     }
     if (prepare !== undefined) {
-      const read = stageReader(state, boundary);
-      asPlace(
-        state,
-        {
-          read,
-          write: stageWriter(state, boundary, read),
-          undoOnThrow: (run) => undoOnThrow(state, boundary, run),
-        },
-        prepare,
-      );
+      // Its own read-only session: merge planning reads through the field
+      // codecs, and a recipe's handles are closed by now.
+      const session: Session = { open: true, writable: false, undo: boundary.undo };
+      const read = stageReader(state, session);
+      try {
+        asPlace(
+          state,
+          {
+            read,
+            write: stageWriter(state, session, read),
+            undoOnThrow: (run) => undoOnThrow(state, session, run),
+          },
+          prepare,
+        );
+      } finally {
+        session.open = false;
+      }
     }
   } catch (error) {
     undoSession(state, boundary);

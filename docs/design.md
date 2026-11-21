@@ -375,7 +375,9 @@ leaves nothing to undo (ruling 53).
   with no scan of unwritten rows. Over a parent: the recipes run against
   the parent with one undo boundary, all or none. Each recipe has its own
   `read` and `write`, closed in its `finally`; landing preparation runs with
-  no recipe handle open, under the guard.
+  no recipe handle open, under the guard, through a read-only session of its
+  own, since comparing a held `SchemaModel` row with a staged one reads
+  through the field codecs.
 - **Write-back identity.** Root replay checks a box's incoming value before
   comparing it with the enclosing update's original value, then with the
   current overlay value, in the same order as an ordinary write. A value
