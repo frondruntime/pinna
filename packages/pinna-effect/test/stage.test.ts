@@ -444,7 +444,7 @@ describe("withStage", () => {
     expect(untracked(realm, (read) => read(value))).toBe(1);
   });
 
-  test("child options exclude conflicts at the type boundary", () => {
+  test("child options exclude conflicts, and a child cannot fail with StageConflict, at the type boundary", () => {
     using realm = testRealm();
     const parent = openStage(realm);
     using _parent = held(() => dropStage(parent));
@@ -452,7 +452,8 @@ describe("withStage", () => {
       name: "root",
       conflicts: "fail",
     });
-    const child: Effect.Effect<number, StageConflict> = withStage(parent, () => Effect.succeed(2), {
+    // A child never conflicts: its root checks what it read.
+    const child: Effect.Effect<number, never> = withStage(parent, () => Effect.succeed(2), {
       name: "child",
     });
     // @ts-expect-error A child inherits the root's conflicts option.

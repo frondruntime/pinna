@@ -37,13 +37,14 @@ export class StageConflict extends Data.TaggedError("StageConflict")<{
 /**
  * Runs `section` with a new stage over `over`, a realm or a stage, made with
  * `options`. On success the stage is applied and the section's value
- * returned; on section failure, a defect, or interruption,
- * the stage is dropped and the section's outcome stands. An interruption
- * once landing began leaves the stage applied; the exit still contains `Interrupt`.
- * A conflict on applying fails with `StageConflict`; any other throw from
- * the apply, such as a recipe that throws on replay, is a defect. The release
- * drops whether or not the stage
- * applied, which does nothing to a closed stage.
+ * returned; on section failure, a defect, or interruption, the stage is
+ * dropped and the section's outcome stands. An interruption once landing
+ * began leaves the stage applied; the exit still contains `Interrupt`. A
+ * conflict on applying a stage over a realm fails with `StageConflict`; a
+ * child never conflicts, since its root checks what it read. Any other throw
+ * from the apply, such as a recipe that throws on replay, is a defect. The
+ * release drops whether or not the stage applied, which does nothing to a
+ * closed stage.
  */
 export function withStage<A, E, R>(
   over: Realm,
@@ -54,7 +55,7 @@ export function withStage<A, E, R>(
   over: Stage,
   section: (stage: Stage) => Effect.Effect<A, E, R>,
   options?: Omit<StageOptions, "conflicts"> & { readonly conflicts?: never },
-): Effect.Effect<A, E | StageConflict, R>;
+): Effect.Effect<A, E, R>;
 export function withStage<A, E, R>(
   over: Realm | Stage,
   section: (stage: Stage) => Effect.Effect<A, E, R>,
