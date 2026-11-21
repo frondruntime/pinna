@@ -1,6 +1,6 @@
 ---
 title: Programs
-description: Read when an app is written as Effect programs. Provide the realm as a service, run an effect per change, stream changes, hold a value observed for a scope, feed a value from a stream, and run a feed while its data is read.
+description: Read when an app is written as Effect programs. Run an effect per change, stream changes, hold a value observed for a scope, feed a value from a stream, run a feed while its data is read, and hold a section's writes in a stage until it succeeds.
 ---
 
 The Effect pages are for applications that already use Effect: see
@@ -13,8 +13,10 @@ return a stop function instead.
 
 ## Example
 
-The realm is a service. `watchScoped` and `fromStream` read it from
-`RealmService`; a layer provides it once.
+No program requires a service for the realm. `watchScoped` and `fromStream`
+take it first, as `watch` does, and `changes`, `observeScoped`, and
+`whileObserved` take it from the observable, so a program that refuses every
+requirement but `Scope` runs each of them.
 
 <!-- region programs.ts#layer -->
 
@@ -58,8 +60,9 @@ Each of them stops when its scope closes.
 
 ## Rules
 
-- Provide `RealmService` once, at the edge of the program. A test provides a
-  realm of its own.
+- Pass the realm, as `watch` takes it. A test makes a realm of its own.
+  `RealmService` is for a `SchemaModel` decoded inside an Effect program
+  ([Classes](./classes.md)).
 - A watch's effect has no error channel. A defect is a bug: it is logged at
   the error level, and the watch keeps running. A stream behind `fromStream`
   logs a defect too.
@@ -74,8 +77,8 @@ Each of them stops when its scope closes.
 - `watchScoped` runs for changes, not for the current value. `changes` starts with
   the current value.
 - `changes`, `observeScoped`, and `whileObserved` take the realm from the
-  observable, so they need no `RealmService`. A host whose programs require
-  nothing but `Scope` watches a box with `changes` while its work awaits.
+  observable. A host whose programs require nothing but `Scope` watches a
+  box with `changes` while its work awaits.
 - A `whileObserved` program runs in a scope of its own, closed when the run
   ends, so a fiber it forks into that scope stops with it. A program that
   returns ends its run while the value is still observed, and the next run
@@ -101,12 +104,13 @@ Each of them stops when its scope closes.
 
 | Call | Answers |
 | --- | --- |
-| `RealmService` | The service the functions below read the realm from. |
-| `watchScoped((read) => ..., (value, previous) => effect, { equals?, name? })` | An effect that starts the watch in the caller's scope; needs `RealmService`. A result equal under `equals`, `Object.is` by default, is no change, so it neither runs nor interrupts the effect. `name` names the watch in its errors. |
-| `changes($x)` | A stream of `$x`'s current value, then each change; a slow consumer skips to the newest. Takes a box or a computed value, not an atom. Needs no `RealmService`. |
-| `observeScoped($x)` | An effect that holds `$x`, a box, a computed value, or an atom, observed until the scope closes. Needs no `RealmService`. |
-| `whileObserved($x, program)` | An effect that runs `program` while `$x`, a box, a computed value, or an atom, is observed, each run in a scope of its own. A defect is logged at the error level, and the next observation starts the program again. Closing the caller's scope interrupts a run and waits for it; later observation does not start it again. Needs no `RealmService`. |
-| `fromStream(stream, initial, { equals?, name? })` | A read-only value: `initial`, then the stream's latest element; needs `RealmService` and the stream's services. The stream runs with the services of the program that made the value, and restarts each time the value is observed again. The value resets to `initial` when the last observer leaves or the scope closes; closing the scope stops the stream for good. An element equal under `equals`, `Object.is` by default, notifies nobody; `name` names the value for `inspect`. |
+| `watchScoped(realm, (read) => ..., (value, previous) => effect, { equals?, name? })` | An effect that starts the watch in the caller's scope. A result equal under `equals`, `Object.is` by default, is no change, so it neither runs nor interrupts the effect. `name` names the watch in its errors. |
+| `changes($x)` | A stream of `$x`'s current value, then each change; a slow consumer skips to the newest. Takes a box or a computed value, not an atom. |
+| `observeScoped($x)` | An effect that holds `$x`, a box, a computed value, or an atom, observed until the scope closes. |
+| `whileObserved($x, program)` | An effect that runs `program` while `$x`, a box, a computed value, or an atom, is observed, each run in a scope of its own. A defect is logged at the error level, and the next observation starts the program again. Closing the caller's scope interrupts a run and waits for it; later observation does not start it again. |
+| `fromStream(realm, stream, initial, { equals?, name? })` | A read-only value: `initial`, then the stream's latest element; needs the stream's services. The stream runs with the services of the program that made the value, and restarts each time the value is observed again. The value resets to `initial` when the last observer leaves or the scope closes; closing the scope stops the stream for good. An element equal under `equals`, `Object.is` by default, notifies nobody; `name` names the value for `inspect`. |
+| `withStage(realmOrStage, (stage) => section, { name?, conflicts? })` | The section's value, with its stage applied; on a failure, a defect, or interruption the stage is dropped and the outcome stands. Over a stage, a savepoint. A conflict fails with `StageConflict`; a recipe that throws on replay is a defect. |
+| `StageConflict` | The tagged error `withStage` fails with when a stage opened with `{ conflicts: "fail" }` finds that what it read changed: `stage`, `changed`, and `observables`, as on `StageConflictError`. |
 
 ## Lifetimes
 
@@ -164,7 +168,7 @@ observer leaves. The next observer starts the stream again, from `initial`.
 
 A program that polls or sleeps is tested on `TestClock`, from
 `effect/testing`, so the test moves time instead of waiting for it. The
-test realm and `RealmService` are as on [Testing](../guides/testing.md).
+test realm is as on [Testing](../guides/testing.md).
 
 - Provide `TestClock.layer()` around the program that makes a `fromStream`
   value, not only around the one that observes it. The value keeps the
@@ -199,6 +203,37 @@ its scope closes; the fix is `return await`.
 | --- | --- |
 | `Effect.provide(TestClock.layer())` | A program whose sleeps and schedules wait on the test clock. |
 | `TestClock.adjust(duration)` | Moves the test clock and runs the sleeps that fall due; not a signal that other work finished. |
+
+## Stages
+
+`withStage` holds a section's writes in a stage
+([Updates](../state/updates.md#stages)) and lands them when the section
+succeeds. A failure, a defect, or an interruption drops them, so nothing the
+section staged reaches the realm.
+
+<!-- region stagesEffect.ts#withStage -->
+
+Over a stage, `withStage` is a savepoint. A section that fails and is caught
+leaves the outer stage as it was, and each attempt of an `Effect.retry`
+opens a fresh child.
+
+<!-- region stagesEffect.ts#savepoint -->
+
+With `{ conflicts: "fail" }`, a stage whose reads changed before it landed
+fails with `StageConflict`, and `Effect.retry` runs the section again over
+the new values.
+
+<!-- region stagesEffect.ts#conflicts -->
+
+- `withStage` applies the stage after the section succeeds, synchronously,
+  so nothing runs between the section's last write and the landing.
+- The release drops the stage whether or not it applied: `dropStage` does
+  nothing to a closed stage.
+- Retrying reruns the section, requests included. Retry only a section that
+  is safe to repeat; `withStage` never retries on its own.
+- A host that lands a stage inside its own update, or applies only on a
+  condition, calls `openStage`, `applyStage`, and `dropStage` itself, with
+  `Effect.acquireUseRelease`.
 
 ## See also
 

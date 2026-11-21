@@ -269,59 +269,95 @@ ruling carries the date it was first written down, and uses today's names.
     plain functions: a dispose property on each made creating and stopping
     watches 28% slower (2.43 ms to 3.1 ms, rough tier, Node,
     `make-and-dispose`). `retainedKeys` joined the entry on 2026-11-17.
-53. **Stages** (2026-11-20). `openStage(realm)` makes a stage;
-    `stageUpdate`, `stageRead`, `realmRead`, `applyStage`, and `dropStage`
-    take it first, from the root of `@frondruntime/pinna` (45). Frond asked for
-    it: a host that runs asynchronous programs over a realm, whose writes
-    must appear together when a program succeeds and never when it fails or
-    is interrupted. The desk's orders write optimistically, which a stage
-    does not.
+53. **Stages** (2026-11-20, completed 2026-11-21). `openStage(realm or
+    stage, { name, conflicts })` makes a stage; `stageUpdate`, `stageRead`,
+    `realmRead`, `applyStage`, `dropStage`, `stageStatus`, and
+    `inspectStage` take it first, from the root of `@frondruntime/pinna`
+    (45), with `StageClosedError`, `StageConflictError`, and the `Recipe`
+    type. Frond asked for it: a host that runs asynchronous programs over a
+    realm, whose writes must appear together when a program succeeds and
+    never when it fails or is interrupted. The desk's orders write
+    optimistically, which a stage does not.
     - Explicit, like `update(realm, recipe)`: the realm keeps no current
       stage, and `update` and `readIn` gain no field read and no branch.
-    - A stage is an overlay, a value for each box it wrote, and a journal of
-      its recipes in order. `stageUpdate` runs the recipe at once, against
-      the stage's `read` and `write`, and keeps it. Nothing copies the
-      realm, and a stage makes no graph node, so staged values are not
-      observable.
-    - `stageRead` reads the overlay's value of a box the stage wrote and the
-      realm's current value of any other: not a snapshot. `realmRead` reads
-      the realm's values, ignoring the overlay.
-    - `applyStage` replays the journal in one `update` over the realm's
-      values at that moment, each recipe in a nested update, and joins an
-      open update. It detects no conflict. The accepted cost: a value read
-      through the stage before applying can differ from what applying
-      writes. A recipe that throws on replay, or a write a box's check
-      refuses, throws from `applyStage` and rolls back the update it joined.
-    - A stage closes once, applied or dropped, and `applyStage` closes it
-      even when it throws. Every later call throws, and so does a `read` or
-      a `write` kept past its recipe (43).
-    - Errors follow `update`'s: a throwing recipe puts back its own overlay
-      writes and is not kept; a recipe that returns a promise throws;
-      `stageUpdate` and `applyStage` throw in a derivation through
-      `assertUpdateCanRun`, and `stageRead` and `realmRead` throw there too,
-      since their reads are not tracked. A call on a stage inside one of its
-      own recipes throws.
-    - Boxes only: `write.upsert`, `write.remove`, `write.replaceAll`,
-      `write.changed`, and a `read` of a computed value throw in a stage,
-      each naming the limit, since a computed value over a staged box would
-      return the realm's value with no error. `read.row` reads the realm's
-      row.
+    - A stage is an overlay and a journal. The overlay holds each box it
+      wrote, and the rows and key order of each collection it wrote, copied
+      on its first write so the two agree; the journal holds its recipes in
+      order. Nothing copies the realm, a stage makes no graph node, and its
+      values are not observable: Frond's pending state comes from the
+      call's status, so no second graph.
+    - Reads see the stage's writes everywhere. A collection's `keys`,
+      `rows`, `row`, and `read.row` read the staged rows. A computed value
+      runs its own function against the stage's `read`, outside the graph,
+      Recoil's `Snapshot.map` model, so it starts no `onObserved` source; the
+      result is cached on the stage until the stage, a parent, or the realm
+      changes (the core's clock). Without it, a body that staged "add an
+      item" and read `$total` got the realm's total, wrong and silent.
+    - Writes cover boxes, collections, and atoms. A collection write runs
+      the collection's own check, equality, `SchemaModel` merge, and
+      `onRowChange` listeners over the staged rows, with the stage's `read`
+      and `write`; an atom's `changed` is kept for the replay. Frond's
+      results hold lists, refetched by a `replaceAll` of 1,000 to 10,000
+      rows inside an operation. A merge and `reconcileSchema` read and write
+      through the running recipe's place, which the realm exposes to those
+      slow paths alone.
+    - A recipe runs twice, staged and applied, so it is a function of its
+      `read`. While a recipe or a `stageRead` function runs, the core's
+      `deriving` slot holds a stage marker: a realm write, `watch`,
+      `autorun`, and `observe` already refuse there, and the stage-specific
+      messages live in the throw paths. Clearing `openDepth` for the run
+      makes a realm `read` kept from another place throw. Making an
+      observable, `untracked`, `onObserved`, `onRowChange`, and every stage
+      call check the marker. Without the guard, an `update` inside a recipe,
+      reached through a result method, wrote the realm at once and survived
+      a drop, and a box made in a recipe split in two on replay. Frond's
+      proposal, `core.active` set to a marker, was not taken: `readCell`
+      links into whatever `active` holds.
+    - `applyStage` over a realm replays the journal in one `update`, each
+      recipe in a nested update, nested in an update already open: a recipe
+      that throws on replay, or a write a check refuses, undoes the stage's
+      writes alone and reaches the caller, so Frond catches it inside its
+      settle update and records the call's failure there. Several stages in
+      one update land in apply order, and two stages that write one box
+      build on each other.
+    - Conflicts replay by default. `{ conflicts: "fail" }` records the
+      version of each box and collection the stage, or a child, read from
+      the realm, underneath computed values too, and `applyStage` throws a
+      `StageConflictError` naming what changed, landing nothing. A box
+      written without reading is the last writer's. Nothing retries on its
+      own: a retry reruns requests, and only the author knows whether one is
+      safe to repeat.
+    - A child stage, `openStage(stage)`, is a savepoint. It reads through
+      its parent; `applyStage` replays its recipes into the parent as one
+      `stageUpdate` and merges what it read into the parent's record; a
+      throw leaves the parent as it was. A parent with an open child does
+      not apply, and dropping a parent drops its children. Without it, a
+      section an Effect program catches or retries left its writes in the
+      stage, the opposite of a nested `update`.
+    - A stage closes once, `"applied"` or `"dropped"` (a replay that throws
+      ends `"dropped"`). Every later call throws a `StageClosedError`, a
+      bug, except `dropStage`, which does nothing, so a cleanup drops
+      whether or not the work applied. A `read` or a `write` kept past its
+      recipe throws (43).
     - A schema box checks a staged write at `stageUpdate`, where the work
       wrote it, and again at `applyStage`, where it lands.
-    - A stage left open is reported by a test realm's dispose as
-      `stage still running`, through the hook `onRowChange` already uses, so
-      an application's realm keeps no record of its stages and no counter.
-    - The first build leaves out the Effect form, conflict detection,
-      computed values and collections through a stage, nested stages, and
-      a stage over two realms. The complete build (55) settles each with
-      Frond's answers.
-54. **`changes` takes its realm from the observable** (2026-11-20).
-    `changes($box)` reads the realm with `realmOf($box)`, as `observeScoped`
-    and `whileObserved` do, and requires nothing: `Stream<Value>`, not
-    `Stream<Value, never, RealmService>`. A host that refuses every
-    requirement but `Scope` watches a box while its work awaits.
-    `watchScoped` and `fromStream` take no observable and still read
-    `RealmService`. Amends 11.
+    - A stage left open is reported by a test realm's dispose by its name,
+      through the hook `onRowChange` already uses, so an application's
+      realm keeps no record of its stages.
+    - `pinna-effect`'s `withStage(realm or stage, section, options)` applies
+      the stage when the section succeeds and drops it otherwise; a conflict
+      fails with the tagged `StageConflict`, and a replay that throws is a
+      defect. Frond wraps the plain calls itself, since it applies inside its
+      own update and only when the call is still current; `withStage` is for
+      authors' savepoints and for applications such as the desk.
+54. **No program requires `RealmService`** (2026-11-20, completed
+    2026-11-21). `changes($box)` reads the realm with `realmOf($box)`, as
+    `observeScoped` and `whileObserved` do, and `watchScoped(realm, ...)`
+    and `fromStream(realm, ...)` take the realm first, as `watch` does. A
+    Frond operation body, and a node's acquire, refuse every requirement
+    but `Scope`, and both watch selectors and build values fed by streams;
+    authors already close over the realm to make boxes. `RealmService`
+    stays for a `SchemaModel` decoded inside an Effect program. Amends 11.
 55. **Rules by purpose** (2026-11-21). `AGENTS.md` states each rule with
     what it protects, and the owner's instruction overrides every default:
     a feature the owner asks for needs no use case, and is built to the
