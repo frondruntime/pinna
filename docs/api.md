@@ -328,8 +328,12 @@ ruling carries the date it was first written down, and uses today's names.
     "Done" list in `AGENTS.md`. "No API is added until a use needs it" read
     as a gate: the stage plan named the desk as a use it does not have, and
     the first build deferred parts as unasked. It is replaced by "no
-    speculative API; what is asked for is built complete". Rules that
-    protect users or cannot be taken back are marked hard. Replaces the
+    speculative API; what is asked for is built complete". Security and
+    actions beyond the working tree are absolute rules, read as written:
+    pushing and publishing, destructive git and registry actions, secrets,
+    the supply chain, and who may authorize them. An agent they block asks
+    the owner, escalates, or proposes a change, and never acts on its own
+    reading. Invariants that break for users are marked hard. Replaces the
     gate wording of the settled point on new API.
 
 53. **A collection row cannot be `undefined`** (2026-11-18).
