@@ -300,7 +300,10 @@ ruling carries the date it was first written down, and uses today's names.
     (2026-11-21). A write that changes a collection's rows empties `rows`,
     and a write that changes a key's row empties that key's `row(key)`,
     when nothing observes it, through pinna-core's `forgetValue`; the next
-    read runs it again. Both stay the same computed values. Before it, each
+    read runs it again. A key that leaves empties its `row(key)`, which a
+    caller may still hold, and a rolled-back update empties both, which
+    would otherwise keep the rows it discarded until the next read. Both
+    stay the same computed values. Before it, each
     kept its last unobserved result, so a `write.replaceAll` left the
     replaced generation reachable: in the React Native bench store, whose
     `merge` reads `rows` before `write.replaceAll`, 3,498 boxes stayed
