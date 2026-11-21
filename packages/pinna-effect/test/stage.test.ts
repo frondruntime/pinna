@@ -13,6 +13,7 @@ import {
   onRowChange,
   openStage,
   type Read,
+  type Recipe,
   reconcileSchema,
   SchemaModel,
   type Stage,
@@ -25,6 +26,7 @@ import {
   stageUpdate,
   untracked,
   update,
+  watch,
   withStage,
 } from "../src/index.ts";
 
@@ -563,4 +565,149 @@ describe("withStage", () => {
     expect(stageStatus(held as Stage)).toBe("dropped");
     expect(untracked(realm, (read) => read($a))).toBe(2);
   });
+});
+
+describe("root replay schema differential", () => {
+  for (const entry of ["upsert", "replaceAll", "reconcileSchema"] as const) {
+    test(`${entry} merges match ordinary updates, listeners, watchers, and conflicts`, () => {
+      const run = (staged: boolean) => {
+        using realm = testRealm();
+        const previous = MergeRow.make({ realm, id: "a", price: 1, items: [1] });
+        const fresh = MergeRow.make({ realm, id: "a", price: 8, items: [2, 3] });
+        const rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
+        update(realm, (_read, write) => write.upsert(rows, previous));
+        const log: unknown[] = [];
+        using _listener = held(
+          onRowChange(previous.$items, (change) => {
+            log.push(change);
+          }),
+        );
+        const snapshot = (read: Read) => [
+          read(previous.$price),
+          read(previous.$items.rows),
+          read(rows.keys),
+          read.row(rows, "a") === previous,
+        ];
+        const seen: unknown[] = [];
+        using _watcher = held(
+          watch(realm, snapshot, (value) => {
+            seen.push(value);
+          }),
+        );
+        const conflict = openStage(realm, { conflicts: "fail" });
+        stageRead(conflict, snapshot);
+        const recipes: ReadonlyArray<Recipe> = [
+          (_read, write) => write(fresh.$price, 12),
+          (_read, write) => {
+            if (entry === "upsert") write.upsert(rows, fresh);
+            else if (entry === "replaceAll") write.replaceAll(rows, [fresh]);
+            else reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+          },
+        ];
+        log.length = 0;
+        if (staged) {
+          const stage = openStage(realm);
+          for (const recipe of recipes) stageUpdate(stage, recipe);
+          const stagedLog = [...log];
+          log.length = 0;
+          applyStage(stage);
+          expect(log).toEqual(stagedLog);
+        } else {
+          update(realm, () => {
+            for (const recipe of recipes) update(realm, recipe);
+          });
+        }
+        expect(() => applyStage(conflict)).toThrow(StageConflictError);
+        return { state: untracked(realm, snapshot), log, seen, status: stageStatus(conflict) };
+      };
+      expect(run(true)).toEqual(run(false));
+    });
+  }
+
+  test("replay schema rejection matches update and preserves the caller's own write", () => {
+    using realm = testRealm();
+    const value = schemaBox(realm, NonNegative, 5);
+    const own = box(realm, 0);
+    const recipe: Recipe = (read, write) => write(value, read(value) - 3);
+    const stage = openStage(realm);
+    stageUpdate(stage, recipe);
+    update(realm, (_read, write) => write(value, 1));
+    const failure = (run: () => void) => {
+      try {
+        run();
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return undefined;
+    };
+    const expected = failure(() => update(realm, recipe));
+    update(realm, (_read, write) => {
+      write(own, 7);
+      expect(failure(() => applyStage(stage))).toBe(expected);
+    });
+    expect(expected).toContain("the box rejects this value");
+    expect(untracked(realm, (read) => [read(value), read(own)])).toEqual([1, 7]);
+    expect(stageStatus(stage)).toBe("dropped");
+  });
+
+  test("a replay-only schema check cannot start an update", () => {
+    using realm = testRealm();
+    let replay = false;
+    let callbacks = 0;
+    const schema = Schema.Number.check(
+      Schema.makeFilter(() => {
+        if (replay)
+          update(realm, () => {
+            callbacks++;
+          });
+        return true;
+      }),
+    );
+    const value = schemaBox(realm, schema, 0);
+    const stage = openStage(realm);
+    stageUpdate(stage, (_read, write) => write(value, 1));
+    replay = true;
+    expect(() => applyStage(stage)).toThrow();
+    expect(callbacks).toBe(0);
+    expect(stageStatus(stage)).toBe("dropped");
+    expect(untracked(realm, (read) => read(value))).toBe(0);
+  });
+});
+
+test("withStage releases a stage and its child after an apply precondition defect", async () => {
+  using realm = testRealm();
+  let parent: Stage | undefined;
+  let child: Stage | undefined;
+  const exit = await Effect.runPromiseExit(
+    withStage(realm, (stage) =>
+      Effect.sync(() => {
+        parent = stage;
+        child = openStage(stage);
+      }),
+    ),
+  );
+  expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+  expect(stageStatus(parent as Stage)).toBe("dropped");
+  expect(stageStatus(child as Stage)).toBe("dropped");
+});
+
+test("schema checks run for staged writes and replay, without an extra check on landing", () => {
+  using realm = testRealm();
+  let checks = 0;
+  const schema = Schema.Number.check(
+    Schema.makeFilter(() => {
+      checks++;
+      return true;
+    }),
+  );
+  const value = schemaBox(realm, schema, 0);
+  const stage = openStage(realm);
+  stageUpdate(stage, (_read, write) => {
+    write(value, 1);
+    write(value, 2);
+  });
+  expect(checks).toBe(3);
+  applyStage(stage);
+  expect(checks).toBe(5);
+  expect(untracked(realm, (read) => read(value))).toBe(2);
 });

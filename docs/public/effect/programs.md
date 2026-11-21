@@ -228,7 +228,10 @@ the new values.
 - `withStage` applies the stage after the section succeeds, synchronously,
   so nothing runs between the section's last write and the landing.
 - The release drops the stage whether or not it applied: `dropStage` does
-  nothing to a closed stage.
+  nothing to a closed stage. An `applyStage` precondition failure leaves
+  the stage open and becomes a defect in `withStage`; the release then
+  drops it and its open children. A conflict or replay throw drops it
+  before the release.
 - Retrying reruns the section, requests included. Retry only a section that
   is safe to repeat; `withStage` never retries on its own.
 - A host that lands a stage inside its own update, or applies only on a
