@@ -143,7 +143,7 @@ export interface StagedRows<Key, Value> {
   setRow(key: Key, row: Value): void;
   deleteRow(key: Key): void;
   setOrder(order: ReadonlyArray<Key>): void;
-  setAll(rows: Map<Key, Value>, order: ReadonlyArray<Key>): void;
+  setAll(rows: Map<Key, Value>, order: ReadonlyArray<Key>, written: ReadonlySet<Key>): void;
 }
 
 /**
@@ -851,6 +851,10 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     const held = target.rows;
     const heldOrder = target.order;
     let changed = held.size !== count;
+    const written = new Set<Key>();
+    for (const key of held.keys()) {
+      if (!next.has(key)) written.add(key);
+    }
     for (let index = 0; index < count; index++) {
       const key = keys[index] as Key;
       const value = values[index] as Value;
@@ -865,7 +869,10 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       }
       const kept = this.landing(value, previous, present);
       next.set(key, kept);
-      changed ||= !present || !Object.is(kept, previous);
+      if (!present || !Object.is(kept, previous)) {
+        changed = true;
+        written.add(key);
+      }
     }
     if (!changed) {
       // The same rows: only the order can differ, and the stage keeps its overlay otherwise.
@@ -874,7 +881,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       }
       return;
     }
-    target.setAll(next, keys);
+    target.setAll(next, keys, written);
     if (this.listeners !== undefined) {
       this.reportReplaced(heldOrder, held, next, read, write);
     }
@@ -897,6 +904,56 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       (this.realm.stagedPlace as StagedPlace).undoOnThrow(writes);
     }
     return true;
+  }
+
+  /**
+   * Prepares only the keys a replay wrote. Rows passed here already went
+   * through `landing` with this collection's check and equality. Final
+   * equality runs under the recipe guard; the returned landing records the
+   * same cells, row changes, cache releases, and undo as ordinary writes,
+   * without running key functions, checks, merges, or listeners again.
+   * The order is landed separately through its box.
+   */
+  prepareStageRows(
+    rows: ReadonlyMap<Key, Value>,
+    keys: ReadonlySet<Key>,
+    prepareBox: <Item>(box: BoxCell<Item>, value: Item) => Item,
+  ): () => void {
+    const operations: Array<() => void> = [];
+    const held = this.held;
+    for (const key of keys) {
+      const previous = held.get(key);
+      const value = rows.get(key);
+      if (Object.is(previous, value)) continue;
+      if (value === undefined) {
+        operations.push(() => {
+          // Removal's cell check and equality accept undefined without user code.
+          this.forget(key);
+          held.delete(key);
+          this.realm.recordUndo(() => {
+            held.set(key, previous as Value);
+            this.forgetAllRows();
+          });
+          this.changed();
+        });
+      } else {
+        const cell = this.cells.get(key);
+        const kept =
+          cell !== undefined
+            ? (prepareBox(cell, value) as Value)
+            : held.has(key) && this.equals(previous as Value, value)
+              ? (previous as Value)
+              : value;
+        if (!Object.is(previous, kept)) {
+          operations.push(() => {
+            this.hold(held, key, kept, previous, previous !== undefined);
+          });
+        }
+      }
+    }
+    return () => {
+      for (const land of operations) land();
+    };
   }
 
   /** Puts `row` under `key` in `held`, and a rollback puts back what was there. */

@@ -12,10 +12,12 @@
  * evaluates over its own values, outside the graph, and caches until the
  * stage or the realm changes.
  *
- * `applyStage` replays the journal in one `update` over the realm's values at
- * that moment, nested in an update already open. A child stage, opened over
- * a stage, replays into its parent instead: a savepoint. `dropStage`
- * discards a stage and its open children.
+ * `applyStage` replays the journal into a fresh overlay over the realm's
+ * values at that moment, under the same recipe guard. It then lands the
+ * overlay's final values and atom marks in one `update`, nested in an update
+ * already open, without calling user code in the landing recipe. A child
+ * stage, opened over a stage, replays into its parent instead: a savepoint.
+ * `dropStage` discards a stage and its open children.
  *
  * A recipe runs twice, once staged and once applied, so it is a function of
  * its `read`: while it runs, the realm's own `read`, `write`, `update`, a
@@ -194,6 +196,9 @@ class StageState implements Stage {
   boxes = new Map<BoxCell<unknown>, unknown>();
   /** The rows of each collection this stage wrote, copied on its first write. */
   rows = new Map<KeyedCollection<unknown, unknown>, Map<unknown, unknown>>();
+  /** Keys written in this overlay, including removed keys: landing visits these alone. */
+  rowWrites = new Map<KeyedCollection<unknown, unknown>, Set<unknown>>();
+  atoms = new Set<AtomCell>();
   provenance = new Map<KeyedCollection<unknown, unknown>, CollectionProvenance>();
   /** The recipes that ran without throwing, in order. */
   journal: Array<Recipe> = [];
@@ -278,6 +283,8 @@ const close = (state: StageState, status: "applied" | "dropped"): void => {
   state.status = status;
   state.boxes = new Map();
   state.rows = new Map();
+  state.rowWrites = new Map();
+  state.atoms = new Set();
   state.provenance = new Map();
   state.journal = [];
   state.cache = new Map();
@@ -540,6 +547,21 @@ const stagedRows = <Key, Value>(
     return rows;
   };
   const wrote = (rowKey: Key): void => {
+    let keys = state.rowWrites.get(key);
+    if (keys === undefined) {
+      keys = new Set();
+      state.rowWrites.set(key, keys);
+      session.undo.push(() => {
+        state.rowWrites.delete(key);
+      });
+    }
+    if (!keys.has(rowKey)) {
+      const written = keys;
+      written.add(rowKey);
+      session.undo.push(() => {
+        written.delete(rowKey);
+      });
+    }
     const written = state.provenance.get(key)?.written;
     if (written !== undefined && !written.has(rowKey)) {
       session.undo.push(() => {
@@ -584,8 +606,9 @@ const stagedRows = <Key, Value>(
       own();
       setBox(state, session, orderCell, order);
     },
-    setAll(rows, order) {
+    setAll(rows, order, written) {
       // Replaced whole: no copy of the rows held first.
+      for (const rowKey of written) wrote(rowKey);
       const prior = state.rows.get(key);
       const provenance = state.provenance.get(key);
       session.undo.push(() => {
@@ -689,10 +712,17 @@ const stageWriter = (state: StageState, session: Session, reader: Read): Write =
       });
       return undefined;
     },
-    // An atom holds no value to stage: the replay reruns what observed it.
+    // An atom holds no value; a successful replay lands its marks once.
     changed: (atom: Atom): undefined => {
       open("write.changed");
       ownRealm(state, "write.changed", atom as unknown as { readonly realm: ObservableRealm });
+      const cell = atom as AtomCell;
+      if (!state.atoms.has(cell)) {
+        state.atoms.add(cell);
+        session.undo.push(() => {
+          state.atoms.delete(cell);
+        });
+      }
       return undefined;
     },
   }) as Write;
@@ -751,9 +781,14 @@ const ignore = (): void => {};
 
 /**
  * Runs `recipes` against `state` as one session, and keeps them: all of them,
- * or, when one throws, none, with the overlay as it was.
+ * or, when one throws, none, with the overlay as it was. Root replay prepares
+ * its landing under the same guard, before closing the session.
  */
-const runRecipes = (state: StageState, recipes: ReadonlyArray<Recipe>): void => {
+const runRecipes = (
+  state: StageState,
+  recipes: ReadonlyArray<Recipe>,
+  prepare?: () => void,
+): void => {
   const session: Session = { open: true, writable: true, undo: [] };
   const read = stageReader(state, session);
   const write = stageWriter(state, session, read);
@@ -771,16 +806,68 @@ const runRecipes = (state: StageState, recipes: ReadonlyArray<Recipe>): void => 
           throw new Error("pinna: a stageUpdate recipe returns nothing");
         }
       }
+      prepare?.();
     });
   } catch (error) {
     undoSession(state, session);
     throw error;
   } finally {
     session.open = false;
+    session.undo.length = 0;
   }
   for (const recipe of recipes) {
     state.journal.push(recipe);
   }
+};
+
+/**
+ * Prepares final values under the recipe guard, including equality with the
+ * realm and an enclosing update's starting value. Landing calls no user
+ * check or equality: the replay checked every value with the box's check.
+ */
+const prepareLanding = (state: StageState): (() => void) => {
+  const boxes: Array<() => void> = [];
+  const rows: Array<() => void> = [];
+  const prepareBox = <Value>(box: BoxCell<Value>, value: Value): Value => {
+    const current = peekCell(box.source);
+    if (Object.is(current, value)) return current;
+    let version: number | undefined;
+    if (
+      box.nextRecorded !== undefined &&
+      box.versionBefore !== box.source.version &&
+      box.source.equals(box.valueBefore as Value, value)
+    ) {
+      value = box.valueBefore as Value;
+      version = box.versionBefore;
+    } else if (box.source.equals(current, value)) {
+      return current;
+    }
+    boxes.push(() => {
+      const realm = box.realm;
+      if (box.nextRecorded === undefined) {
+        realm.recordFirst(box as BoxCell<unknown>, current, box.source.version);
+      } else {
+        realm.record(box as BoxCell<unknown>, current);
+      }
+      box.restore(value, version ?? realm.core.nextCellVersion());
+    });
+    return value;
+  };
+  for (const [box, value] of state.boxes) prepareBox(box, value);
+  for (const [collection, keys] of state.rowWrites) {
+    rows.push(
+      collection.prepareStageRows(
+        state.rows.get(collection) as Map<unknown, unknown>,
+        keys,
+        prepareBox,
+      ),
+    );
+  }
+  return () => {
+    for (const land of boxes) land();
+    for (const land of rows) land();
+    for (const atom of state.atoms) atom.change();
+  };
 };
 
 // The calls
@@ -898,22 +985,25 @@ export const realmRead = <Result>(stage: Stage, run: (read: Read) => Result): Re
 };
 
 /**
- * Closes the stage and replays its recipes, in order.
+ * Replays the stage's recipes in order, then closes it and lands their final values.
  *
- * Over a realm, the replay is one `update` over the realm's values at this
- * moment, nested in an update already open: when a recipe throws on replay,
- * or a write a check refuses, only the stage's writes roll back, the error
- * reaches the caller, and the caller's update keeps its own writes if it
- * catches it. With `{ conflicts: "fail" }`, a box or collection the stage
- * read that changed since throws a `StageConflictError` first, and nothing
- * lands. Throws where `update` would, and leaves the stage open then.
+ * Over a realm, replay runs in a fresh overlay over its current values,
+ * under the stage recipe guard. One `update` lands the final values and atom
+ * marks without user code in its recipe, nested in an update already open.
+ * A replay throw, including a refused write, drops the stage and reaches the
+ * caller without changing the realm; the caller's update keeps its own
+ * writes if it catches it. With `{ conflicts: "fail" }`, the stage's recorded
+ * reads are checked first; a changed box or collection drops the stage and
+ * throws `StageConflictError`, landing nothing. Final values equal to the
+ * realm's values change no version and notify nobody.
  *
  * Over a parent stage, the replay runs against the parent, as one
  * `stageUpdate` of every recipe: a throw leaves the parent as it was. The
  * parent keeps the recipes, and what the child read, for its own apply.
  *
- * The stage ends `"applied"`, or `"dropped"` when the replay throws. A stage
- * with an open child throws: apply or drop the child first.
+ * An open child, or a call where `update` is refused, throws and leaves the
+ * stage open. Apply or drop the child first. After landing, watch effects
+ * and autoruns report errors to `onError`; the stage stays `"applied"`.
  */
 export const applyStage = (stage: Stage): void => {
   const state = openState(stage, "applyStage");
@@ -965,21 +1055,28 @@ export const applyStage = (stage: Stage): void => {
       throw new StageConflictError(state.name, changed, observables);
     }
   }
-  close(state, "applied");
   if (journal.length === 0) {
+    close(state, "applied");
     return;
   }
+  const replay = new StageState(realm, undefined, state.name, "replay");
+  let land: () => void = () => undefined;
   try {
-    update(realm, () => {
-      // Each recipe in a nested update: it joins this one, and is held to
-      // what `update` holds a recipe to.
-      for (const recipe of journal) {
-        update(realm, recipe);
-      }
+    runRecipes(replay, journal, () => {
+      land = prepareLanding(replay);
     });
   } catch (error) {
-    state.status = "dropped";
+    close(replay, "dropped");
+    close(state, "dropped");
     throw error;
+  }
+  close(state, "applied");
+  try {
+    update(realm, () => {
+      land();
+    });
+  } finally {
+    close(replay, "applied");
   }
 };
 

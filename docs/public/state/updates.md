@@ -84,12 +84,12 @@ through `untracked`.
 | `stageUpdate(stage, (read, write) => ...)` | Runs the recipe at once against the stage and keeps it. No box changes. A recipe that throws puts back what it wrote to the stage and is not kept. |
 | `stageRead(stage, (read) => ...)` | What the function returns, reading through the stage: its own writes, and the realm's current values elsewhere. |
 | `realmRead(stage, (read) => ...)` | What the function returns, reading the realm's values as `untracked` does, ignoring the stage. |
-| `applyStage(stage)` | Closes the stage and replays its recipes, in order: over a realm, in one update nested in an open one; over a stage, into that stage. |
+| `applyStage(stage)` | Replays its recipes in order: over a realm, into a fresh overlay, then lands its final state in one update nested in an open one; over a stage, into that stage. A conflict or replay throw drops it; a precondition failure leaves it open. |
 | `dropStage(stage)` | Closes the stage and its open children, and discards them. No box changes. Does nothing to a closed stage. |
 | `stageStatus(stage)` | `"open"`, `"applied"`, or `"dropped"`. |
 | `inspectStage(stage)` | The stage's name, realm, parent, status, and conflict mode; the names of the boxes and collections it wrote; under `{ conflicts: "fail" }`, the names of what it read and `applyStage` checks; and how many recipes and open children it holds. |
 | `Recipe` | `(read, write) => undefined`: what `update` and `stageUpdate` run. |
-| `StageClosedError` | Thrown by a call on a closed stage; `stage` is its name and `status` how it closed. |
+| `StageClosedError` | Thrown by `stageUpdate`, `stageRead`, `realmRead`, `applyStage`, or `openStage` of a child on a closed stage; `stage` is its name and `status` how it closed. |
 | `StageConflictError` | Thrown by `applyStage` on a conflict; `changed` names what changed, a named box or collection by its `name`, and `observables` holds it. |
 
 ## Effects after the update
@@ -139,7 +139,10 @@ A function that hands back a change returns a `Recipe`, which `update` and
 
 <!-- region stages.ts#recipe -->
 
-A recipe runs twice: once when staged, and again when applied. Anything it
+A recipe runs twice: once when staged, and again when applied. Root replay
+runs in a fresh overlay over the realm's current values under the same
+recipe guard, then one update lands the final state without user code in
+its recipe. Anything it
 creates, an id, a time, a model, is made outside it and closed over, so both
 runs land the same thing.
 
@@ -191,22 +194,31 @@ failed replay in the same update.
   with the stage's `read` and `write`, as in an update.
 - A schema box or a schema collection checks a staged write twice: at
   `stageUpdate`, so the work learns of a refused value where it wrote it,
-  and at `applyStage`, where it lands.
+  and during `applyStage`'s guarded replay. Landing skips the check already
+  performed by that same box or collection.
 - `applyStage` replays over the realm's values when it runs. By default it
   does not detect a conflict: a stage that added 2 to a box at 1 lands 7
   when another update moved the box to 5. With `{ conflicts: "fail" }` it
   throws a `StageConflictError` instead and lands nothing, when a box or
   collection the stage read, directly or through a computed value, changed
   since. A box the stage wrote without reading is the last writer's.
-- `applyStage` inside an update is a nested update. A replayed recipe that
-  throws, or a write a check refuses, undoes only the stage's writes, and
-  the error reaches the caller; the caller's update keeps its own writes if
-  it catches it. Several stages in one update land in apply order.
+- `applyStage` replays into a fresh overlay, then lands its final box
+  values, collection rows and order, and atom marks in one update, nested
+  in an update already open. Row listeners run during replay, once per
+  change; landing does not call them again. A replay throw, including a
+  refused write, discards the overlay without changing the realm and
+  reaches the caller; the caller's update keeps its own writes if it
+  catches it. Several stages in one update land in apply order. Final
+  values equal to the realm's values change no version and notify nobody.
 - A stage closes once, `"applied"` or `"dropped"`, and `stageStatus` says
-  which. `applyStage` closes it even when it throws, as `"dropped"`. After
-  it closes, every call on it throws a `StageClosedError`, except
-  `dropStage`, which does nothing, so a `finally` drops whether or not the
-  work applied. A `read` or a `write` kept past its recipe throws.
+  which. A conflict or a replay throw drops it. An `applyStage` precondition
+  failure, such as an open child or a call inside a recipe or computed
+  value, leaves it open. After closing, `stageStatus` and `inspectStage`
+  remain callable outside a recipe; `dropStage` does nothing, so a `finally`
+  drops whether or not the work applied. Every other stage call throws
+  `StageClosedError`. A `read` or a `write` kept past its recipe throws.
+- Watch effects and autoruns settle after landing. Their errors go to
+  `onError` and the stage stays `"applied"`.
 - A child stage reads through its parent. `applyStage` replays it into the
   parent as one `stageUpdate`, and a throw leaves the parent as it was. A
   parent with an open child does not apply; dropping the parent drops its

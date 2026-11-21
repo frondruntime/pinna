@@ -313,13 +313,20 @@ ruling carries the date it was first written down, and uses today's names.
       a drop, and a box made in a recipe split in two on replay. Frond's
       proposal, `core.active` set to a marker, was not taken: `readCell`
       links into whatever `active` holds.
-    - `applyStage` over a realm replays the journal in one `update`, each
-      recipe in a nested update, nested in an update already open: a recipe
-      that throws on replay, or a write a check refuses, undoes the stage's
-      writes alone and reaches the caller, so Frond catches it inside its
-      settle update and records the call's failure there. Several stages in
-      one update land in apply order, and two stages that write one box
-      build on each other.
+    - `applyStage` over a realm replays the journal into a fresh overlay over
+      the realm's current values, under the same guard as `stageUpdate`.
+      One `update` lands the final box values, collection rows and order,
+      and atom marks without user code in its recipe, nested in an update
+      already open. Checks, equality, merges, and row listeners run during
+      replay; landing records ordinary row changes without reporting them
+      to the listeners again. A replay throw, including a refused write,
+      discards the overlay and reaches the caller without changing the
+      realm, so Frond catches it inside its settle update and records the
+      call's failure there. Several stages in one update land in apply
+      order, and two stages that write one box build on each other. A final
+      value equal to the realm's value changes no version and notifies
+      nobody. Watch effects and autoruns settle after landing; their errors
+      go to `onError` and the stage stays `"applied"`.
     - Conflicts replay by default. `{ conflicts: "fail" }` records the
       version of each box and collection the stage, or a child, read from
       the realm, underneath computed values too, and `applyStage` throws a
@@ -334,13 +341,17 @@ ruling carries the date it was first written down, and uses today's names.
       not apply, and dropping a parent drops its children. Without it, a
       section an Effect program catches or retries left its writes in the
       stage, the opposite of a nested `update`.
-    - A stage closes once, `"applied"` or `"dropped"` (a replay that throws
-      ends `"dropped"`). Every later call throws a `StageClosedError`, a
-      bug, except `dropStage`, which does nothing, so a cleanup drops
-      whether or not the work applied. A `read` or a `write` kept past its
-      recipe throws (43).
+    - A stage closes once, `"applied"` or `"dropped"`. A conflict or a replay
+      throw drops it. An `applyStage` precondition failure, such as an open
+      child or a call inside a recipe or computed value, leaves it open.
+      After closing, `stageStatus` and `inspectStage` remain callable
+      outside a recipe; `dropStage` does nothing, so a cleanup drops whether
+      or not the work applied. Every other stage call throws
+      `StageClosedError`, a bug. A `read` or a `write` kept past its recipe
+      throws (43).
     - A schema box checks a staged write at `stageUpdate`, where the work
-      wrote it, and again at `applyStage`, where it lands.
+      wrote it, and again during `applyStage`'s guarded replay. Landing
+      skips the check already performed by that same box or collection.
     - `inspectStage` reports a stage's name, parent, status, the boxes and
       collections it wrote, and, under `{ conflicts: "fail" }`, what it
       read. A collection takes `{ name }` (`collection`, `schemaCollection`,

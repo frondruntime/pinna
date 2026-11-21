@@ -357,10 +357,36 @@ leaves nothing to undo (ruling 53).
   throw paths. Making an observable, `untracked`, `onObserved`,
   `onRowChange`, and the stage calls compare `deriving` with the marker.
   `update` and `read` gain nothing.
-- **Applying.** Over a realm: an optional conflict check, then one `update`
-  whose recipe runs each kept recipe in a nested `update`, nested in an
-  update already open. Over a parent: the recipes run against the parent as
-  one session, all or none.
+- **Applying.** Over a realm: an optional conflict check against the
+  applied stage's reads, then replay into a fresh root overlay that records
+  no reads, using `runRecipes` and the same guard, checks, equality,
+  listeners, merges, and savepoints as staging. Replay reads the realm's
+  current values. A throw discards the overlay and drops the stage without
+  changing the realm. Final equality is prepared under the guard too.
+  One `update`, nested in an update already open, lands the final box
+  values, collection rows and order, and atom marks without user code in
+  its recipe. Box values already passed that box's check in replay; rows
+  already passed that collection's check. Landing skips those checks and
+  does not rerun row listeners. It records the ordinary cells, row changes,
+  cache releases, and undo. Each collection tracks written keys, including
+  removals; landing costs O(written boxes + written rows + marked atoms),
+  with no scan of unwritten rows. Over a parent: the recipes run against
+  the parent as one session, all or none.
+- **Final values.** A box written and then written back to its realm value,
+  or a row added and then removed, lands no change: no version changes and
+  no watcher runs. An ordinary update restores the box's original version
+  too, but advances a collection's change counter on an add followed by a
+  removal. Its `rows` watcher sees the same final rows and does not run;
+  a second `{ conflicts: "fail" }` stage that read those rows conflicts.
+  Applying the same writes through a stage leaves that second stage free
+  to apply. Intermediate reads inside an ordinary update can observe its
+  temporary values; no realm read observes replay's temporary values.
+- **Closing.** A conflict or replay throw drops the stage. An open child,
+  or a call inside a recipe or computed value, fails before replay and
+  leaves it open. `stageStatus` and `inspectStage` remain callable outside
+  a recipe after closing, and `dropStage` remains idempotent. Watch effects
+  and autoruns settle after landing; errors go to `onError` and the stage
+  stays `"applied"`.
 - **Conflicts.** With `{ conflicts: "fail" }`, the first read of a realm
   value records the box's version: a box, or a collection's order and
   change counter, recorded also beneath a computed value's evaluation. A
@@ -376,10 +402,20 @@ What it cost:
 - Computed values through a stage run uncached by the graph: a derivation
   of n reads costs n per evaluation, bounded by the stage's cache. Frond
   estimates 1 to 20 boxes and 1 to 50 recipes per stage.
-- A collection costs O(n) to copy on a stage's first write to it, and the
-  replay runs a `replaceAll`, and its merges, a second time: a refetch of
-  10,000 rows does the work twice. `bench:stage` in `packages/pinna`
-  measures it against the update it replaces.
+- A collection costs O(n) to copy on a stage's first upsert, removal, or
+  order-only write, and the fresh replay overlay copies it again on its
+  first such write. A `replaceAll` builds the replacement map instead of
+  copying the held rows; replay runs it and its merges a second time. A
+  refetch of 10,000 rows still does the recipe work twice. Written-key
+  tracking costs O(written rows); preparing final order equality can scan
+  the keys. `bench:stage` in `packages/pinna` measures staging and applying
+  against the update they replace. On the same machine with Bun 1.4.4,
+  applying one upsert of a held row in a 100,000-row collection took a
+  median 0.014709 ms before guarded overlay replay and 0.265375 ms after
+  it (15 measured runs after 8 warmups; setup and staging excluded).
+  `bench:stage`'s 10,000-row plain `replaceAll`, staging and applying
+  included, rose from 0.77 ms to 3.57 ms; its `SchemaModel` refetch rose
+  from 8.84 ms to 9.69 ms. These are local measurements, not ceilings.
 - Conflicts replay unless asked. A value read through the stage can differ
   from what lands; `{ conflicts: "fail" }` turns that into an error, and the
   author decides whether rerunning the work, requests included, is safe.
