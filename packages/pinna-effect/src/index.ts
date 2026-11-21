@@ -8,7 +8,8 @@
  * holds a service the caller provides, as any Effect service is. The Effect
  * programs live for the caller's scope: `watchScoped` and `observeScoped`
  * next to the plain `watch` and `observe`, `changes`, `fromStream`, and
- * `whileObserved`.
+ * `whileObserved`; `withStage` holds a section's writes in a stage until it
+ * succeeds.
  */
 export type {
   Atom,
@@ -23,10 +24,14 @@ export type {
   Read,
   Realm,
   RealmOptions,
+  Recipe,
   ReconcileOptions,
   RowChange,
   RowListener,
   Stage,
+  StageInspection,
+  StageOptions,
+  StageStatus,
   UpsertOptions,
   Write,
 } from "@frondruntime/pinna";
@@ -41,6 +46,7 @@ export {
   createRealm,
   dropStage,
   inspect,
+  inspectStage,
   isTracking,
   Model,
   observe,
@@ -49,7 +55,10 @@ export {
   openStage,
   realmRead,
   reconcile,
+  StageClosedError,
+  StageConflictError,
   stageRead,
+  stageStatus,
   stageUpdate,
   untracked,
   update,
@@ -62,3 +71,4 @@ export { FromContext } from "./context.ts";
 export { decode, RealmService } from "./decode.ts";
 export { changes, fromStream, observeScoped, watchScoped, whileObserved } from "./programs.ts";
 export { reconcileSchema } from "./reconcile.ts";
+export { StageConflict, withStage } from "./stage.ts";

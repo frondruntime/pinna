@@ -74,6 +74,7 @@ test("a program reads the test's realm", async () => {
   const program = Effect.gen(function* () {
     const searched = yield* Deferred.make<string>();
     yield* watchScoped(
+      realm,
       (read) => read($query),
       (query) => Deferred.succeed(searched, query),
     );
@@ -98,6 +99,7 @@ test("a poll advances with the test clock", async () => {
     // Made under TestClock: fromStream keeps the clock of the program that
     // makes the value, and the poll waits on it.
     const $polls = yield* fromStream(
+      realm,
       Stream.fromEffectSchedule(poll, Schedule.spaced("1 minute")),
       0,
     );
@@ -158,6 +160,7 @@ const searchOnce = async (query: string): Promise<string> => {
   return await Effect.gen(function* () {
     const searched = yield* Deferred.make<string>();
     yield* watchScoped(
+      realm,
       (read) => read($query),
       (value) => Deferred.succeed(searched, value),
     );
@@ -200,6 +203,7 @@ test("a value made before TestClock is provided polls on the live clock", async 
   const poll = Effect.sync(() => ++polls);
   const latest = await Effect.gen(function* () {
     const $polls = yield* fromStream(
+      realm,
       Stream.fromEffectSchedule(poll, Schedule.spaced("1 minute")),
       0,
     );
@@ -220,6 +224,7 @@ test("a helper that returns its program unawaited leaves the realm not at rest",
     return Effect.gen(function* () {
       const searched = yield* Deferred.make<string>();
       yield* watchScoped(
+        realm,
         (read) => read($query),
         (value) => Deferred.succeed(searched, value),
       );

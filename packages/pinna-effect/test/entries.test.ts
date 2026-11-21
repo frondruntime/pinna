@@ -37,6 +37,7 @@ describe("the entries", () => {
       "FromContext",
       "RealmService",
       "SchemaModel",
+      "StageConflict",
       "changes",
       "decode",
       "fromStream",
@@ -46,6 +47,7 @@ describe("the entries", () => {
       "schemaCollection",
       "watchScoped",
       "whileObserved",
+      "withStage",
     ]);
     expect("Pinna" in Schema).toBe(false);
     expect("Pinna" in Bare).toBe(false);

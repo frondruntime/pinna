@@ -59,6 +59,7 @@ const RealmLive = Layer.succeed(RealmService, realm);
 
 // Saves on each change of the units; a newer change interrupts the save still running.
 const save = watchScoped(
+  realm,
   (read) => read(order.$units),
   (units) => saveUnits(order.id, units),
 );
@@ -71,6 +72,7 @@ type Rate =
   | { readonly _tag: "Unavailable"; readonly reason: string };
 
 const rate = fromStream<Rate>(
+  realm,
   rates.pipe(
     Stream.map((rate): Rate => ({ _tag: "Rate", rate })),
     Stream.catch((error) => Stream.succeed<Rate>({ _tag: "Unavailable", reason: error.reason })),

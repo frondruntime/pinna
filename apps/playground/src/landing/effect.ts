@@ -37,6 +37,7 @@ try {
 
 // A program stops with its scope: this one saves each change until the fiber is interrupted.
 const save = watchScoped(
+  realm,
   (read) => read(order.$quantity),
   (quantity) => saveQuantity(order.id, quantity),
 );
