@@ -61,7 +61,8 @@ Everything `@frondruntime/pinna` exports, and:
 | --- | --- |
 | Checked state | `schemaBox`, `schemaCollection`, `reconcileSchema` |
 | Models | `SchemaModel`, `BoxField`, `CollectionField`, `FromContext`, `decode` |
-| Effect programs | `RealmService`, `watchScoped`, `changes`, `observeScoped`, `whileObserved`, `fromStream` |
+| Effect programs | `RealmService`, `watchScoped`, `changes`, `observeScoped`, `whileObserved`, `fromStream`, `withStage` |
+| Errors | `StageConflict` |
 
 ## Documentation
 
