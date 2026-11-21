@@ -2466,6 +2466,54 @@ repository; the counts and bytes above are its results. Bun 1.4.4, Hermes
 260318099.0.5 with `hermesc -O`, Node 26.13.1 with `--expose-gc` for the
 cross-check (3.816 MB loaded, as before), Apple M1 Pro.
 
+### What the review's correctness fixes cost (2026-11-21)
+
+**The review's fixes, from `3f50f0a` through `1b2e85e`, cost one scenario
+more than 3%: the diamond on Hermes, 94.6 to 110.2 ms (+16.5%), all of it
+from `cc49e73`, "bound reentrant cached refreshes".** Every other cell moved
+within 3%, or within its own spread across rounds. The fix stays: without
+it a chain of cached values refreshing through user code overflows the
+stack. Getting the time back belongs to the 0.1.0 speed work.
+
+- **Run:** pinna-bench's rough tier, `--library pinna`, base `2a94ba3`
+  against `62119fc`, three alternating rounds, each cell the median of a
+  launch's five runs; the table gives the median of the three. Load average
+  10 to 20, so cells within ±3% are noise. Node 26.13.1, Hermes
+  260318099.0.5, Apple M1 Pro.
+
+| Scenario | Node, base | Node, branch | Change | Hermes, base | Hermes, branch | Change |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| diamond | 6.24 ms | 6.40 ms | +2.6% | 94.57 ms | 110.15 ms | +16.5% |
+| conditional reads | 26.26 ms | 25.44 ms | −3.1% | 425.31 ms | 429.04 ms | +0.9% |
+| make and dispose | 2.43 ms | 2.70 ms | +11.1% | 25.88 ms | 26.59 ms | +2.8% |
+| increment ×100k | 13.89 ms | 15.80 ms | +13.8% | 234.00 ms | 238.32 ms | +1.8% |
+| fan-out | 10.98 ms | 10.70 ms | −2.6% | 143.91 ms | 146.06 ms | +1.5% |
+
+- **The two Node rises are spread, not a cost.** Make and dispose ran 2.32
+  to 2.68 ms on the base and 2.56 to 3.00 on the branch; increment 13.69 to
+  15.77 against 13.73 to 16.04. The same two scenarios on Hermes, which
+  runs the same graph code without a JIT, moved 2.8% and 1.8%. Deep chain,
+  write 1,000 sources, bursty fan-out, and one write among 10k moved within
+  noise in a first pass over every scenario, and were not rerun.
+- **Bytes moved within noise**, except Node fan-out at +6.6%, a cell whose
+  allocation already swings from 39 to 577 KB within one launch ("The graph
+  tables after the fairness fixes, rough tier").
+- **A bisect pins the diamond on `cc49e73`.** Three rounds at each commit
+  that touched `packages/pinna-core/src`: `2a94ba3` 92.8 to 94.6 ms,
+  `3f50f0a` 94.0 to 95.4, `cc49e73` 109.0 to 109.6, and every later commit
+  108.4 to 111.0, except two rounds of `a80ebe2` at 114.2 and 167.0 ms;
+  its third ran 109.7, and every round of `f365240`, which contains it,
+  ran 109.8 to 110.6.
+- **The cost is the bounded driver entered once per read.** The diamond's
+  sum is cached, so the watch's read refreshes it on the iterative path and
+  `computeDepth` stays 0 inside its compute. Each of the sum's 1,000 reads of
+  a stale branch is then the outermost stale read reached through a compute,
+  and enters `computeBounded`: a walk, two `try` blocks, and a retry loop
+  that runs once. 15.6 ms over 100 writes is about 156 ns a read on Hermes'
+  interpreter; Node's JIT absorbs most of it (+2.6%). Before `cc49e73` the
+  same read called `refresh` directly. The way back is to enter the driver
+  once per compute instead of once per read, without losing the bound.
+
 ## Spike findings
 
 The spike ran on a branch that was never merged and was deleted on
