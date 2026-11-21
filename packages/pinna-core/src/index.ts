@@ -9,6 +9,7 @@ export {
   type DerivedNode,
   dependenciesOf,
   type Equals,
+  forgetValue,
   Graph,
   hasRun,
   isAtom,

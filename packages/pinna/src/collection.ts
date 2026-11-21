@@ -15,7 +15,7 @@
  * changes are put back by the realm when an update fails, like box writes.
  */
 
-import { type Equals, peekCell, readCell } from "@frondruntime/pinna-core";
+import { type Equals, forgetValue, peekCell, readCell } from "@frondruntime/pinna-core";
 import {
   acceptAll,
   assertUpdateCanRun,
@@ -23,6 +23,7 @@ import {
   type Check,
   type Collection,
   type Computed,
+  ComputedValue,
   computed,
   computedFunction,
   equalKey,
@@ -156,7 +157,12 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
    * working computed, which reads the order while its key is missing.
    */
   private readonly rowsByKey = new Map<Key, Computed<Value | undefined>>();
-  private allRows: Computed<ReadonlyArray<Value>> | undefined = undefined;
+  /**
+   * `rows`, once read. Nothing observing it, `changed` empties it: its last
+   * value holds every row it returned, and a `replaceAll` would otherwise
+   * keep a whole generation of rows, and their boxes, alive.
+   */
+  private allRows: ComputedValue<ReadonlyArray<Value>> | undefined = undefined;
   /**
    * The `onRowChange` listeners, or `undefined` when there are none, so a
    * collection nobody listens to pays one check a write. Replaced whole on
@@ -310,7 +316,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
    */
   get rows(): Computed<ReadonlyArray<Value>> {
     if (this.allRows === undefined) {
-      this.allRows = computed(
+      this.allRows = new ComputedValue(
         this.realm,
         () => {
           const keys = readCell(this.order.source);
@@ -318,7 +324,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
           const held = this.held;
           return keys.map((key) => held.get(key) as Value);
         },
-        { equals: sameElements },
+        sameElements,
       );
     }
     return this.allRows;
@@ -671,9 +677,16 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     this.changed();
   }
 
-  /** Marks `held` changed: `rows` reruns, and a cell made from here on is undone with the update. */
+  /**
+   * Marks `held` changed: `rows` reruns, and a cell made from here on is
+   * undone with the update. An unobserved `rows` lets go of the rows it
+   * returned, which `held` may no longer hold.
+   */
   private changed(): void {
     this.changes.write(peekCell(this.changes.source) + 1);
+    if (this.allRows !== undefined) {
+      forgetValue(this.allRows.source);
+    }
   }
 
   /**

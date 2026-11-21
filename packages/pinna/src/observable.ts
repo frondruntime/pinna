@@ -1627,7 +1627,7 @@ export class BoxCell<Value> implements Box<Value> {
 /** The options of every unnamed computed value that compares with `Object.is`: made once, not per value. */
 const unnamedComputed = { equals: Object.is, label: "a computed value" };
 
-class ComputedValue<Value> implements Computed<Value> {
+export class ComputedValue<Value> implements Computed<Value> {
   declare readonly [readsAs]: () => Value;
   /** The graph node: what `read` reads. */
   readonly source: DerivedNode<Value>;

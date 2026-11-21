@@ -2451,6 +2451,10 @@ store's Hermes retained heap at that stage, after load minus empty.
   reachable, after the full replacement 1,500. On Node with `--expose-gc`, 500 rows
   read through `rows` once and then replaced stay alive in 3 of 3 runs; a
   second read after the replacement, or no read at all, frees all 500.
+  Fixed for 0.1.0 (`docs/api.md`, ruling 55): a write that changes the
+  rows empties an unobserved `rows`, and the same probe keeps 0 of 500 in
+  3 of 3 runs. The ceilings above were measured before the fix and count
+  the retained generation.
 
 The harness, its raw data, and the full report are on the local branch
 `experiment/2026-11-21-cold-box-census` (`085e962`), at

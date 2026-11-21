@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   type DerivedNode,
+  forgetValue,
   Graph,
+  hasRun,
   observerCount,
   peekCell,
   peekDerived,
@@ -1788,4 +1790,122 @@ describe("a value over an atom nothing observes", () => {
       expectAtRest(local);
     });
   }
+});
+
+describe("forgetValue", () => {
+  test("an unobserved value drops what it kept and runs again at the next read", () => {
+    const local = new Graph();
+    const source = local.cell(1);
+    let runs = 0;
+    const derived = local.derived(() => {
+      runs++;
+      return { doubled: readCell(source) * 2 };
+    });
+    const first = readDerived(derived);
+    forgetValue(derived);
+    expect(hasRun(derived)).toBe(false);
+    expect(derived.value).toBeUndefined();
+    const second = readDerived(derived);
+    expect(second).toEqual({ doubled: 2 });
+    expect(second).not.toBe(first);
+    expect(runs).toBe(2);
+    // The edge it kept still follows the source.
+    writeCell(source, 3);
+    expect(readDerived(derived)).toEqual({ doubled: 6 });
+    expect(runs).toBe(3);
+    expectAtRest(local);
+  });
+
+  test("a value read in the clock it was dropped in runs again", () => {
+    const local = new Graph();
+    const source = local.cell(1);
+    let runs = 0;
+    const derived = local.derived(() => {
+      runs++;
+      return readCell(source) + 1;
+    });
+    // Current at this clock: without the reset, the next read would skip its run.
+    expect(readDerived(derived)).toBe(2);
+    forgetValue(derived);
+    expect(peekDerived(derived)).toBe(2);
+    expect(runs).toBe(2);
+  });
+
+  test("an unobserved reader of a dropped value keeps its own value until a source changes", () => {
+    const local = new Graph();
+    const source = local.cell(1);
+    const derived = local.derived(() => readCell(source) * 2);
+    let readerRuns = 0;
+    const reader = local.derived(() => {
+      readerRuns++;
+      return readDerived(derived) + 1;
+    });
+    expect(readDerived(reader)).toBe(3);
+    forgetValue(derived);
+    // Nothing changed: the reader is current and keeps what it holds.
+    expect(readDerived(reader)).toBe(3);
+    expect(readerRuns).toBe(1);
+    expect(hasRun(derived)).toBe(false);
+    // The walk meets the dropped value, runs it, and runs the reader after it.
+    writeCell(source, 2);
+    expect(readDerived(reader)).toBe(5);
+    expect(readerRuns).toBe(2);
+    expect(readDerived(derived)).toBe(4);
+    expectAtRest(local);
+  });
+
+  test("an observed value keeps what it holds", () => {
+    const local = new Graph();
+    const source = local.cell(1);
+    let runs = 0;
+    const derived = local.derived(() => {
+      runs++;
+      return readCell(source) * 2;
+    });
+    const seen: Array<number> = [];
+    const stop = local.watch(() => {
+      seen.push(readDerived(derived));
+    });
+    expect(observerCount(derived)).toBe(1);
+    forgetValue(derived);
+    expect(hasRun(derived)).toBe(true);
+    expect(peekDerived(derived)).toBe(2);
+    expect(runs).toBe(1);
+    writeCell(source, 2);
+    expect(seen).toEqual([2, 4]);
+    stop();
+    expectAtRest(local);
+  });
+
+  test("a value forgotten from its own run keeps its result", () => {
+    const local = new Graph();
+    const source = local.cell(1);
+    const derived: DerivedNode<number> = local.derived(() => {
+      const value = readCell(source) * 2;
+      forgetValue(derived);
+      return value;
+    });
+    expect(readDerived(derived)).toBe(2);
+    expect(hasRun(derived)).toBe(true);
+    expectAtRest(local);
+  });
+
+  test("an error a value kept is dropped too", () => {
+    const local = new Graph();
+    const source = local.cell(0);
+    let runs = 0;
+    const derived = local.derived(() => {
+      runs++;
+      if (readCell(source) === 0) {
+        throw new Error("zero");
+      }
+      return readCell(source);
+    });
+    expect(() => readDerived(derived)).toThrow("zero");
+    forgetValue(derived);
+    expect(hasRun(derived)).toBe(false);
+    expect(() => readDerived(derived)).toThrow("zero");
+    expect(runs).toBe(2);
+    expectAtRest(local);
+  });
 });

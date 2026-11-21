@@ -615,3 +615,107 @@ describe("read.row", () => {
     expectRealmAtRest(realm);
   });
 });
+
+/** The value `rows` keeps between reads, for the retention tests below. */
+const keptRowsOf = (rows: Collection<string, Row>): unknown =>
+  (rows as unknown as { readonly allRows: { readonly source: { readonly value: unknown } } })
+    .allRows.source.value;
+
+describe("a collection's rows", () => {
+  test("nothing observing them, a write that changes the rows lets go of the rows read before", () => {
+    const realm = createRealm();
+    const rows = collection<string, Row>(realm, { keyOf });
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [
+        { id: "a", price: 1 },
+        { id: "b", price: 2 },
+      ]);
+    });
+    const reader = rows.rows;
+    const before = untracked(realm, (read) => read(reader));
+    expect(keptRowsOf(rows)).toBe(before);
+
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [
+        { id: "a", price: 3 },
+        { id: "c", price: 4 },
+      ]);
+    });
+    // A `replaceAll` would otherwise keep the whole earlier generation alive.
+    expect(keptRowsOf(rows)).toBeUndefined();
+    expect(rows.rows).toBe(reader);
+    expect(untracked(realm, (read) => read(reader))).toEqual([
+      { id: "a", price: 3 },
+      { id: "c", price: 4 },
+    ]);
+
+    for (const write of [
+      (w: Write) => w.upsert(rows, { id: "d", price: 5 }),
+      (w: Write) => w.upsert(rows, { id: "a", price: 6 }),
+      (w: Write) => w.remove(rows, "c"),
+    ]) {
+      untracked(realm, (read) => read(reader));
+      update(realm, (_read, w) => {
+        write(w);
+      });
+      expect(keptRowsOf(rows)).toBeUndefined();
+    }
+    expect(untracked(realm, (read) => read(reader).map((row) => row.price))).toEqual([5, 6]);
+    expectRealmAtRest(realm);
+  });
+
+  test("a write that changes nothing keeps the rows read before", () => {
+    const realm = createRealm();
+    const rows = collection<string, Row>(realm, { keyOf });
+    const row = { id: "a", price: 1 };
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [row]);
+    });
+    const before = untracked(realm, (read) => read(rows.rows));
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [row]);
+      write.upsert(rows, row);
+    });
+    expect(keptRowsOf(rows)).toBe(before);
+    expect(untracked(realm, (read) => read(rows.rows))).toBe(before);
+  });
+
+  test("observed, they keep their value and report each write", () => {
+    const realm = createRealm();
+    const rows = collection<string, Row>(realm, { keyOf });
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [{ id: "a", price: 1 }]);
+    });
+    const { seen, stop } = watchAll(realm, {
+      prices: (read) => read(rows.rows).map((row) => row.price),
+    });
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [{ id: "b", price: 2 }]);
+    });
+    expect(keptRowsOf(rows)).toEqual([{ id: "b", price: 2 }]);
+    expect(seen).toEqual({ prices: [[2]] });
+    stop();
+    expectRealmAtRest(realm);
+  });
+
+  test("a failed update that let go of them reads the rows it put back", () => {
+    const realm = createRealm();
+    const rows = collection<string, Row>(realm, { keyOf });
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [{ id: "a", price: 1 }]);
+    });
+    untracked(realm, (read) => read(rows.rows));
+    let inside: ReadonlyArray<Row> = [];
+    expect(() =>
+      update(realm, (read, write) => {
+        write.replaceAll(rows, [{ id: "b", price: 2 }]);
+        inside = read(rows.rows);
+        write.upsert(rows, { id: "c", price: 3 });
+        throw new Error("the recipe fails");
+      }),
+    ).toThrow("the recipe fails");
+    expect(inside).toEqual([{ id: "b", price: 2 }]);
+    expect(untracked(realm, (read) => read(rows.rows))).toEqual([{ id: "a", price: 1 }]);
+    expectRealmAtRest(realm);
+  });
+});
