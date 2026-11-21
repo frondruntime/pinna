@@ -4,6 +4,7 @@
  * JSON, as a REST snapshot or a socket message would carry it.
  */
 
+import { Schema } from "effect";
 import {
   BoxField,
   CollectionField,
@@ -11,8 +12,7 @@ import {
   type Read,
   SchemaModel,
   type Write,
-} from "@frondruntime/pinna-effect";
-import { Schema } from "effect";
+} from "../../src/index.ts";
 
 export class Market extends SchemaModel<Market>("Market")({
   id: Schema.String,

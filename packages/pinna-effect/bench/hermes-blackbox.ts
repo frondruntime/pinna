@@ -6,10 +6,10 @@
  * bun bench/hermes-blackbox.ts <hermes-ios destroot> [scenario ...]
  */
 import { join } from "node:path";
+import { hermesFrom, lowerForHermes, runOnHermes } from "../../pinna/bench/hermes-toolchain.ts";
 import type { Result } from "./blackbox/harness.ts";
 import { report } from "./blackbox/report.ts";
 import { scenarios } from "./blackbox/scenarios.ts";
-import { hermesFrom, lowerForHermes, runOnHermes } from "./hermes-toolchain.ts";
 
 const destroot = hermesFrom("bun bench/hermes-blackbox.ts <hermes-ios destroot> [scenario ...]");
 const only = process.argv.slice(3);

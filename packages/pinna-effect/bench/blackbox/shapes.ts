@@ -7,7 +7,7 @@
  * it, or one batch for cellx and two for molBench, so the clock reads are a
  * small share of it.
  */
-import { type Library, libraries } from "../graph-model.ts";
+import { type Library, libraries } from "../../../pinna/bench/graph-model.ts";
 import { type Built, expectEqual, type Scenario } from "./harness.ts";
 
 type Subject = "pinna" | "mobx" | "legend";

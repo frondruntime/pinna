@@ -7,8 +7,8 @@
  * bun bench/hermes.ts <hermes-ios destroot>
  */
 import { join } from "node:path";
+import { hermesFrom, lowerForHermes, runOnHermes } from "../../pinna/bench/hermes-toolchain.ts";
 import { subjects } from "./data-model.ts";
-import { hermesFrom, lowerForHermes, runOnHermes } from "./hermes-toolchain.ts";
 
 const destroot = hermesFrom("bun bench/hermes.ts <hermes-ios destroot>");
 const lowered = await lowerForHermes(join(import.meta.dir, "hermes-entry.ts"));

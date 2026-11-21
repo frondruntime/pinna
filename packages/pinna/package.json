@@ -66,22 +66,16 @@
     "typecheck": "bunx tsc -p tsconfig.json --noEmit",
     "fuzz": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test/fuzz/cli.ts",
     "bench": "bun --conditions=source bench/diamond.ts",
-    "bench:data": "bun --conditions=source bench/data.ts",
-    "bench:hermes": "bun --conditions=source bench/hermes.ts",
     "bench:graph": "bun --conditions=source bench/graph.ts",
     "bench:hermes-graph": "bun --conditions=source bench/hermes-graph.ts",
     "bench:hermes-reaction": "bun --conditions=source bench/hermes-reaction.ts",
-    "bench:hermes-hooks": "bun --conditions=source bench/hermes-hooks.ts",
-    "bench:blackbox": "bun --conditions=source bench/blackbox.ts",
-    "bench:stage": "bun --conditions=source bench/stage.ts",
-    "bench:hermes-blackbox": "bun --conditions=source bench/hermes-blackbox.ts"
+    "bench:hermes-hooks": "bun --conditions=source bench/hermes-hooks.ts"
   },
   "dependencies": {
     "@frondruntime/pinna-core": "0.0.1"
   },
   "devDependencies": {
     "@frondruntime/pinna-core": "workspace:*",
-    "@frondruntime/pinna-effect": "workspace:*",
     "@legendapp/state": "3.0.0-beta.48",
     "@react-native/babel-preset": "0.88.1",
     "alien-signals": "3.2.1",
