@@ -24,7 +24,6 @@ import {
   type Collection,
   type Computed,
   ComputedValue,
-  computed,
   computedFunction,
   equalKey,
   hashKey,
@@ -156,11 +155,12 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
    * call returns the same one. A removed key's entry goes; a holder keeps a
    * working computed, which reads the order while its key is missing.
    */
-  private readonly rowsByKey = new Map<Key, Computed<Value | undefined>>();
+  private readonly rowsByKey = new Map<Key, ComputedValue<Value | undefined>>();
   /**
-   * `rows`, once read. Nothing observing it, `changed` empties it: its last
-   * value holds every row it returned, and a `replaceAll` would otherwise
-   * keep a whole generation of rows, and their boxes, alive.
+   * `rows`, once read. Nothing observing it, `changed` empties it, as
+   * `forgetRow` does a row computed: its last value holds every row it
+   * returned, and a `replaceAll` would otherwise keep a whole generation of
+   * rows, and their boxes, alive.
    */
   private allRows: ComputedValue<ReadonlyArray<Value>> | undefined = undefined;
   /**
@@ -303,7 +303,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     }
     let row = this.rowsByKey.get(key);
     if (row === undefined) {
-      row = computed(this.realm, () => this.read(key));
+      row = new ComputedValue(this.realm, () => this.read(key), Object.is);
       this.rowsByKey.set(key, row);
     }
     return row;
@@ -469,7 +469,10 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
           cell.write(value);
           const kept = peekCell(cell.source) as Value;
           next.set(key, kept);
-          changed ||= !Object.is(kept, previous);
+          if (!Object.is(kept, previous)) {
+            changed = true;
+            this.forgetRow(key);
+          }
           continue;
         }
         const present = held.has(key);
@@ -480,7 +483,10 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
         }
         const kept = this.landing(value, previous, present);
         next.set(key, kept);
-        changed ||= !present || !Object.is(kept, previous);
+        if (!present || !Object.is(kept, previous)) {
+          changed = true;
+          this.forgetRow(key);
+        }
       }
       this.held = next;
       this.realm.recordUndo(() => {
@@ -664,6 +670,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       return;
     }
     held.set(key, row);
+    this.forgetRow(key);
     this.realm.recordUndo(
       present
         ? () => {
@@ -675,6 +682,17 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
           },
     );
     this.changed();
+  }
+
+  /**
+   * Empties the row computed of `key` when nothing observes it: its last
+   * value is the row `held` no longer holds under the key.
+   */
+  private forgetRow(key: Key): void {
+    const row = this.rowsByKey.get(key);
+    if (row !== undefined) {
+      forgetValue(row.source);
+    }
   }
 
   /**

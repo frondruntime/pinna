@@ -664,6 +664,49 @@ describe("a collection's rows", () => {
     expectRealmAtRest(realm);
   });
 
+  test("nothing observing it, a key's row lets go of the row a write replaced", () => {
+    const realm = createRealm();
+    const rows = collection<string, Row>(realm, { keyOf });
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [
+        { id: "a", price: 1 },
+        { id: "b", price: 2 },
+      ]);
+    });
+    const keptRowOf = (key: string): unknown =>
+      (
+        rows as unknown as {
+          readonly rowsByKey: ReadonlyMap<string, { readonly source: { readonly value: unknown } }>;
+        }
+      ).rowsByKey.get(key)?.source.value;
+    const a = rows.row("a");
+    const b = rows.row("b");
+    untracked(realm, (read) => [read(a), read(b)]);
+    // A row read while observed and then released keeps its value as well.
+    observe(b)();
+    expect(keptRowOf("a")).toEqual({ id: "a", price: 1 });
+
+    update(realm, (_read, write) => {
+      write.replaceAll(rows, [
+        { id: "a", price: 3 },
+        { id: "b", price: 2 },
+      ]);
+    });
+    // Same key, new row: the row computed would otherwise keep the old one.
+    expect(keptRowOf("a")).toBeUndefined();
+    expect(untracked(realm, (read) => read(a))).toEqual({ id: "a", price: 3 });
+    expect(keptRowOf("b")).toBeUndefined();
+
+    untracked(realm, (read) => read(b));
+    update(realm, (_read, write) => {
+      write.upsert(rows, { id: "b", price: 4 });
+    });
+    expect(keptRowOf("b")).toBeUndefined();
+    expect(keptRowOf("a")).toEqual({ id: "a", price: 3 });
+    expect(untracked(realm, (read) => read(b))).toEqual({ id: "b", price: 4 });
+    expectRealmAtRest(realm);
+  });
+
   test("a write that changes nothing keeps the rows read before", () => {
     const realm = createRealm();
     const rows = collection<string, Row>(realm, { keyOf });
