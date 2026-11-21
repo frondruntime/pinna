@@ -55,6 +55,7 @@ how to find why a value recomputed.
 | `pinna: a stage recipe cannot observe or release while it computes` | A `watch`, an `autorun`, or an `observe` started inside a stage recipe. |
 | `pinna: <verb> runs in stageRead, which writes nothing; write in stageUpdate` | A write inside a `stageRead` function, such as a `reconcileSchema` merge. |
 | `pinna: applyStage runs on a stage while a child stage of it is open; ...` | Apply or drop the child first. |
+| `pinna: conflicts is "replay" or "fail", not <value>` | `openStage` given another `conflicts` value, from code the types did not check. |
 | `pinna: a child stage takes no conflicts option; ...` | `openStage(stage, { conflicts })`. The root stage's option covers what its children read. |
 | `pinna: <name> is read while a stage evaluates it (cycle)` | A computed value that reads itself, read through a stage. |
 | `pinna: stageUpdate cannot run in a computed value; ...` | As for `update`, with `stageUpdate` or `applyStage` in its place, and the same for a watch's select or a selector. |

@@ -132,6 +132,32 @@ describe("a stage that fails on conflicts", () => {
     expect(conflictOf(() => applyStage(root)).changed).toEqual(["flag"]);
   });
 
+  test("a child keeps the version it read: a change before the child applies is caught", () => {
+    using realm = testRealm();
+    const $flag = box(realm, false, { name: "flag" });
+    const $out = box(realm, 0);
+    const root = openStage(realm, { conflicts: "fail" });
+    const child = openStage(root);
+    // The child decides on what it read, and its recipe reads the same box.
+    const flagged = stageRead(child, (read) => read($flag));
+    stageUpdate(child, (read, write) => {
+      write($out, read($flag) === flagged ? 1 : 2);
+    });
+    update(realm, (_read, write) => {
+      write($flag, true);
+    });
+    // The replay into the root reads $flag at its new version; the child read the old one.
+    applyStage(child);
+    expect(conflictOf(() => applyStage(root)).changed).toEqual(["flag"]);
+  });
+
+  test("a conflicts value other than replay or fail throws", () => {
+    using realm = testRealm();
+    expect(() =>
+      openStage(realm, { conflicts: "fails" } as unknown as { conflicts: "fail" }),
+    ).toThrow('pinna: conflicts is "replay" or "fail", not "fails"');
+  });
+
   test("without the option, the replay lands over the new value", () => {
     using realm = testRealm();
     const $price = box(realm, 10);
