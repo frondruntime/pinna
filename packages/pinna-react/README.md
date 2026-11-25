@@ -4,7 +4,7 @@ React hooks for Pinna. A component reads observables through `useValue`,
 `useValues`, or `useSelect`, and rerenders when what it read changes. There
 is no `observer` wrapper, and the hooks work with the React Compiler.
 
-0.2.0-rc.1 is a pre-1.0 release candidate: any version may change the API.
+0.2.0 is a pre-1.0 release: any version may change the API.
 
 ## Install
 

@@ -277,23 +277,25 @@ describe("watchScoped", () => {
     await run(
       Effect.scoped(
         Effect.gen(function* () {
+          const runs = yield* Queue.unbounded<readonly [number, number]>();
           yield* Program.watchScoped(
             realm,
             (read) => read($count),
-            (value, previous) =>
-              Effect.sync(() => {
-                seen.push([value, previous]);
-              }),
+            (value, previous) => Queue.offer(runs, [value, previous] as const),
           );
           // The latest wins: 1 and 4 are replaced before the effect sees them.
+          // Each step waits for the run it starts, not for a time: a sleep let
+          // the scope close before the last run under load.
           write(1);
           write(2);
-          yield* settle;
+          seen.push(yield* Queue.take(runs));
           write(3);
-          yield* settle;
+          seen.push(yield* Queue.take(runs));
           write(4);
           write(5);
+          seen.push(yield* Queue.take(runs));
           yield* settle;
+          expect(yield* Queue.size(runs)).toBe(0);
         }),
       ),
       realm,

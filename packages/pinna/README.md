@@ -5,7 +5,7 @@ collections, atomic updates, and watchers. A box checks nothing, and the
 package imports nothing from Effect. For boxes that check an Effect Schema,
 use `@frondruntime/pinna-effect`; for React, `@frondruntime/pinna-react`.
 
-0.2.0-rc.1 is a pre-1.0 release candidate: any version may change the API.
+0.2.0 is a pre-1.0 release: any version may change the API.
 
 ## Install
 

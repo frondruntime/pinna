@@ -155,6 +155,14 @@ const isPublished = (
     return yield* new ReleaseError({ step, message: result.stderr.trim() });
   });
 
+/**
+ * The dist-tag a version goes out under. A prerelease (`0.2.0-rc.2`) goes to
+ * `next`, so `npm install @frondruntime/pinna` keeps resolving the last
+ * release; only a release moves `latest`.
+ */
+export const distTagOf = (version: string): "latest" | "next" =>
+  version.includes("-") ? "next" : "latest";
+
 /** The published files come from `packages`, so a change there must be committed first. */
 const checkCleanPackages = (
   root: string,
@@ -202,8 +210,9 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
         message: `every package is already published at ${version}`,
       });
     }
+    const distTag = distTagOf(version);
     yield* Console.log(
-      `to publish at ${version}: ${pending.map((published) => published.name).join(", ")}`,
+      `to publish at ${version} under the ${distTag} tag: ${pending.map((published) => published.name).join(", ")}`,
     );
     yield* checkCleanPackages(root, dryRun);
 
@@ -237,7 +246,15 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
           yield* attachedOrFail(
             `publish ${published.name}`,
             "npm",
-            ["publish", tarball, "--access", "public", ...(dryRun ? ["--dry-run"] : [])],
+            [
+              "publish",
+              tarball,
+              "--access",
+              "public",
+              "--tag",
+              distTag,
+              ...(dryRun ? ["--dry-run"] : []),
+            ],
             root,
           );
         }
@@ -247,6 +264,6 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
     yield* Console.log(
       dryRun
         ? `\ndry run done; nothing was published`
-        : `\npublished ${pending.map((published) => `${published.name}@${version}`).join(", ")}`,
+        : `\npublished ${pending.map((published) => `${published.name}@${version}`).join(", ")} under the ${distTag} tag`,
     );
   });
