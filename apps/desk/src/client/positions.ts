@@ -1,4 +1,4 @@
-import { computed, Model, type Realm } from "@frondruntime/pinna";
+import { Computed, Model, type Realm } from "@frondruntime/pinna";
 import {
   add,
   type Decimal,
@@ -24,8 +24,8 @@ export interface PositionValue {
 const mid = (price: { readonly bid: string; readonly ask: string } | null) =>
   price === null ? null : divide(add(decimal(price.bid), decimal(price.ask)), fraction(2n));
 
-export class PositionRow extends Model {
-  readonly $value = computed<PositionValue | null>(
+export class PositionRow extends Model.Class {
+  readonly $value = Computed.make<PositionValue | null>(
     this.realm,
     (read) => {
       const aggregate = read(this.book.positions.ledger(this.tile.pair.symbol).$aggregate);
@@ -77,10 +77,10 @@ export class PositionRow extends Model {
   }
 }
 
-export class Positions extends Model {
+export class Positions extends Model.Class {
   readonly $symbols;
   readonly rows: readonly PositionRow[];
-  readonly $total = computed(
+  readonly $total = Computed.make(
     this.realm,
     (read) => {
       let cents = 0n;

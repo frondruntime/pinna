@@ -1,17 +1,7 @@
 // The site's docs print the regions of this file (docs/public/guides/live-data.md), so
 // `bun run typecheck` compiles what the page shows. The feed without Effect is
 // `liveData.ts`.
-import {
-  BoxField,
-  box,
-  changes,
-  collection,
-  createRealm,
-  decode,
-  RealmService,
-  SchemaModel,
-  update,
-} from "@frondruntime/pinna-effect";
+import { Box, Collection, Model, Program, Realm, RealmService } from "@frondruntime/pinna-effect";
 import { Cause, Data, Effect, Fiber, Layer, Queue, Schedule, Schema, Stream } from "effect";
 
 // #region schema
@@ -36,28 +26,30 @@ const decodeMessage = Schema.decodeUnknownEffect(Schema.fromJsonString(QuoteMess
 // #region board
 type Status = "connecting" | "open" | "closed";
 
-class QuoteBoard extends SchemaModel<QuoteBoard>("QuoteBoard")({
+class QuoteBoard extends Model.Schema<QuoteBoard>("QuoteBoard")({
   // Typed by people and saved with the board: every write is checked.
-  $watchlist: BoxField(Schema.Array(Schema.String)),
+  $watchlist: Model.boxField(Schema.Array(Schema.String)),
 }) {
   // Written by the feed alone, from messages the decode checked: checked nowhere else.
-  readonly $quotes = collection(this.realm, {
+  readonly $quotes = Collection.make(this.realm, {
     keyOf: (quote: Quote) => quote.symbol,
     equals: Schema.toEquivalence(Quote),
   });
-  readonly $status = box<Status>(this.realm, "closed");
+  readonly $status = Box.make<Status>(this.realm, "closed");
 
   setStatus(status: Status): void {
-    update(this.realm, (_read, write) => write(this.$status, status));
+    Realm.update(this.realm, (_read, write) => write(this.$status, status));
   }
 
   add(symbol: string): void {
-    update(this.realm, (read, write) => write(this.$watchlist, [...read(this.$watchlist), symbol]));
+    Realm.update(this.realm, (read, write) =>
+      write(this.$watchlist, [...read(this.$watchlist), symbol]),
+    );
   }
 
   // One update per message: a reader sees all of it or none of it.
   receive(message: QuoteMessage): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       switch (message.type) {
         case "snapshot":
           return write.replaceAll(this.$quotes, message.quotes);
@@ -107,7 +99,7 @@ const reconnect = Schedule.min([Schedule.exponential("500 millis"), Schedule.spa
 
 // Follows the board's watchlist: a new list closes the socket and opens one for it.
 const follow = Effect.fn("follow")(function* (board: QuoteBoard) {
-  yield* changes(board.$watchlist).pipe(
+  yield* Program.changes(board.$watchlist).pipe(
     Stream.switchMap((symbols) => {
       const url = `${quotesUrl}?symbols=${symbols.map(encodeURIComponent).join(",")}`;
       return socket(url, () => board.setStatus("open")).pipe(
@@ -128,11 +120,11 @@ const follow = Effect.fn("follow")(function* (board: QuoteBoard) {
 // #endregion
 
 // #region run
-const realm = createRealm();
+const realm = Realm.make();
 const RealmLive = Layer.succeed(RealmService, realm);
 
 // Throws the SchemaError when the saved board does not fit.
-const board = decode(realm, QuoteBoard)({ watchlist: ["ACME", "GLOBEX"] });
+const board = Model.decode(realm, QuoteBoard)({ watchlist: ["ACME", "GLOBEX"] });
 
 // The socket is open while the fiber runs.
 const fiber = Effect.runFork(follow(board).pipe(Effect.provide(RealmLive)));

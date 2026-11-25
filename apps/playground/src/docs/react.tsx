@@ -1,15 +1,15 @@
 // The site's docs print the regions of this file (docs/public/react/hooks.md), so
 // `bun run typecheck` compiles what the pages show.
-import { box, computed, createRealm, untracked, update } from "@frondruntime/pinna";
+import { Box, Computed, Realm } from "@frondruntime/pinna";
 import { RealmProvider, useRealm, useSelect, useValue, useValues } from "@frondruntime/pinna-react";
 import { memo, useDeferredValue, useState } from "react";
 
 // #region setup
-const realm = createRealm();
-const $first = box(realm, "Ada");
-const $last = box(realm, "Lovelace");
-const $starred = box<ReadonlyArray<string>>(realm, []);
-const $query = box(realm, "");
+const realm = Realm.make();
+const $first = Box.make(realm, "Ada");
+const $last = Box.make(realm, "Lovelace");
+const $starred = Box.make<ReadonlyArray<string>>(realm, []);
+const $query = Box.make(realm, "");
 const names: ReadonlyArray<string> = ["Ada", "Grace", "Barbara"];
 // #endregion
 
@@ -41,10 +41,10 @@ function Star({ id }: { readonly id: string }) {
 // #region local
 function Draft() {
   const local = useRealm();
-  const [$text] = useState(() => box(local, ""));
+  const [$text] = useState(() => Box.make(local, ""));
   const text = useValue($text);
   const onChange = (value: string) => {
-    update(local, (_read, write) => {
+    Realm.update(local, (_read, write) => {
       write($text, value);
     });
   };
@@ -56,7 +56,7 @@ function Draft() {
 function SaveButton() {
   // A handler reads without subscribing; the component does not rerender for it.
   const onClick = () => {
-    const first = untracked(realm, (read) => read($first));
+    const first = Realm.untracked(realm, (read) => read($first));
     console.log("saving", first);
   };
   return (
@@ -84,7 +84,7 @@ function Search() {
   const query = useValue($query);
   const deferred = useDeferredValue(query);
   const onChange = (value: string) => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($query, value);
     });
   };
@@ -98,7 +98,7 @@ function Search() {
 // #endregion
 
 // #region status
-const $saving = box(realm, false);
+const $saving = Box.make(realm, false);
 
 // Reads $saving alone: a change of status rerenders this line, not the list.
 const SavingStatus = memo(function SavingStatus() {
@@ -136,12 +136,12 @@ interface Quote {
   readonly receivedAt: number;
 }
 
-const $quote = box<Quote>(realm, { symbol: "ACME", price: 10, receivedAt: 0 });
+const $quote = Box.make<Quote>(realm, { symbol: "ACME", price: 10, receivedAt: 0 });
 
 // What the card shows. Each recompute builds a new object, so `equals`
 // compares the shown fields: a tick that changes only `receivedAt` keeps the
 // previous object, and the card does not rerender.
-const $quoteCard = computed(
+const $quoteCard = Computed.make(
   realm,
   (read) => {
     const quote = read($quote);

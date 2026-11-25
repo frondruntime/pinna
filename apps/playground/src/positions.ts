@@ -2,20 +2,10 @@
  * The sample positions model of `packages/pinna-effect/test/positions`:
  * `Position`, `Positions`, and the update stream's message. The server sends
  * decimals and dates as strings; the date formatter is the caller's, passed
- * to `decode` as the `Dates` service. The transport, the rate feed, and the
+ * to `Model.decode` as the `Dates` service. The transport, the rate feed, and the
  * update stream are the host's, and the playground mocks them.
  */
-import {
-  type Box,
-  CollectionField,
-  type Computed,
-  FromContext,
-  type Read,
-  type Realm,
-  SchemaModel,
-  schemaBox,
-  update,
-} from "@frondruntime/pinna-effect";
+import { Box, type Computed, Model, type Read, Realm } from "@frondruntime/pinna-effect";
 import { BigDecimal, Context, Schema } from "effect";
 
 export const locales = ["en-US", "de-DE", "ja-JP"] as const;
@@ -29,7 +19,7 @@ export class DateFormatting {
   readonly $locale: Box<Locale>;
 
   constructor(private readonly realm: Realm) {
-    this.$locale = schemaBox(realm, Schema.Literals(locales), "en-US");
+    this.$locale = Box.schema(realm, Schema.Literals(locales), "en-US");
   }
 
   formatDateTime(read: Read, value: Date): string {
@@ -41,7 +31,7 @@ export class DateFormatting {
   }
 
   setLocale(locale: Locale): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write(this.$locale, locale);
     });
   }
@@ -114,7 +104,7 @@ export class Position extends Schema.Class<Position>("Position")({
   estimate: Schema.optionalKey(Estimate),
   settlement: Schema.optionalKey(Settlement),
   chart: Schema.optionalKey(Schema.Array(ChartPoint)),
-  dates: FromContext(Dates),
+  dates: Model.context(Dates),
 }) {
   openedAtFormatted(read: Read): string {
     return this.dates.formatDateTime(read, this.openedAt);
@@ -196,8 +186,8 @@ const project = (
   };
 };
 
-export class Positions extends SchemaModel<Positions>("Positions")({
-  $items: CollectionField(Position, { keyOf: (position) => position.id }),
+export class Positions extends Model.Schema<Positions>("Positions")({
+  $items: Model.collectionField(Position, { keyOf: (position) => position.id }),
 }) {
   getById(id: string): Computed<Position | undefined> {
     return this.$items.row(id);
@@ -205,13 +195,13 @@ export class Positions extends SchemaModel<Positions>("Positions")({
 
   /** Replaces the position with the same id, or puts a new one first. */
   upsert(position: Position): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write.upsert(this.$items, position);
     });
   }
 
   remove(id: string): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write.remove(this.$items, id);
     });
   }

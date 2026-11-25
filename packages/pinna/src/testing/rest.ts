@@ -2,7 +2,17 @@
  * What a realm leaves open when a test breaks Pinna's own bookkeeping. Pinna's
  * tests assert it between steps; `testRealm` checks it when disposed.
  */
-import type { ObservableRealm, Realm } from "../observable.ts";
+
+import {
+  placeConditions,
+  placeDisposed,
+  placeKind,
+  placeKindOf,
+  placeKindShift,
+  placeListening,
+} from "@frondruntime/pinna-core";
+import type { Realm } from "../box.ts";
+import type { ObservableRealm } from "../realm.ts";
 
 /**
  * Each part of `realm` that is still open: an update, an untracked read or a
@@ -10,17 +20,28 @@ import type { ObservableRealm, Realm } from "../observable.ts";
  * Empty when the realm is at rest, as it is whenever no Pinna call is in
  * progress.
  */
+/** A listener's place at rest, without its conditions. */
+const listeningWord = placeKind.listening << placeKindShift;
+
 export const openParts = (realm: Realm): ReadonlyArray<string> => {
   const state = realm as ObservableRealm;
   const core = state.core;
   const open: Array<string> = [];
   if (state.updateDepth !== 0) open.push(`update depth ${state.updateDepth}`);
-  if (state.openDepth !== 0) open.push(`untracked depth ${state.openDepth}`);
+  // A place other than the realm's base, but for a `Realm.onUpdate` listener's,
+  // which runs at rest: what an update, an untracked read, a peek, a
+  // derivation, or a tracked run leaves set.
+  const kind = placeKindOf(core.place);
+  if (
+    (core.place & ~(placeDisposed | placeListening)) !== listeningWord &&
+    (core.place & ~placeDisposed) !== 0
+  ) {
+    open.push(`a place: ${kind}, conditions ${core.place & placeConditions}`);
+  }
   if (state.scope !== 0) open.push(`update scope ${state.scope}`);
-  if (state.journalLength !== 0) open.push(`${state.journalLength} undo entries`);
-  if (state.autorunRun !== undefined) open.push("an autorun's body");
+  if (state.journal.length !== 0) open.push(`${state.journal.length} undo entries`);
+  if (state.stack?.window === true) open.push("a visible stage's window");
   if (core.active !== undefined) open.push("a running computed value or watch");
-  if (core.deriving !== undefined) open.push("a deriving computed value");
   if (core.depth !== 0) open.push(`graph depth ${core.depth}`);
   if (core.walkDepth !== 0) open.push(`walk depth ${core.walkDepth}`);
   if (core.dueHead !== undefined) open.push("a scheduled watch");

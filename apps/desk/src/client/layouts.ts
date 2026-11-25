@@ -1,15 +1,5 @@
-import {
-  box,
-  collection,
-  computed,
-  computedFunction,
-  Model,
-  type Read,
-  untracked,
-  update,
-  watch,
-} from "@frondruntime/pinna";
-import { decode, schemaBox } from "@frondruntime/pinna-effect";
+import { Collection, Computed, type Read, Realm } from "@frondruntime/pinna";
+import { Box, Model } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 import type { Workspace } from "./desk.ts";
 import {
@@ -34,20 +24,20 @@ export const workspacesEqual = (left: WorkspaceData, right: WorkspaceData) =>
       tile.symbol === right.tiles[index]?.symbol && tile.notional === right.tiles[index]?.notional,
   );
 
-export class Layouts extends Model implements Disposable {
-  readonly $layouts = collection(this.realm, { keyOf: (layout: LayoutData) => layout.id });
-  readonly $activeId = schemaBox(this.realm, Schema.NullOr(Schema.String), null);
-  readonly $dropped = box<readonly DroppedPart[]>(this.realm, []);
-  readonly $storageError = box<string | null>(this.realm, null);
-  readonly $preview = box<{
+export class Layouts extends Model.Class implements Disposable {
+  readonly $layouts = Collection.make(this.realm, { keyOf: (layout: LayoutData) => layout.id });
+  readonly $activeId = Box.schema(this.realm, Schema.NullOr(Schema.String), null);
+  readonly $dropped = Box.make<readonly DroppedPart[]>(this.realm, []);
+  readonly $storageError = Box.make<string | null>(this.realm, null);
+  readonly $preview = Box.make<{
     readonly workspace: WorkspaceData;
     readonly dropped: readonly DroppedPart[];
   } | null>(this.realm, null);
-  readonly $snapshot = computed(this.realm, (read) => this.snapshot(read), {
+  readonly $snapshot = Computed.make(this.realm, (read) => this.snapshot(read), {
     equals: workspacesEqual,
     name: "Layouts.snapshot",
   });
-  readonly $modified = computed(
+  readonly $modified = Computed.make(
     this.realm,
     (read) => {
       const id = read(this.$activeId);
@@ -56,10 +46,10 @@ export class Layouts extends Model implements Disposable {
     },
     { name: "Layouts.modified" },
   );
-  readonly $status = computedFunction(this.realm, (read, id: string) =>
+  readonly $status = Computed.fn(this.realm, (read, id: string) =>
     read(this.$activeId) === id ? (read(this.$modified) ? "modified" : "active") : "inactive",
   );
-  private readonly $serialized = computed(this.realm, (read) =>
+  private readonly $serialized = Computed.make(this.realm, (read) =>
     JSON.stringify({
       version: 2,
       workspace: read(this.$snapshot),
@@ -85,18 +75,18 @@ export class Layouts extends Model implements Disposable {
       this.storageError(error);
     }
     const checked = readSavedDesk(stored, this.symbols);
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       this.apply(checked.data.workspace);
       write.replaceAll(
         this.$layouts,
-        checked.data.layouts.map((layout) => decode(this.realm, LayoutData)(layout)),
+        checked.data.layouts.map((layout) => Model.decode(this.realm, LayoutData)(layout)),
       );
       write(this.$activeId, checked.data.activeLayoutId);
       write(this.$dropped, checked.dropped);
     });
-    this.lastSaved = untracked(this.realm, (read) => read(this.$serialized));
+    this.lastSaved = Realm.untracked(this.realm, (read) => read(this.$serialized));
     this.stopSaving = store
-      ? watch(
+      ? Realm.watch(
           this.realm,
           (read) => read(this.$serialized),
           () => {
@@ -130,7 +120,7 @@ export class Layouts extends Model implements Disposable {
   /** The caller has checked the entire snapshot. Existing tile objects always stay held. */
   private apply(next: WorkspaceData) {
     const workspace = this.workspace;
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const previous = read(workspace.$openSymbols);
       const symbols = next.tiles.map((tile) => tile.symbol);
       for (const tile of next.tiles) workspace.tile(tile.symbol).setNotional(tile.notional);
@@ -155,13 +145,13 @@ export class Layouts extends Model implements Disposable {
   }
   save(name: string): string {
     let identifier = "";
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const trimmed = this.uniqueName(name, read);
       let sequence = 1;
       while (read.row(this.$layouts, `layout-${sequence}`)) sequence++;
       identifier = `layout-${sequence}`;
       const checked = checkWorkspace(read(this.$snapshot), this.symbols);
-      const layout = decode(
+      const layout = Model.decode(
         this.realm,
         LayoutData,
       )({ id: identifier, name: trimmed, workspace: checked.workspace });
@@ -179,7 +169,7 @@ export class Layouts extends Model implements Disposable {
     return trimmed;
   }
   switchTo(id: string) {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const layout = read.row(this.$layouts, id);
       if (!layout) throw new Error("Layout no longer exists.");
       this.apply(layout.workspace);
@@ -187,22 +177,25 @@ export class Layouts extends Model implements Disposable {
     });
   }
   rename(id: string, name: string) {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const layout = read.row(this.$layouts, id);
       if (!layout) throw new Error("Layout no longer exists.");
       const trimmed = this.uniqueName(name, read, id);
       if (layout.name !== trimmed)
-        write.upsert(this.$layouts, decode(this.realm, LayoutData)({ ...layout, name: trimmed }));
+        write.upsert(
+          this.$layouts,
+          Model.decode(this.realm, LayoutData)({ ...layout, name: trimmed }),
+        );
     });
   }
   delete(id: string) {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       write.remove(this.$layouts, id);
       if (read(this.$activeId) === id) write(this.$activeId, null);
     });
   }
   copy(id: string) {
-    return untracked(this.realm, (read) => {
+    return Realm.untracked(this.realm, (read) => {
       const layout = read.row(this.$layouts, id);
       if (!layout) throw new Error("Layout no longer exists.");
       return JSON.stringify({ version: 2, workspace: layout.workspace }, null, 2);
@@ -210,10 +203,10 @@ export class Layouts extends Model implements Disposable {
   }
   preview(text: string) {
     const checked = readLayoutText(text, this.symbols);
-    update(this.realm, (_read, write) => write(this.$preview, checked));
+    Realm.update(this.realm, (_read, write) => write(this.$preview, checked));
   }
   confirmPreview() {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const preview = read(this.$preview);
       if (!preview) return;
       this.apply(preview.workspace);
@@ -223,22 +216,22 @@ export class Layouts extends Model implements Disposable {
     });
   }
   cancelPreview() {
-    update(this.realm, (_read, write) => write(this.$preview, null));
+    Realm.update(this.realm, (_read, write) => write(this.$preview, null));
   }
   private storageError(error: unknown) {
-    update(this.realm, (_read, write) =>
+    Realm.update(this.realm, (_read, write) =>
       write(this.$storageError, `Workspace storage failed: ${String(error)}`),
     );
   }
   flush() {
     if (!this.queued) return;
     this.queued = false;
-    const text = untracked(this.realm, (read) => read(this.$serialized));
+    const text = Realm.untracked(this.realm, (read) => read(this.$serialized));
     if (text === this.lastSaved) return;
     try {
       this.store?.save(text);
       this.lastSaved = text;
-      update(this.realm, (_read, write) => write(this.$storageError, null));
+      Realm.update(this.realm, (_read, write) => write(this.$storageError, null));
     } catch (error) {
       this.storageError(error);
     }

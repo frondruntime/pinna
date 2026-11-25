@@ -1,16 +1,16 @@
 /**
- * `reconcileSchema`: pinna's `reconcile`, with `equals` worked out from the
- * schema when it is left out. `reconcile` stays pinna's own and takes
- * `equals`.
+ * pinna-effect's `Collection.reconcile`: pinna's, with `equals` worked out
+ * from the schema when it is left out. Given `equals`, it hands the call to
+ * pinna's unchanged.
  */
-import { type ReconcileOptions, reconcile } from "@frondruntime/pinna";
-import type { ObservableRealm } from "@frondruntime/pinna/internal";
+import { Collection, type ReconcileOptions } from "@frondruntime/pinna";
+import { currentPlace, type ObservableRealm } from "@frondruntime/pinna/internal";
 import { Equal, Schema } from "effect";
 import { planMerge, realmOfMergeable, writeIn } from "./merge.ts";
 import { equalsOf } from "./schema.ts";
 
 /**
- * A `SchemaModel` or `Schema.Class` instance compares with its class's
+ * A `Model.Schema` or `Schema.Class` instance compares with its class's
  * schema: plain fields by value, boxes and the realm by identity, or the
  * class's own `[Equal.symbol]`. Anything else compares with Effect's
  * structural equality.
@@ -33,7 +33,7 @@ const sameValue = (previous: unknown, next: unknown): boolean => {
  * and value are unchanged. Returns `previous` itself when nothing changed.
  * Throws when `next` repeats a key, before it writes anything.
  *
- * A `SchemaModel` instance whose plain fields are unchanged is kept, and
+ * A `Model.Schema` instance whose plain fields are unchanged is kept, and
  * each of its boxes takes the value of the new instance's box: in the open
  * update, or in one of its own when none is open. A call that writes nothing
  * opens no update.
@@ -50,16 +50,16 @@ export const reconcileSchema = <Item, Key>(
   },
 ): ReadonlyArray<Item> => {
   if (options.equals !== undefined) {
-    return reconcile(previous, next, { keyOf: options.keyOf, equals: options.equals });
+    return Collection.reconcile(previous, next, { keyOf: options.keyOf, equals: options.equals });
   }
-  // The writes wait until `reconcile` returns, so a repeated key throws before any.
+  // The writes wait until `Collection.reconcile` returns, so a repeated key throws before any.
   let pending: Map<ObservableRealm, Array<() => void>> | undefined;
-  const result = reconcile(previous, next, {
+  const result = Collection.reconcile(previous, next, {
     keyOf: options.keyOf,
     equals: (held, fresh) => {
       const realm = realmOfMergeable(held);
       // A held model reads and writes where its realm writes now: a stage recipe, or the realm.
-      const place = realm?.place();
+      const place = realm === undefined ? undefined : currentPlace(realm);
       const writes = place === undefined ? false : planMerge(held, fresh, place.read, place.write);
       if (writes === false) {
         // A model that cannot merge requires replacement, even if its own Equal agrees.

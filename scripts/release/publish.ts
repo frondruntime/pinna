@@ -16,9 +16,9 @@ import { Console, Effect, FileSystem, Path, Schema, Stdio } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { packAndSmoke, readJson } from "./pack.ts";
 import {
-  type PublishedPackage,
   packageDirectory,
-  publishedPackages,
+  type ReleasePackage,
+  releasePackages,
   scope,
   workspaceRoot,
 } from "./packages.ts";
@@ -74,22 +74,29 @@ const signIn = (root: string, dryRun: boolean): Effect.Effect<void, ReleaseError
 const readManifests = (
   root: string,
 ): Effect.Effect<
-  ReadonlyArray<readonly [PublishedPackage, PackageManifest]>,
+  ReadonlyArray<readonly [ReleasePackage, PackageManifest]>,
   ReleaseError,
   FileSystem.FileSystem | Path.Path
 > =>
-  Effect.forEach(publishedPackages, (published) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const directory = yield* packageDirectory(root, published);
-      const manifest = yield* readJson(
-        `manifest of ${published.name}`,
-        PackageManifest,
-        path.join(directory, "package.json"),
-      );
-      return [published, manifest] as const;
-    }),
+  Effect.forEach(
+    releasePackages.filter((released) => released.publishes),
+    (published) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const directory = yield* packageDirectory(root, published);
+        const manifest = yield* readJson(
+          `manifest of ${published.name}`,
+          PackageManifest,
+          path.join(directory, "package.json"),
+        );
+        return [published, manifest] as const;
+      }),
   );
+
+/** The packages packed for a release candidate and never sent to npm. */
+const unpublishedNames = new Set(
+  releasePackages.filter((released) => !released.publishes).map((released) => released.name),
+);
 
 /**
  * The packages are released together at one version, and each names the
@@ -97,7 +104,7 @@ const readManifests = (
  * it was tested with.
  */
 const checkManifests = (
-  manifests: ReadonlyArray<readonly [PublishedPackage, PackageManifest]>,
+  manifests: ReadonlyArray<readonly [ReleasePackage, PackageManifest]>,
 ): Effect.Effect<string, ReleaseError> => {
   const [first] = manifests;
   const version = first?.[1].version ?? "";
@@ -109,6 +116,10 @@ const checkManifests = (
       manifest.version === version
         ? []
         : [`${manifest.name} is at ${manifest.version}, ${first?.[1].name} at ${version}`],
+      // npm would install a published package without the private one it names.
+      ranges
+        .filter(([name]) => unpublishedNames.has(name))
+        .map(([name]) => `${manifest.name} names ${name}, which is not published`),
       ranges
         .filter(([, range]) => range.startsWith("workspace:"))
         .map(([name]) => `${manifest.name} names ${name} with a workspace: range`),
@@ -177,7 +188,7 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
     yield* section("registry");
     const manifests = yield* readManifests(root);
     const version = yield* checkManifests(manifests);
-    const pending: Array<PublishedPackage> = [];
+    const pending: Array<ReleasePackage> = [];
     for (const [published] of manifests) {
       if (yield* isPublished(root, published.name, version)) {
         yield* Console.log(`${published.name}@${version} is already published; skipped`);

@@ -1,20 +1,20 @@
 // The site's docs print the regions of this file (docs/public/start/index.md), so
 // `bun run typecheck` compiles what the pages show.
-import { box, computed, createRealm, Model, untracked, update } from "@frondruntime/pinna";
+import { Box, Computed, Model, Realm } from "@frondruntime/pinna";
 import { useValue } from "@frondruntime/pinna-react";
 
 // #region realm
-const realm = createRealm();
+const realm = Realm.make();
 // #endregion
 
 // #region box
-const $count = box(realm, 0, { name: "count" });
-const $double = computed(realm, (read) => read($count) * 2, { name: "double" });
+const $count = Box.make(realm, 0, { name: "count" });
+const $double = Computed.make(realm, (read) => read($count) * 2, { name: "double" });
 // #endregion
 
 // #region update
 const increment = () => {
-  update(realm, (read, write) => {
+  Realm.update(realm, (read, write) => {
     write($count, read($count) + 1);
   });
 };
@@ -32,12 +32,12 @@ function CounterButton() {
 // #endregion
 
 // #region model
-class Counter extends Model {
-  readonly $count = box(this.realm, 0, { name: "count" });
-  readonly $double = computed(this.realm, (read) => read(this.$count) * 2, { name: "double" });
+class Counter extends Model.Class {
+  readonly $count = Box.make(this.realm, 0, { name: "count" });
+  readonly $double = Computed.make(this.realm, (read) => read(this.$count) * 2, { name: "double" });
 
   increment(): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       write(this.$count, read(this.$count) + 1);
     });
   }
@@ -45,9 +45,9 @@ class Counter extends Model {
 // #endregion
 
 // #region test
-const counter = new Counter(createRealm());
+const counter = new Counter(Realm.make());
 counter.increment();
-const double = untracked(counter.realm, (read) => read(counter.$double)); // 2
+const double = Realm.untracked(counter.realm, (read) => read(counter.$double)); // 2
 
 // #endregion
 

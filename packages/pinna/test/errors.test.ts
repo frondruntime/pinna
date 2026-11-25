@@ -1,15 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Graph, readCell, writeCell } from "@frondruntime/pinna-core";
-import {
-  atom,
-  box,
-  createRealm,
-  observe,
-  onObserved,
-  untracked,
-  update,
-  watch,
-} from "../src/index.ts";
+import { Atom, Box, Computed, Realm, Source } from "../src/index.ts";
 import { expectRealmAtRest } from "./rest.ts";
 
 /**
@@ -37,26 +27,26 @@ describe("createRealm({ onError })", () => {
         const errors: Array<string> = [];
         const host: Array<string> = [];
         globalThis.reportError = (error: unknown) => host.push((error as Error).message);
-        const realm = createRealm({
+        const realm = Realm.make({
           onError: (error) => {
             const message = (error as Error).message;
             errors.push(message);
             throw new Error(`sink ${message}`);
           },
         });
-        const source = box(realm, 0);
+        const source = Box.make(realm, 0);
         for (const message of ["A", "B"]) {
           const fail = () => {
             throw new Error(message);
           };
-          onObserved(source, cleanup ? () => fail : fail);
+          Source.onObserved(source, cleanup ? () => fail : fail);
         }
-        let stop: (() => void) | undefined = cleanup ? observe(source) : undefined;
+        let stop: (() => void) | undefined = cleanup ? Source.observe(source) : undefined;
         let caught: unknown;
         try {
-          update(realm, () => {
+          Realm.update(realm, () => {
             if (cleanup) stop?.();
-            else stop = observe(source);
+            else stop = Source.observe(source);
             if (failedRecipe) throw new Error("recipe failed");
           });
         } catch (error) {
@@ -76,11 +66,11 @@ describe("createRealm({ onError })", () => {
   test("a watch effect's error goes to the realm's onError, not the global", () => {
     failGlobal();
     const reported: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => reported.push(error) });
-    const $count = box(realm, 0);
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
+    const $count = Box.make(realm, 0);
     const failure = new Error("boom");
     const seen: Array<number> = [];
-    watch(
+    Realm.watch(
       realm,
       (read) => read($count),
       (value) => {
@@ -90,10 +80,10 @@ describe("createRealm({ onError })", () => {
         seen.push(value);
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 1);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 2);
     });
     expect(reported).toEqual([failure]);
@@ -105,28 +95,28 @@ describe("createRealm({ onError })", () => {
     failGlobal();
     const first: Array<unknown> = [];
     const second: Array<unknown> = [];
-    const realmA = createRealm({ onError: (error) => first.push(error) });
-    const realmB = createRealm({ onError: (error) => second.push(error) });
-    const $a = box(realmA, 0);
-    const $b = box(realmB, 0);
-    watch(
+    const realmA = Realm.make({ onError: (error) => first.push(error) });
+    const realmB = Realm.make({ onError: (error) => second.push(error) });
+    const $a = Box.make(realmA, 0);
+    const $b = Box.make(realmB, 0);
+    Realm.watch(
       realmA,
       (read) => read($a),
       () => {
         throw new Error("a");
       },
     );
-    watch(
+    Realm.watch(
       realmB,
       (read) => read($b),
       () => {
         throw new Error("b");
       },
     );
-    update(realmA, (_read, write) => {
+    Realm.update(realmA, (_read, write) => {
       write($a, 1);
     });
-    update(realmB, (_read, write) => {
+    Realm.update(realmB, (_read, write) => {
       write($b, 1);
     });
     expect(first.map((error) => (error as Error).message)).toEqual(["a"]);
@@ -138,18 +128,18 @@ describe("createRealm({ onError })", () => {
   test("watchers that never settle are reported to onError", () => {
     failGlobal();
     const reported: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => reported.push(error) });
-    const $loop = box(realm, 0);
-    watch(
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
+    const $loop = Box.make(realm, 0);
+    Realm.watch(
       realm,
       (read) => read($loop),
       (value) => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($loop, value + 1);
         });
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($loop, 1);
     });
     expect(reported.map((error) => (error as Error).message)).toEqual([
@@ -158,13 +148,13 @@ describe("createRealm({ onError })", () => {
   });
 
   test("an onError that throws throws to the writer, as the global reporter does", () => {
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: () => {
         throw new Error("sink failed");
       },
     });
-    const $count = box(realm, 0);
-    watch(
+    const $count = Box.make(realm, 0);
+    Realm.watch(
       realm,
       (read) => read($count),
       () => {
@@ -172,7 +162,7 @@ describe("createRealm({ onError })", () => {
       },
     );
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($count, 1);
       }),
     ).toThrow("sink failed");
@@ -184,17 +174,17 @@ describe("createRealm({ onError })", () => {
     globalThis.reportError = (error) => {
       reported.push(error);
     };
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: () => {
         throw new Error("sink failed");
       },
     });
-    const $count = box(realm, 0);
+    const $count = Box.make(realm, 0);
     // A rollback does not undo an atom's change, so the watch reruns in the
     // flush that ends the failed recipe.
-    const outside = atom(realm);
+    const outside = Atom.make(realm);
     let armed = false;
-    watch(
+    Realm.watch(
       realm,
       (read) => {
         read(outside);
@@ -206,14 +196,14 @@ describe("createRealm({ onError })", () => {
       () => {},
     );
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         armed = true;
         write.changed(outside);
         write($count, 1);
         throw new Error("recipe failed");
       }),
     ).toThrow("recipe failed");
-    expect(untracked(realm, (read) => read($count))).toBe(0);
+    expect(Realm.untracked(realm, (read) => read($count))).toBe(0);
     expect(reported.map((error) => (error as Error).message)).toEqual(["sink failed"]);
     expectRealmAtRest(realm);
   });
@@ -223,17 +213,17 @@ describe("createRealm({ onError })", () => {
     globalThis.reportError = (error) => {
       reported.push(error);
     };
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: (error) => {
         throw error;
       },
     });
-    const $count = box(realm, 0);
+    const $count = Box.make(realm, 0);
     // A rollback does not undo an atom's change, so the watch reruns in the
     // flush that ends the failed recipe.
-    const outside = atom(realm);
+    const outside = Atom.make(realm);
     let armed = false;
-    watch(
+    Realm.watch(
       realm,
       (read) => {
         read(outside);
@@ -245,7 +235,7 @@ describe("createRealm({ onError })", () => {
       () => {},
     );
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         armed = true;
         write.changed(outside);
         write($count, 1);
@@ -258,17 +248,17 @@ describe("createRealm({ onError })", () => {
 
   test("a host reportError that throws does not hide a failed recipe's error", () => {
     failGlobal();
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: (error) => {
         throw error;
       },
     });
-    const $count = box(realm, 0);
+    const $count = Box.make(realm, 0);
     // A rollback does not undo an atom's change, so the watch reruns in the
     // flush that ends the failed recipe.
-    const outside = atom(realm);
+    const outside = Atom.make(realm);
     let armed = false;
-    watch(
+    Realm.watch(
       realm,
       (read) => {
         read(outside);
@@ -280,7 +270,7 @@ describe("createRealm({ onError })", () => {
       () => {},
     );
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         armed = true;
         write.changed(outside);
         write($count, 1);
@@ -291,21 +281,21 @@ describe("createRealm({ onError })", () => {
   });
 
   test("an onError that throws does not stop the other watchers", () => {
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: () => {
         throw new Error("sink failed");
       },
     });
-    const $count = box(realm, 0);
+    const $count = Box.make(realm, 0);
     const seen: Array<number> = [];
-    watch(
+    Realm.watch(
       realm,
       (read) => read($count),
       () => {
         throw new Error("boom");
       },
     );
-    watch(
+    Realm.watch(
       realm,
       (read) => read($count),
       (value) => {
@@ -314,7 +304,7 @@ describe("createRealm({ onError })", () => {
     );
     for (const value of [1, 2]) {
       expect(() =>
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, value);
         }),
       ).toThrow("sink failed");
@@ -325,33 +315,33 @@ describe("createRealm({ onError })", () => {
 
   test("a write onError makes for watchers that never settle still notifies", () => {
     failGlobal();
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: () => {
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write($errors, read($errors) + 1);
         });
       },
     });
-    const $errors = box(realm, 0);
-    const $loop = box(realm, 0);
+    const $errors = Box.make(realm, 0);
+    const $loop = Box.make(realm, 0);
     const seen: Array<number> = [];
-    watch(
+    Realm.watch(
       realm,
       (read) => read($errors),
       (count) => {
         seen.push(count);
       },
     );
-    watch(
+    Realm.watch(
       realm,
       (read) => read($loop),
       (value) => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($loop, value + 1);
         });
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($loop, 1);
     });
     expect(seen).toEqual([1]);
@@ -360,38 +350,38 @@ describe("createRealm({ onError })", () => {
   test("an onError that feeds watchers that never settle is not called again", () => {
     failGlobal();
     let calls = 0;
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: () => {
         calls++;
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write($loop, read($loop) + 1);
         });
       },
     });
-    const $loop = box(realm, 0);
-    watch(
+    const $loop = Box.make(realm, 0);
+    Realm.watch(
       realm,
       (read) => read($loop),
       (value) => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($loop, value + 1);
         });
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($loop, 1);
     });
     expect(calls).toBe(1);
     const seen: Array<number> = [];
-    const $calm = box(realm, 0);
-    watch(
+    const $calm = Box.make(realm, 0);
+    Realm.watch(
       realm,
       (read) => read($calm),
       (value) => {
         seen.push(value);
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($calm, 1);
     });
     expect(seen).toEqual([1]);
@@ -402,34 +392,109 @@ describe("createRealm({ onError })", () => {
     globalThis.reportError = (error) => {
       reported.push(error);
     };
-    const realm = createRealm();
-    const $count = box(realm, 0);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
     const failure = new Error("boom");
-    watch(
+    Realm.watch(
       realm,
       (read) => read($count),
       () => {
         throw failure;
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 1);
     });
     expect(reported).toEqual([failure]);
     expectRealmAtRest(realm);
   });
+});
 
-  test("a graph made with a reporter uses it", () => {
-    failGlobal();
-    const reported: Array<unknown> = [];
-    const graph = new Graph((error) => reported.push(error));
-    const cell = graph.cell(0);
-    graph.watch(() => {
-      if (readCell(cell) === 1) {
-        throw new Error("boom");
+describe("a thrown value that is not an Error", () => {
+  const values = [undefined, null, "text", Object.freeze({ reason: "frozen" })] as const;
+
+  for (const thrown of values) {
+    test(`a computed value keeps a thrown ${thrown === null ? "null" : typeof thrown} and rethrows the same value`, () => {
+      const realm = Realm.make();
+      let runs = 0;
+      const failing = Computed.make(realm, (): number => {
+        runs++;
+        throw thrown;
+      });
+      const caught: Array<unknown> = [];
+      for (let index = 0; index < 2; index++) {
+        try {
+          Realm.untracked(realm, (read) => read(failing));
+        } catch (error) {
+          caught.push(error);
+        }
       }
+      expect(caught.length).toBe(2);
+      expect(caught.every((error) => error === thrown)).toBe(true);
+      expect(runs).toBe(1);
+      expectRealmAtRest(realm);
     });
-    writeCell(cell, 1);
-    expect(reported.map((error) => (error as Error).message)).toEqual(["boom"]);
+
+    test(`a watch effect that throws ${thrown === null ? "null" : typeof thrown} hands onError the same value`, () => {
+      const reports: Array<unknown> = [];
+      const realm = Realm.make({ onError: (error) => reports.push(error) });
+      const box = Box.make(realm, 0);
+      const stop = Realm.watch(
+        realm,
+        (read) => read(box),
+        () => {
+          throw thrown;
+        },
+      );
+      Realm.update(realm, (_read, write) => {
+        write(box, 1);
+      });
+      expect(reports.length).toBe(1);
+      expect(reports[0]).toBe(thrown);
+      stop();
+      expectRealmAtRest(realm);
+    });
+  }
+});
+
+describe("teardown errors", () => {
+  test("stopping an autorun reports its cleanup's error and returns", () => {
+    const reports: Array<string> = [];
+    const realm = Realm.make({ onError: (error) => reports.push((error as Error).message) });
+    const box = Box.make(realm, 0);
+    const stop = Realm.autorun(realm, (read) => {
+      read(box);
+      return () => {
+        throw new Error("the cleanup fails");
+      };
+    });
+    expect(() => stop()).not.toThrow();
+    expect(reports).toEqual(["the cleanup fails"]);
+    expectRealmAtRest(realm);
+  });
+
+  // Ruling 57: autorun cleanups run newest first, then hook cleanups.
+  test("disposing a realm reports every failing cleanup, newest autorun first and hooks last, and returns", () => {
+    const reports: Array<string> = [];
+    const realm = Realm.make({ onError: (error) => reports.push((error as Error).message) });
+    const box = Box.make(realm, 0);
+    for (const name of ["first", "second"]) {
+      Realm.autorun(realm, (read) => {
+        read(box);
+        return () => {
+          throw new Error(`the ${name} cleanup fails`);
+        };
+      });
+    }
+    Source.onObserved(box, () => () => {
+      throw new Error("the hook cleanup fails");
+    });
+    expect(() => Realm.dispose(realm)).not.toThrow();
+    expect(reports).toEqual([
+      "the second cleanup fails",
+      "the first cleanup fails",
+      "the hook cleanup fails",
+    ]);
+    expect(Realm.status(realm)).toBe("disposed");
   });
 });

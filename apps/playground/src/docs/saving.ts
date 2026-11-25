@@ -1,15 +1,6 @@
 // The site's docs print the regions of this file (docs/public/guides/saving.md), so
 // `bun run typecheck` compiles what the pages show.
-import {
-  box,
-  computed,
-  createRealm,
-  Model,
-  type Realm,
-  untracked,
-  update,
-  watch,
-} from "@frondruntime/pinna";
+import { Box, Computed, Model, Realm } from "@frondruntime/pinna";
 
 // #region storage
 interface SettingsStorage {
@@ -27,16 +18,16 @@ const browserStorage: SettingsStorage = {
 // #region model
 type Theme = "light" | "dark";
 
-class Workspace extends Model implements Disposable {
-  readonly $theme = box<Theme>(this.realm, "light");
-  readonly $sidebarOpen = box(this.realm, true);
+class Workspace extends Model.Class implements Disposable {
+  readonly $theme = Box.make<Theme>(this.realm, "light");
+  readonly $sidebarOpen = Box.make(this.realm, true);
   // Shown, never saved: a restart begins with nothing hovered.
-  readonly $hovered = box<string | undefined>(this.realm, undefined);
-  readonly $storageError = box<string | undefined>(this.realm, undefined);
+  readonly $hovered = Box.make<string | undefined>(this.realm, undefined);
+  readonly $storageError = Box.make<string | undefined>(this.realm, undefined);
 
   // The text to save, and nothing else: it never reads $hovered, so a write
   // to $hovered leaves it, and the watch below, untouched.
-  private readonly $saved = computed(this.realm, (read) =>
+  private readonly $saved = Computed.make(this.realm, (read) =>
     JSON.stringify({ theme: read(this.$theme), sidebarOpen: read(this.$sidebarOpen) }),
   );
 
@@ -50,8 +41,8 @@ class Workspace extends Model implements Disposable {
     this.storage = storage;
     // Restored before the watch starts, so restoring saves nothing back.
     this.restore();
-    this.lastSaved = untracked(realm, (read) => read(this.$saved));
-    this.stopSaving = watch(
+    this.lastSaved = Realm.untracked(realm, (read) => read(this.$saved));
+    this.stopSaving = Realm.watch(
       realm,
       (read) => read(this.$saved),
       () => {
@@ -70,7 +61,7 @@ class Workspace extends Model implements Disposable {
       return; // a damaged save starts from the defaults
     }
     // Each field is taken only when it is valid, so one bad field keeps the rest.
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       if (saved?.theme === "light" || saved?.theme === "dark") write(this.$theme, saved.theme);
       if (typeof saved?.sidebarOpen === "boolean") write(this.$sidebarOpen, saved.sidebarOpen);
     });
@@ -86,16 +77,16 @@ class Workspace extends Model implements Disposable {
   flush() {
     if (!this.queued) return;
     this.queued = false;
-    const text = untracked(this.realm, (read) => read(this.$saved));
+    const text = Realm.untracked(this.realm, (read) => read(this.$saved));
     if (text === this.lastSaved) return; // the burst ended where it began
     try {
       this.storage.save(text);
       this.lastSaved = text;
-      update(this.realm, (_read, write) => write(this.$storageError, undefined));
+      Realm.update(this.realm, (_read, write) => write(this.$storageError, undefined));
     } catch (error) {
       // Kept as state for the screen to show; the next change tries again.
       const message = error instanceof Error ? error.message : String(error);
-      update(this.realm, (_read, write) => write(this.$storageError, message));
+      Realm.update(this.realm, (_read, write) => write(this.$storageError, message));
     }
   }
 
@@ -107,7 +98,7 @@ class Workspace extends Model implements Disposable {
 // #endregion
 
 // #region start
-const realm = createRealm();
+const realm = Realm.make();
 const workspace = new Workspace(realm, browserStorage);
 
 // #endregion

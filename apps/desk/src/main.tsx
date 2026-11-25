@@ -1,4 +1,4 @@
-import { createRealm } from "@frondruntime/pinna";
+import { Realm } from "@frondruntime/pinna";
 import { RealmService } from "@frondruntime/pinna-effect";
 import { Effect } from "effect";
 import { createRoot } from "react-dom/client";
@@ -17,7 +17,7 @@ import "./styles.css";
 const container = document.getElementById("root");
 if (container === null) throw new Error("missing #root");
 const root = createRoot(container);
-const realm = createRealm({ name: "desk" });
+const realm = Realm.make({ name: "desk" });
 const application = Effect.gen(function* () {
   const exchange = yield* makeExchange({ seed: 42, initialWorkingOrders: 5 });
   const { transport } = inMemoryTransport(exchange);

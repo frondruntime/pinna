@@ -1,6 +1,6 @@
 // The site's docs print the regions of this file (docs/public/guides/errors.md), so
 // `bun run typecheck` compiles what the page shows.
-import { box, computed, createRealm, inspect, untracked, update, watch } from "@frondruntime/pinna";
+import { Box, Computed, Realm, Source } from "@frondruntime/pinna";
 
 const reported: Array<unknown> = [];
 const report = (error: unknown) => {
@@ -10,13 +10,13 @@ const report = (error: unknown) => {
 // #region onError
 // Errors with no caller to throw to: a watch effect's, an autorun's after
 // its first run, an onObserved hook's. The host's reportError by default.
-const realm = createRealm({ onError: (error) => report(error) });
+const realm = Realm.make({ onError: (error) => report(error) });
 // #endregion
 
 // #region computed
-const $count = box(realm, 1, { name: "count" });
+const $count = Box.make(realm, 1, { name: "count" });
 
-const $inverse = computed(
+const $inverse = Computed.make(
   realm,
   (read) => {
     const count = read($count);
@@ -26,12 +26,12 @@ const $inverse = computed(
   { name: "inverse" },
 );
 
-update(realm, (_read, write) => write($count, 0));
+Realm.update(realm, (_read, write) => write($count, 0));
 // Every read of $inverse throws "no inverse of zero" until $count changes.
 // #endregion
 
 // #region effect
-const stop = watch(
+const stop = Realm.watch(
   realm,
   (read) => read($count),
   (count) => {
@@ -40,23 +40,23 @@ const stop = watch(
 );
 
 // The write lands; the effect's error goes to onError, and the watch keeps running.
-update(realm, (_read, write) => write($count, 11));
+Realm.update(realm, (_read, write) => write($count, 11));
 // #endregion
 
 // #region inspect
-update(realm, (_read, write) => write($count, 2));
-const stopInverse = watch(
+Realm.update(realm, (_read, write) => write($count, 2));
+const stopInverse = Realm.watch(
   realm,
   (read) => read($inverse),
   () => undefined,
 );
-update(realm, (_read, write) => write($count, 4));
+Realm.update(realm, (_read, write) => write($count, 4));
 
-inspect($inverse);
+Source.inspect($inverse);
 // { name: "inverse", realm: undefined, dependencies: ["count"], observers: 1,
 //   lastReason: "count changed" }
 // #endregion
 
-const inverse = untracked(realm, (read) => read($inverse));
+const inverse = Realm.untracked(realm, (read) => read($inverse));
 
 export { inverse, reported, stop, stopInverse };

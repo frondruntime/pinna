@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { configure, autorun as mobxAutorun, observable } from "mobx";
-import { autorun, box, createRealm, untracked } from "../../../src/index.ts";
+import { Box, Realm } from "../../../src/index.ts";
 import { keptRead } from "../../kept.ts";
 
 /**
@@ -34,15 +34,15 @@ describe("configure({ observableRequiresReaction })", () => {
   });
 
   test("Pinna: a read kept past its place throws, and untracked reads", () => {
-    const realm = createRealm();
-    const $count = box(realm, 1);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 1);
     const seen: Array<number> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(read($count));
     });
     const kept = keptRead(realm);
     expect(() => kept($count)).toThrow("pinna: read($observable) runs outside a place");
-    expect(untracked(realm, (read) => read($count))).toBe(1);
+    expect(Realm.untracked(realm, (read) => read($count))).toBe(1);
     stop();
     expect(seen).toEqual([1]);
   });

@@ -4,17 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { BigDecimal, Context, Schema } from "effect";
-import {
-  computed,
-  createRealm,
-  decode,
-  type Read,
-  type Realm,
-  schemaBox,
-  untracked,
-  update,
-  watch,
-} from "../../src/index.ts";
+import { Box, Computed, Model, type Read, Realm } from "../../src/index.ts";
 import { Dates, Position, Rates } from "./contract.ts";
 import {
   context,
@@ -29,12 +19,12 @@ const text = (value: BigDecimal.BigDecimal | undefined): string | undefined =>
   value === undefined ? undefined : BigDecimal.format(value);
 
 const decodePosition = (realm: Realm, json: PositionJson): Position =>
-  decode(realm, Position, context)(json);
+  Model.decode(realm, Position, context)(json);
 
 /** Watches `select`, keeping every value it settles on, the first included. */
 const follow = <Value>(realm: Realm, select: (read: Read) => Value) => {
-  const values: Array<Value> = [untracked(realm, select)];
-  const stop = watch(realm, select, (value) => {
+  const values: Array<Value> = [Realm.untracked(realm, select)];
+  const stop = Realm.watch(realm, select, (value) => {
     values.push(value);
   });
   return { values, last: () => values.at(-1), stop };
@@ -42,17 +32,17 @@ const follow = <Value>(realm: Realm, select: (read: Read) => Value) => {
 
 /** A position and the rates in boxes, and its projection as text. */
 const setup = (json: PositionJson, rates: Rates) => {
-  const realm = createRealm();
-  const $position = schemaBox(realm, Position, decodePosition(realm, json));
-  const $rates = schemaBox(realm, Rates, rates);
-  const $projection = computed(realm, (read) => read($position).calculate(read($rates)));
+  const realm = Realm.make();
+  const $position = Box.schema(realm, Position, decodePosition(realm, json));
+  const $rates = Box.schema(realm, Rates, rates);
+  const $projection = Computed.make(realm, (read) => read($position).calculate(read($rates)));
   const snapshot = (next: PositionJson) => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($position, decodePosition(realm, next));
     });
   };
   const setRates = (next: Rates) => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rates, next);
     });
   };
@@ -61,7 +51,7 @@ const setup = (json: PositionJson, rates: Rates) => {
 
 describe("Position", () => {
   test("decodes monetary, temporal, nested, and product-state fields", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const position = decodePosition(
       realm,
       positionJson({
@@ -81,39 +71,43 @@ describe("Position", () => {
     expect(text(position.chart?.[0]?.price)).toBe("61000");
     expect(position.chart?.[0]?.at).toEqual(new Date("2026-08-25T10:00:00.000Z"));
     expect(position.isOpen).toBe(true);
-    expect(untracked(realm, (read) => position.openedAtFormatted(read))).toBe(
+    expect(Realm.untracked(realm, (read) => position.openedAtFormatted(read))).toBe(
       "2026-08-25T08:01:00.000Z",
     );
-    expect(untracked(realm, (read) => position.closedAtFormatted(read))).toBeUndefined();
+    expect(Realm.untracked(realm, (read) => position.closedAtFormatted(read))).toBeUndefined();
   });
 
   test("the date formatter comes from the caller's context, not the wire", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const position = decodePosition(realm, positionJson());
     expect(position.dates).toBe(formatter);
     const encoded = Schema.encodeSync(Position)(position);
     expect(Object.keys(encoded)).not.toContain("dates");
     // @ts-expect-error Position needs the Dates service.
-    expect(() => decode(realm, Position)(positionJson())).toThrow();
+    expect(() => Model.decode(realm, Position)(positionJson())).toThrow();
   });
 
   test("the context is the caller's runtime instance, and its reactive state reaches the formatted dates", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     // An application's date service: an instance built elsewhere, whose
     // output follows a locale that changes at runtime.
     // The formatter reads its locale with the caller's read, so the watch
     // below tracks it.
     class LocaleFormatter {
-      readonly $locale = schemaBox(realm, Schema.String, "en");
+      readonly $locale = Box.schema(realm, Schema.String, "en");
       readonly formatDateTime = (read: Read, value: Date): string =>
         `${read(this.$locale)} ${value.toISOString()}`;
     }
     const localeFormatter = new LocaleFormatter();
-    const position = decode(realm, Position, Context.make(Dates, localeFormatter))(positionJson());
+    const position = Model.decode(
+      realm,
+      Position,
+      Context.make(Dates, localeFormatter),
+    )(positionJson());
 
     expect(position.dates).toBe(localeFormatter);
     const formatted = follow(realm, (read) => position.openedAtFormatted(read));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write(localeFormatter.$locale, "de");
     });
     expect(formatted.values).toEqual([
@@ -135,11 +129,11 @@ describe("Position", () => {
       }),
     );
 
-    const position = untracked(realm, (read) => read($position));
+    const position = Realm.untracked(realm, (read) => read($position));
     expect(text(position.collateral)).toBe("333.75");
     expect(position.status).toBe("closed");
     expect(position.closedAt).toEqual(new Date("2026-08-25T12:00:00.000Z"));
-    expect(untracked(realm, (read) => position.closedAtFormatted(read))).toBe(
+    expect(Realm.untracked(realm, (read) => position.closedAtFormatted(read))).toBe(
       "2026-08-25T12:00:00.000Z",
     );
     expect(watched.values).toEqual([true, false]);
@@ -231,7 +225,7 @@ describe("Position", () => {
   });
 
   test("keeps a missing estimate and missing or zero market rates unavailable", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const rates = { BTC: { USDT: { price: 100, bid: 100, ask: 100 } } };
     expect(decodePosition(realm, positionJson()).calculate(rates)).toBeUndefined();
     const position = decodePosition(realm, livePositionJson());

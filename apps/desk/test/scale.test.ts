@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { type Box, untracked } from "@frondruntime/pinna";
+import { Realm } from "@frondruntime/pinna";
 import { testRealm } from "@frondruntime/pinna/testing";
-import { changes, observeScoped, RealmService } from "@frondruntime/pinna-effect";
+import { Program, RealmService, Source } from "@frondruntime/pinna-effect";
 import { Clock, Effect, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { makeDesk } from "../src/client/desk.ts";
-import { columns, rowHeight, type Sort, type TradeIndex } from "../src/client/trade-index.ts";
+import { columns, rowHeight, type Sort } from "../src/client/trade-index.ts";
 import type { TradeBook } from "../src/client/trades.ts";
 import { makeExchange } from "../src/exchange/index.ts";
 import { inMemoryTransport } from "../src/transport.ts";
@@ -13,7 +13,7 @@ import { feed, wireTrade } from "./feed.ts";
 import { foldBlotter, foldLog, type OracleView } from "./oracle.ts";
 
 const snapshot = (book: TradeBook) =>
-  untracked(book.realm, (read) => ({
+  Realm.untracked(book.realm, (read) => ({
     heldCount: read(book.$heldCount),
     matchingCount: read(book.$matchingCount),
     window: read(book.$window),
@@ -40,8 +40,12 @@ test("10,000 history trades and 300 trades/second match the independent fold aft
     const memory = inMemoryTransport(exchange);
     const desk = (yield* makeDesk(memory.transport)).tile("EURUSD");
     const book = desk.trades;
-    yield* observeScoped(book.$window);
-    yield* changes(book.$loaded).pipe(Stream.filter(Boolean), Stream.take(1), Stream.runDrain);
+    yield* Source.observeScoped(book.$window);
+    yield* Program.changes(book.$loaded).pipe(
+      Stream.filter(Boolean),
+      Stream.take(1),
+      Stream.runDrain,
+    );
     expect(snapshot(book).heldCount).toBe(10000);
     const random = randomGenerator(81723);
     let view: OracleView = {
@@ -129,7 +133,7 @@ test("every column has a total order; decimals retain precision, and selection s
     ]);
     const desk = (yield* makeDesk(memory.transport)).tile("EURUSD");
     const book = desk.trades;
-    yield* observeScoped(book.$window);
+    yield* Source.observeScoped(book.$window);
     yield* TestClock.adjust(0);
     for (const column of columns)
       for (const direction of ["ascending", "descending"] as const) {
@@ -146,7 +150,7 @@ test("every column has a total order; decimals retain precision, and selection s
         );
       }
     book.setSort({ column: "notional", direction: "ascending" });
-    expect(untracked(realm, (read) => read(book.$keys))).toEqual([
+    expect(Realm.untracked(realm, (read) => read(book.$keys))).toEqual([
       "tie-z",
       "tie-a",
       "small",
@@ -160,13 +164,13 @@ test("every column has a total order; decimals retain precision, and selection s
     book.setSort({ column: "desk", direction: "ascending" });
     book.setFilter("no match");
     expect(snapshot(book).selectionSummary).toEqual({ count: 2, buy: "2", sell: "10" });
-    expect(untracked(realm, (read) => read(book.$selection))).toEqual(["small", "large"]);
+    expect(Realm.untracked(realm, (read) => read(book.$selection))).toEqual(["small", "large"]);
     book.withdraw("small");
     expect(snapshot(book).selectionSummary).toEqual({ count: 1, buy: "0", sell: "10" });
     book.select("large");
     book.select("missing");
     book.setSelection(["large", "large", "missing"]);
-    expect(untracked(realm, (read) => read(book.$selection))).toEqual(["large"]);
+    expect(Realm.untracked(realm, (read) => read(book.$selection))).toEqual(["large"]);
     expect(() => book.setScrollTop(-1)).toThrow("the box rejects this value");
     expect(() => book.setViewportHeight(Number.NaN)).toThrow("the box rejects this value");
   }).pipe(
@@ -179,7 +183,7 @@ test("every column has a total order; decimals retain precision, and selection s
 
 /** Audit retained key tables directly, rather than equating a bounded row count with no leaks. */
 function assertBookRetention(book: TradeBook) {
-  untracked(book.realm, (read) => {
+  Realm.untracked(book.realm, (read) => {
     const rows = read(book.$trades.rows);
     const held = new Map(rows.map((trade) => [trade.id, trade]));
     expect(read(book.$heldCount)).toBe(held.size);
@@ -193,15 +197,11 @@ function assertBookRetention(book: TradeBook) {
       if (value instanceof Map || value instanceof Set)
         expect([...value.keys()].every((id) => held.has(id))).toBe(true);
     }
-    const auditTree = (tree: TradeIndex | undefined): number => {
-      if (!tree) return 0;
-      expect(held.get(tree.trade.id)).toBe(tree.trade);
-      return 1 + auditTree(tree.left) + auditTree(tree.right);
-    };
-    for (const property of ["$index", "$order"])
-      expect(auditTree(read(Reflect.get(book, property) as Box<TradeIndex | undefined>))).toBe(
-        held.size,
-      );
+    // The blotter's view holds every held trade once, and no withdrawn one.
+    expect(read(book.blotter.totalSize)).toBe(held.size);
+    const keys = read(book.$keys);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys.every((id) => held.has(id))).toBe(true);
   });
 }
 
@@ -220,26 +220,26 @@ test("long seeded execution run retains no withdrawn IDs or per-trade tables bey
     });
     const memory = inMemoryTransport(exchange);
     const desk = (yield* makeDesk(memory.transport)).tile("EURUSD");
-    yield* observeScoped(desk.$display);
-    yield* observeScoped(desk.trades.$window);
+    yield* Source.observeScoped(desk.$display);
+    yield* Source.observeScoped(desk.trades.$window);
     yield* TestClock.adjust(1000);
     const outcomes = new Set<string>();
     for (let execution = 0; execution < 100; execution++) {
       yield* desk.execute(execution % 2 === 0 ? "buy" : "sell").pipe(Effect.forkScoped);
       yield* TestClock.adjust(0);
-      const pending = untracked(realm, (read) =>
+      const pending = Realm.untracked(realm, (read) =>
         read(desk.trades.$keys).find(
           (id) => read.row(desk.trades.$trades, id)?.status === "pending",
         ),
       );
       if (pending) desk.trades.select(pending);
       yield* TestClock.adjust(2000);
-      outcomes.add(untracked(realm, (read) => read(desk.$execution)));
+      outcomes.add(Realm.untracked(realm, (read) => read(desk.$execution)));
       assertBookRetention(desk.trades);
       yield* TestClock.adjust(3100);
       assertBookRetention(desk.trades);
       // Force all held rows to leave: collection cells and index entries must leave too.
-      for (const id of untracked(realm, (read) => read(desk.trades.$keys)))
+      for (const id of Realm.untracked(realm, (read) => read(desk.trades.$keys)))
         desk.trades.withdraw(id);
       assertBookRetention(desk.trades);
     }
@@ -264,8 +264,8 @@ test("the default exchange snapshot has 1,000 seeded trades; 100,000 loads throu
     expect(JSON.parse(yield* defaults.request("/trades", ""))).toHaveLength(1000);
     const exchange = yield* makeExchange({ seed: 1, historyTradeCount: 100000 });
     const desk = (yield* makeDesk(inMemoryTransport(exchange).transport)).tile("EURUSD");
-    yield* observeScoped(desk.trades.$window);
-    yield* changes(desk.trades.$loaded).pipe(
+    yield* Source.observeScoped(desk.trades.$window);
+    yield* Program.changes(desk.trades.$loaded).pipe(
       Stream.filter(Boolean),
       Stream.take(1),
       Stream.runDrain,

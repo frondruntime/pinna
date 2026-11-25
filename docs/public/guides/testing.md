@@ -12,10 +12,10 @@ can make one in a realm of its own.
 
 A test makes its own realm with `testRealm` from
 `@frondruntime/pinna/testing` and builds its state in it. It reads through
-`untracked` and writes through the methods that call `update`, as an event
+`Realm.untracked` and writes through the methods that call `Realm.update`, as an event
 handler does. Held with `using`, the realm is disposed when the test ends,
-and its dispose throws if a watch, an autorun, an `observe`, an
-`onRowChange` listener, or a stage is still running.
+and its dispose throws if a watch, an autorun, a `Source.observe`, a
+`Collection.onRowChange` listener, or a stage is still running.
 
 <!-- region testing.test.ts#realm -->
 
@@ -41,22 +41,22 @@ would not show.
 
 - One realm per test, made with `using realm = testRealm()`. A realm made at
   module level carries state from one test into the next.
-- Read with `untracked(realm, (read) => ...)`, write with `update` or a model
+- Read with `Realm.untracked(realm, (read) => ...)`, write with `Realm.update` or a model
   method that calls it. The testing entry adds no reader or writer, so a test
   goes through the same calls as application code.
 - A watch's effect runs after the outermost update ends, so a test that
   records values asserts after the update returns.
 - Declare the realm before the recordings: `using` disposes in reverse
   order, so each recording stops before the realm checks.
-- Stop every watch, autorun, `observe`, and `onRowChange` listener a test
+- Stop every watch, autorun, `Source.observe`, and `Collection.onRowChange` listener a test
   starts, and apply or drop every stage. One left running keeps its values
-  cached and its `onObserved` hooks started, and a stage left open holds
+  cached and its `Source.onObserved` hooks started, and a stage left open holds
   its overlay, so the test realm's dispose throws, naming each by its
-  `name`, or `watch`, `autorun`, `onRowChange`, or `stage`, and stops it so
+  `name`, or `Realm.watch`, `Realm.autorun`, `Collection.onRowChange`, or `stage`, and stops it so
   the next test starts clean; a stage is dropped. A React component's
   subscription is not counted.
 - Hold each one in `using`: a watch through `record`, the rest through
-  `held`, as in `using _ = held(autorun(realm, ...))`. A stop function called
+  `held`, as in `using _ = held(Realm.autorun(realm, ...))`. A stop function called
   at the end of the test is skipped when an assertion fails, the dispose
   then throws too, and Bun 1.4.4 prints the resulting `SuppressedError`
   without either error, so the assertion's diff is lost.
@@ -67,7 +67,7 @@ would not show.
 
 | Call | Answers |
 | --- | --- |
-| `testRealm(options?)` | A realm of the test's own; its dispose throws if a watch, an autorun, an `observe`, an `onRowChange` listener, or a stage is still running. |
+| `testRealm(options?)` | A realm of the test's own; its dispose runs `Realm.dispose`, and throws if a watch, an autorun, a `Source.observe`, a `Collection.onRowChange` listener, or a stage was still running. A test that uses the realm after its dispose throws `pinna/realm-disposed`. |
 | `record(realm, select, options?)` | `values`, each value `select` changed to, oldest first; `stop`, which `using` also runs. |
 | `held(stop)` | A `Disposable` that runs `stop` when its `using` scope ends. |
 | `retainedKeys($items)` | A copy of the set of keys `$items` keeps a row, a box, or a computed value for; every one is a present key. Throws for a value that is not a collection Pinna made. |
@@ -83,21 +83,21 @@ its wire data, `items`, are the ones from
 A watch on the model and a write the schema rejects behave as above: one
 rerun per update, and a rejected write leaves the realm as it was.
 
-An Effect program takes the test's realm: `watchScoped(realm, ...)` and
-`fromStream(realm, ...)` take it first, and `changes`, `observeScoped`, and
-`whileObserved` take it from the observable. A `SchemaModel` decoded inside
+An Effect program takes the test's realm: `Program.watchScoped(realm, ...)` and
+`Program.fromStream(realm, ...)` take it first, and `Program.changes`, `Source.observeScoped`, and
+`Program.whileObserved` take it from the observable. A `Model.Schema` decoded inside
 an Effect program reads it from `RealmService`, which the test provides. A
 `Deferred` waits for the watch's effect without a sleep. Close every
 program's scope: a program left running keeps its values cached and its
-`onObserved` hooks started, and the test realm's dispose throws for its
+`Source.onObserved` hooks started, and the test realm's dispose throws for its
 watch.
 
 <!-- region testingEffect.test.ts#program -->
 
 | Call | Answers |
 | --- | --- |
-| `decode(realm, Model)(json)` | A model in the test's realm. |
-| `Effect.provideService(RealmService, realm)` | A `SchemaModel` decoded inside the program lands in the test's realm. |
+| `Model.decode(realm, Model)(json)` | A model in the test's realm. |
+| `Effect.provideService(RealmService, realm)` | A `Model.Schema` decoded inside the program lands in the test's realm. |
 
 A program that polls or sleeps runs on `TestClock`:
 [Programs](../effect/programs.md#testing) shows where to provide it and what
@@ -107,5 +107,5 @@ a test waits on instead of the clock.
 
 - [Updates](../state/updates.md): what an update undoes when it throws.
 - [Reacting](../state/reacting.md): when a watch reruns.
-- [Programs](../effect/programs.md): `watchScoped`, `withStage`, and testing a program on `TestClock`.
+- [Programs](../effect/programs.md): `Program.watchScoped`, `Stage.scoped`, and testing a program on `TestClock`.
 - [Errors and debugging](./errors.md): what throws, and where the rest goes.

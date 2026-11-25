@@ -27,7 +27,7 @@ A component's own state is a box in the provider's realm.
 
 <!-- region react.tsx#local -->
 
-An event handler reads through `untracked` and writes through `update`.
+An event handler reads through `Realm.untracked` and writes through `Realm.update`.
 
 <!-- region react.tsx#handler -->
 
@@ -55,8 +55,8 @@ observables they are handed.
   each render. See [Render scopes](#render-scopes).
 - A list of a collection reads `keys` and hands each row its key. Reading
   `rows` rerenders the whole list when any row changes.
-- In an event handler, read inside `untracked` and write through a method
-  that calls `update`.
+- In an event handler, read inside `Realm.untracked` and write through a method
+  that calls `Realm.update`.
 - A slow render after a write reads a deferred value:
   `useDeferredValue(useValue($x))`. A `startTransition` around the write
   changes nothing, since React renders a change of an outside store as a
@@ -88,7 +88,7 @@ the nearest fallback in place of the content on screen. A component that
 suspends on a deferred value keeps the content on screen until the next one
 loads.
 
-Under `<Activity mode="hidden">`, the hooks unsubscribe: an `onObserved` hook
+Under `<Activity mode="hidden">`, the hooks unsubscribe: a `Source.onObserved` hook
 stops, and a write renders nothing there. Shown again, the component
 subscribes and renders the current value.
 

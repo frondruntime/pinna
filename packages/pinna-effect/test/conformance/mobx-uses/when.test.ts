@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Fiber, Option, Schema, Stream } from "effect";
 import { observable, runInAction, when } from "mobx";
-import { changes, createRealm, RealmService, schemaBox, update } from "../../../src/index.ts";
+import { Box, Program, Realm, RealmService } from "../../../src/index.ts";
 
 /**
  * An application's `when` use: load a profile once the session is ready. Pinna
- * keeps `when` in the Effect programs: `changes` filtered to the first match.
+ * keeps `when` in the Effect programs: `Program.changes` filtered to the first match.
  */
 
 type Session = "Pending" | "Ready" | "Closed";
@@ -35,12 +35,12 @@ describe("when", () => {
   });
 
   test("Pinna: changes, Stream.filter, and Stream.runHead from the Effect programs", async () => {
-    const realm = createRealm();
-    const $session = schemaBox(realm, Schema.Literals(["Pending", "Ready", "Closed"]), "Pending");
+    const realm = Realm.make();
+    const $session = Box.schema(realm, Schema.Literals(["Pending", "Ready", "Closed"]), "Pending");
     const loads: Array<string> = [];
     await Effect.runPromise(
       Effect.gen(function* () {
-        const ready = yield* changes($session).pipe(
+        const ready = yield* Program.changes($session).pipe(
           Stream.filter((session) => session === "Ready"),
           Stream.runHead,
           Effect.tap((ready) =>
@@ -54,7 +54,7 @@ describe("when", () => {
         );
         yield* Effect.sleep("5 millis");
         for (const session of steps) {
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($session, session);
           });
           yield* Effect.sleep("5 millis");

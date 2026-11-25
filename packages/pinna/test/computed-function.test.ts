@@ -1,33 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import {
-  box,
-  computed,
-  computedFunction,
-  createRealm,
-  untracked,
-  update,
-  watch,
-} from "../src/index.ts";
+import { Box, Computed, Realm } from "../src/index.ts";
 import { keptRead } from "./kept.ts";
 
 /**
- * `computedFunction`: one computed value per argument tuple, kept while something
+ * `Computed.fn`: one computed value per argument tuple, kept while something
  * observes it and dropped when the last observer leaves.
  */
 
 describe("computedFunction", () => {
   test("signed-zero arguments stay distinct while observed and after release", () => {
-    const realm = createRealm();
-    const $reciprocal = computedFunction(realm, (_read, value: number) => 1 / value);
+    const realm = Realm.make();
+    const $reciprocal = Computed.fn(realm, (_read, value: number) => 1 / value);
     const positive = $reciprocal(0);
-    const stopPositive = watch(
+    const stopPositive = Realm.watch(
       realm,
       (read) => read(positive),
       () => {},
     );
-    expect(untracked(realm, (read) => read($reciprocal(-0)))).toBe(-Infinity);
+    expect(Realm.untracked(realm, (read) => read($reciprocal(-0)))).toBe(-Infinity);
     const negative = $reciprocal(-0);
-    const stopNegative = watch(
+    const stopNegative = Realm.watch(
       realm,
       (read) => read(negative),
       () => {},
@@ -39,20 +31,17 @@ describe("computedFunction", () => {
     expect($reciprocal(0)).toBe(positive);
     stopPositive();
     expect($reciprocal(0)).not.toBe(positive);
-    expect(untracked(realm, (read) => read($reciprocal(-0)))).toBe(-Infinity);
+    expect(Realm.untracked(realm, (read) => read($reciprocal(-0)))).toBe(-Infinity);
   });
 
   test("signed zero is distinct in each argument position and NaN keeps its entry", () => {
-    const realm = createRealm();
-    const $sum = computedFunction(
-      realm,
-      (_read, first: number, second: number) => 1 / first + second,
-    );
+    const realm = Realm.make();
+    const $sum = Computed.fn(realm, (_read, first: number, second: number) => 1 / first + second);
     const positive = $sum(1, 0);
     const negative = $sum(1, -0);
     const nan = $sum(NaN, NaN);
     const stops = [positive, negative, nan].map((entry) =>
-      watch(
+      Realm.watch(
         realm,
         (read) => read(entry),
         () => {},
@@ -70,27 +59,27 @@ describe("computedFunction", () => {
   });
 
   test("a call returns a computed value of the arguments", () => {
-    const realm = createRealm();
-    const $rate = box(realm, 2);
-    const $times = computedFunction(
+    const realm = Realm.make();
+    const $rate = Box.make(realm, 2);
+    const $times = Computed.fn(
       realm,
       (read, amount: number, extra: number) => amount * read($rate) + extra,
     );
-    expect(untracked(realm, (read) => read($times(3, 1)))).toBe(7);
-    expect(untracked(realm, (read) => read($times(4, 0)))).toBe(8);
+    expect(Realm.untracked(realm, (read) => read($times(3, 1)))).toBe(7);
+    expect(Realm.untracked(realm, (read) => read($times(4, 0)))).toBe(8);
   });
 
   test("a read kept past its place throws, as on any computed value", () => {
-    const realm = createRealm();
-    const $double = computedFunction(realm, (_read, amount: number) => amount * 2);
+    const realm = Realm.make();
+    const $double = Computed.fn(realm, (_read, amount: number) => amount * 2);
     const read = keptRead(realm);
     expect(() => read($double(1))).toThrow("runs outside a place");
   });
 
   test("while observed, the same arguments return the same computed value", () => {
-    const realm = createRealm();
-    const $double = computedFunction(realm, (_read, amount: number) => amount * 2);
-    const stop = watch(
+    const realm = Realm.make();
+    const $double = Computed.fn(realm, (_read, amount: number) => amount * 2);
+    const stop = Realm.watch(
       realm,
       (read) => read($double(1)),
       () => {},
@@ -101,14 +90,14 @@ describe("computedFunction", () => {
   });
 
   test("arguments are compared by identity, one per position", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const first = { rate: 2 };
     const second = { rate: 2 };
-    const $scaled = computedFunction(
+    const $scaled = Computed.fn(
       realm,
       (_read, rates: { readonly rate: number }, amount: number) => rates.rate * amount,
     );
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($scaled(first, 1)) + read($scaled(second, 1)),
       () => {},
@@ -120,36 +109,36 @@ describe("computedFunction", () => {
   });
 
   test("calls that differ only in how many arguments they pass are kept apart", () => {
-    const realm = createRealm();
-    const $sum = computedFunction(realm, (_read, ...values: ReadonlyArray<number>) =>
+    const realm = Realm.make();
+    const $sum = Computed.fn(realm, (_read, ...values: ReadonlyArray<number>) =>
       values.reduce((a, b) => a + b, 0),
     );
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($sum(1)) + read($sum(1, 0)),
       () => {},
     );
     expect($sum(1)).not.toBe($sum(1, 0));
-    expect(untracked(realm, (read) => read($sum(1)))).toBe(1);
+    expect(Realm.untracked(realm, (read) => read($sum(1)))).toBe(1);
     stop();
   });
 
   test("nothing is kept while nothing observes it", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     let runs = 0;
-    const $double = computedFunction(realm, (_read, amount: number) => {
+    const $double = Computed.fn(realm, (_read, amount: number) => {
       runs++;
       return amount * 2;
     });
     expect($double(1)).not.toBe($double(1));
-    expect(untracked(realm, (read) => read($double(1)))).toBe(2);
+    expect(Realm.untracked(realm, (read) => read($double(1)))).toBe(2);
     expect(runs).toBe(1);
   });
 
   test("the entry is dropped when its last observer leaves", () => {
-    const realm = createRealm();
-    const $double = computedFunction(realm, (_read, amount: number) => amount * 2);
-    const stop = watch(
+    const realm = Realm.make();
+    const $double = Computed.fn(realm, (_read, amount: number) => amount * 2);
+    const stop = Realm.watch(
       realm,
       (read) => read($double(1)),
       () => {},
@@ -161,11 +150,11 @@ describe("computedFunction", () => {
   });
 
   test("an entry a watch stops reading is dropped at the end of that round", () => {
-    const realm = createRealm();
-    const $id = box(realm, 1);
-    const $double = computedFunction(realm, (_read, amount: number) => amount * 2);
+    const realm = Realm.make();
+    const $id = Box.make(realm, 1);
+    const $double = Computed.fn(realm, (_read, amount: number) => amount * 2);
     const seen: Array<number> = [];
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($double(read($id))),
       (value) => {
@@ -173,7 +162,7 @@ describe("computedFunction", () => {
       },
     );
     const first = $double(1);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($id, 2);
     });
     expect(seen).toEqual([4]);
@@ -183,15 +172,15 @@ describe("computedFunction", () => {
   });
 
   test("an entry observed twice stays until both observers leave", () => {
-    const realm = createRealm();
-    const $double = computedFunction(realm, (_read, amount: number) => amount * 2);
-    const first = watch(
+    const realm = Realm.make();
+    const $double = Computed.fn(realm, (_read, amount: number) => amount * 2);
+    const first = Realm.watch(
       realm,
       (read) => read($double(1)),
       () => {},
     );
     const kept = $double(1);
-    const second = watch(
+    const second = Realm.watch(
       realm,
       (read) => read($double(1)),
       () => {},
@@ -203,22 +192,22 @@ describe("computedFunction", () => {
   });
 
   test("a computed value kept past its entry still works", () => {
-    const realm = createRealm();
-    const $rate = box(realm, 2);
-    const $times = computedFunction(realm, (read, amount: number) => amount * read($rate));
-    const stop = watch(
+    const realm = Realm.make();
+    const $rate = Box.make(realm, 2);
+    const $times = Computed.fn(realm, (read, amount: number) => amount * read($rate));
+    const stop = Realm.watch(
       realm,
       (read) => read($times(3)),
       () => {},
     );
     const kept = $times(3);
     stop();
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rate, 5);
     });
-    expect(untracked(realm, (read) => read(kept))).toBe(15);
+    expect(Realm.untracked(realm, (read) => read(kept))).toBe(15);
     const seen: Array<number> = [];
-    const again = watch(
+    const again = Realm.watch(
       realm,
       (read) => read(kept),
       (value) => {
@@ -226,7 +215,7 @@ describe("computedFunction", () => {
       },
     );
     expect($times(3)).toBe(kept);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rate, 6);
     });
     expect(seen).toEqual([18]);
@@ -234,18 +223,18 @@ describe("computedFunction", () => {
   });
 
   test("an entry recomputes when what it reads changes", () => {
-    const realm = createRealm();
-    const $rate = box(realm, 2);
-    const $times = computedFunction(realm, (read, amount: number) => amount * read($rate));
+    const realm = Realm.make();
+    const $rate = Box.make(realm, 2);
+    const $times = Computed.fn(realm, (read, amount: number) => amount * read($rate));
     const seen: Array<number> = [];
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($times(3)),
       (value) => {
         seen.push(value);
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rate, 4);
     });
     expect(seen).toEqual([12]);
@@ -253,22 +242,22 @@ describe("computedFunction", () => {
   });
 
   test("an observed entry computes once for every reader", () => {
-    const realm = createRealm();
-    const $rate = box(realm, 2);
+    const realm = Realm.make();
+    const $rate = Box.make(realm, 2);
     let runs = 0;
-    const $times = computedFunction(realm, (read, amount: number) => {
+    const $times = Computed.fn(realm, (read, amount: number) => {
       runs++;
       return amount * read($rate);
     });
     const stops = [1, 2, 3].map(() =>
-      watch(
+      Realm.watch(
         realm,
         (read) => read($times(3)),
         () => {},
       ),
     );
     runs = 0;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rate, 4);
     });
     expect(runs).toBe(1);
@@ -278,9 +267,9 @@ describe("computedFunction", () => {
   });
 
   test("equals is applied as on computed", () => {
-    const realm = createRealm();
-    const $rate = box(realm, 2);
-    const $parity = computedFunction(
+    const realm = Realm.make();
+    const $rate = Box.make(realm, 2);
+    const $parity = Computed.fn(
       realm,
       (read, amount: number) => ({ even: (amount * read($rate)) % 2 === 0 }),
       {
@@ -288,17 +277,17 @@ describe("computedFunction", () => {
       },
     );
     const seen: Array<boolean> = [];
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($parity(3)),
       (value) => {
         seen.push(value.even);
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rate, 4);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rate, 3);
     });
     expect(seen).toEqual([false]);
@@ -306,10 +295,10 @@ describe("computedFunction", () => {
   });
 
   test("a computed value that reads an entry keeps it while observed", () => {
-    const realm = createRealm();
-    const $double = computedFunction(realm, (_read, amount: number) => amount * 2);
-    const $total = computed(realm, (read) => read($double(1)) + read($double(2)));
-    const stop = watch(
+    const realm = Realm.make();
+    const $double = Computed.fn(realm, (_read, amount: number) => amount * 2);
+    const $total = Computed.make(realm, (read) => read($double(1)) + read($double(2)));
+    const stop = Realm.watch(
       realm,
       (read) => read($total),
       () => {},

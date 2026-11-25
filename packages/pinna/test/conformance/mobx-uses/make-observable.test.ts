@@ -6,21 +6,12 @@ import {
   computed as mobxComputed,
   observable,
 } from "mobx";
-import {
-  autorun,
-  type Box,
-  box,
-  type Computed,
-  computed,
-  createRealm,
-  type Realm,
-  update,
-} from "../../../src/index.ts";
+import { Box, Computed, Realm } from "../../../src/index.ts";
 
 /**
  * An application's `makeAutoObservable` and `makeObservable` uses, each beside
  * its Pinna rewrite: a plain class whose fields are boxes, whose getters are
- * computed values, and whose methods write inside `update`.
+ * computed values, and whose methods write inside `Realm.update`.
  */
 
 /** A rate book: two fields, a derived mid price, and a method that writes both. */
@@ -51,16 +42,16 @@ class PinnaQuote {
   computes = 0;
 
   constructor(readonly realm: Realm) {
-    this.$bid = box(realm, 1);
-    this.$ask = box(realm, 3);
-    this.mid = computed(realm, (read) => {
+    this.$bid = Box.make(realm, 1);
+    this.$ask = Box.make(realm, 3);
+    this.mid = Computed.make(realm, (read) => {
       this.computes++;
       return (read(this.$bid) + read(this.$ask)) / 2;
     });
   }
 
   quote(bid: number, ask: number): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write(this.$bid, bid);
       write(this.$ask, ask);
     });
@@ -85,10 +76,10 @@ describe("makeAutoObservable", () => {
   });
 
   test("Pinna: boxes, a computed value, and a method that writes inside update", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const model = new PinnaQuote(realm);
     const seen: Array<number> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(read(model.mid));
     });
     model.quote(2, 4);
@@ -128,13 +119,13 @@ describe("makeObservable with a computed getter", () => {
   });
 
   test("Pinna: two reads of a computed value in one run return the same object", () => {
-    const realm = createRealm();
-    const $size = box(realm, 2);
-    const $price = box(realm, 10);
-    const presentation = computed(realm, (read) => ({ value: read($size) * read($price) }));
+    const realm = Realm.make();
+    const $size = Box.make(realm, 2);
+    const $price = Box.make(realm, 10);
+    const presentation = Computed.make(realm, (read) => ({ value: read($size) * read($price) }));
     const cached: Array<boolean> = [];
     const values: Array<number> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       const first = read(presentation);
       const second = read(presentation);
       values.push(first.value);

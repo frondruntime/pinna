@@ -1,7 +1,7 @@
 import { cpus, platform, release } from "node:os";
-import { untracked } from "@frondruntime/pinna";
+import { Realm } from "@frondruntime/pinna";
 import { testRealm } from "@frondruntime/pinna/testing";
-import { changes, observeScoped, RealmService } from "@frondruntime/pinna-effect";
+import { Program, RealmService, Source } from "@frondruntime/pinna-effect";
 import { Effect, Fiber, Queue, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { makeDesk } from "../src/client/desk.ts";
@@ -54,12 +54,16 @@ async function measure(historyTradeCount: number) {
     const desk = workspace.tile("EURUSD");
     const book = desk.trades;
     const loadedAt = performance.now();
-    yield* observeScoped(book.$window);
-    yield* observeScoped(book.$matchingCount);
-    yield* observeScoped(book.$heldCount);
-    yield* observeScoped(book.$selectionSummary);
-    yield* observeScoped(workspace.$view);
-    yield* changes(book.$loaded).pipe(Stream.filter(Boolean), Stream.take(1), Stream.runDrain);
+    yield* Source.observeScoped(book.$window);
+    yield* Source.observeScoped(book.$matchingCount);
+    yield* Source.observeScoped(book.$heldCount);
+    yield* Source.observeScoped(book.$selectionSummary);
+    yield* Source.observeScoped(workspace.$view);
+    yield* Program.changes(book.$loaded).pipe(
+      Stream.filter(Boolean),
+      Stream.take(1),
+      Stream.runDrain,
+    );
     const loadMilliseconds = performance.now() - loadedAt;
     yield* TestClock.adjust(0);
     for (const [symbol, bid, ask] of [
@@ -75,7 +79,7 @@ async function measure(historyTradeCount: number) {
       );
     yield* TestClock.adjust(0);
     const settle = () =>
-      untracked(realm, (read) => ({
+      Realm.untracked(realm, (read) => ({
         window: read(book.$window),
         matching: read(book.$matchingCount),
         held: read(book.$heldCount),
@@ -107,7 +111,7 @@ async function measure(historyTradeCount: number) {
           status,
           updatedAt: new Date(index + (status === "done" ? 1001 : 1)).toISOString(),
         });
-        const settled = yield* changes(book.$trades.row(pending.id)).pipe(
+        const settled = yield* Program.changes(book.$trades.row(pending.id)).pipe(
           Stream.filter((trade) => trade?.status === status),
           Stream.take(1),
           Stream.runDrain,
@@ -129,7 +133,7 @@ async function measure(historyTradeCount: number) {
       // GBP/USD affects its own row and EUR/GBP conversion, plus the total.
       const tile = workspace.tile("GBPUSD");
       const time = new Date(index + 1).toISOString();
-      const settled = yield* changes(tile.$prices).pipe(
+      const settled = yield* Program.changes(tile.$prices).pipe(
         Stream.filter((state) => state.current?.time === time),
         Stream.take(1),
         Stream.runDrain,

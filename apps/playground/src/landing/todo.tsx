@@ -4,15 +4,15 @@
 // It uses the package without Effect, as the graph does; the Effect section prints models on
 // Effect Schema (`effect.ts`).
 // #region todo
-import { box, computed, createRealm, Model, type Realm, update } from "@frondruntime/pinna";
+import { Box, Computed, Model, Realm } from "@frondruntime/pinna";
 import { useValue } from "@frondruntime/pinna-react";
 import { memo } from "react";
 import { ListItem } from "./ui.tsx"; // the app's own list item: an <li> with a button
 
-class Todo extends Model {
-  readonly $done = box(this.realm, false); // a box: the square on each branch
+class Todo extends Model.Class {
+  readonly $done = Box.make(this.realm, false); // a box: the square on each branch
   // A computed value: the diamond. It reads $done, so a line runs from the box to it.
-  readonly $label = computed(this.realm, (read) =>
+  readonly $label = Computed.make(this.realm, (read) =>
     read(this.$done) ? `✓ ${this.title}` : this.title,
   );
 
@@ -25,7 +25,7 @@ class Todo extends Model {
   }
 
   toggle(): void {
-    update(this.realm, (read, write) => write(this.$done, !read(this.$done)));
+    Realm.update(this.realm, (read, write) => write(this.$done, !read(this.$done)));
   }
 }
 
@@ -34,7 +34,7 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
   return <ListItem onPress={() => todo.toggle()}>{useValue(todo.$label)}</ListItem>;
 });
 
-const realm = createRealm(); // the stem: the six todos of the graph live in it
+const realm = Realm.make(); // the stem: the six todos of the graph live in it
 const site = new Todo(realm, "2", "Ship the site");
 site.toggle(); // the lit branch: its $label recomputes once, and one <Row> of six re-renders
 // #endregion

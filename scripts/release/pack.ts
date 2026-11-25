@@ -11,9 +11,9 @@
 import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import {
-  type PublishedPackage,
   packageDirectory,
-  publishedPackages,
+  type ReleasePackage,
+  releasePackages,
   workspaceRoot,
 } from "./packages.ts";
 import { output, ReleaseError } from "./process.ts";
@@ -21,7 +21,7 @@ import { output, ReleaseError } from "./process.ts";
 type Services = FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner;
 
 /** Each package's tarball, in dependency order. */
-export type Tarballs = ReadonlyArray<readonly [PublishedPackage, string]>;
+export type Tarballs = ReadonlyArray<readonly [ReleasePackage, string]>;
 
 const Ranges = Schema.Record(Schema.String, Schema.String);
 
@@ -78,8 +78,8 @@ const pack = (root: string, tarballs: string): Effect.Effect<Tarballs, ReleaseEr
     const listing = fileSystem
       .readDirectory(tarballs)
       .pipe(Effect.mapError(platformFailure("list tarballs")));
-    const packed: Array<readonly [PublishedPackage, string]> = [];
-    for (const published of publishedPackages) {
+    const packed: Array<readonly [ReleasePackage, string]> = [];
+    for (const published of releasePackages) {
       const step = `pack ${published.name}`;
       const before = new Set(yield* listing);
       yield* output(
@@ -157,18 +157,10 @@ const projectTsconfig = {
  * be one type; the expected errors fail if a declaration resolved to `any`.
  */
 const projectSource = `import { Schema } from "effect";
-import {
-  type Box,
-  box,
-  computed,
-  createRealm,
-  type Realm,
-  untracked,
-  update,
-} from "@frondruntime/pinna";
+import { Box, Computed, Realm } from "@frondruntime/pinna";
 import { ObservableRealm } from "@frondruntime/pinna/internal";
 import { testRealm } from "@frondruntime/pinna/testing";
-import { schemaBox } from "@frondruntime/pinna-effect";
+import { Box as SchemaBox } from "@frondruntime/pinna-effect";
 import { RealmProvider, useRealm, useValue } from "@frondruntime/pinna-react";
 
 const fail = (message: string): never => {
@@ -176,10 +168,10 @@ const fail = (message: string): never => {
 };
 
 using realm = testRealm();
-const count: Box<number> = box(realm, 1);
-const doubled = computed(realm, (read) => read(count) * 2);
-const checked: Box<number> = schemaBox(realm, Schema.Number, 2);
-update(realm, (_read, write) => {
+const count: Box<number> = Box.make(realm, 1);
+const doubled = Computed.make(realm, (read) => read(count) * 2);
+const checked: Box<number> = SchemaBox.schema(realm, Schema.Number, 2);
+Realm.update(realm, (_read, write) => {
   write(count, 3);
   write(checked, 4);
 });
@@ -187,9 +179,9 @@ update(realm, (_read, write) => {
 const wrong: Box<string> = count;
 void wrong;
 
-if (untracked(realm, (read) => read(doubled)) !== 6) fail("the computed value did not follow its box");
-if (untracked(realm, (read) => read(checked)) !== 4) fail("the schema box did not take its write");
-if (!(createRealm() instanceof ObservableRealm)) {
+if (Realm.untracked(realm, (read) => read(doubled)) !== 6) fail("the computed value did not follow its box");
+if (Realm.untracked(realm, (read) => read(checked)) !== 4) fail("the schema box did not take its write");
+if (!(Realm.make() instanceof ObservableRealm)) {
   fail("the main entry and the internal entry hold two copies of the realm class");
 }
 
@@ -203,7 +195,7 @@ console.log("runtime ok");
 
 const installed = (
   project: string,
-  published: PublishedPackage,
+  published: ReleasePackage,
   ...rest: Array<string>
 ): Effect.Effect<string, never, Path.Path> =>
   Effect.gen(function* () {
@@ -216,7 +208,7 @@ const assertNoWorkspaceRanges = (
 ): Effect.Effect<void, ReleaseError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    for (const published of publishedPackages) {
+    for (const published of releasePackages) {
       const step = `ranges of ${published.name}`;
       const text = yield* fileSystem
         .readFileString(yield* installed(project, published, "package.json"))
@@ -237,7 +229,7 @@ const assertPackedFiles = (
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const missing: Array<string> = [];
-    for (const published of publishedPackages) {
+    for (const published of releasePackages) {
       for (const file of published.expectedFiles) {
         const exists = yield* fileSystem
           .exists(yield* installed(project, published, file))
@@ -261,7 +253,7 @@ const assertSingleCopies = (
 ): Effect.Effect<void, ReleaseError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    for (const published of publishedPackages) {
+    for (const published of releasePackages) {
       const nested = yield* installed(project, published, "node_modules");
       const entries = yield* fileSystem
         .readDirectory(nested)

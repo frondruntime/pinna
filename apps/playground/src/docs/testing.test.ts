@@ -2,17 +2,17 @@
 // The site's docs print the regions of this file (docs/public/guides/testing.md), so
 // `bun run typecheck` compiles what the page shows. The Effect samples are `testingEffect.test.ts`.
 import { expect, test } from "bun:test";
-import { box, collection, computed, Model, observe, untracked, update } from "@frondruntime/pinna";
+import { Box, Collection, Computed, Model, Realm, Source } from "@frondruntime/pinna";
 import { record, retainedKeys, testRealm } from "@frondruntime/pinna/testing";
 
 // #region model
 // The state under test: a count of open todos and the method that closes one.
-class Todos extends Model {
-  readonly $open = box(this.realm, 2);
-  readonly $label = computed(this.realm, (read) => `${read(this.$open)} open`);
+class Todos extends Model.Class {
+  readonly $open = Box.make(this.realm, 2);
+  readonly $label = Computed.make(this.realm, (read) => `${read(this.$open)} open`);
 
   close(): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       if (read(this.$open) === 0) throw new Error("nothing is open");
       write(this.$open, read(this.$open) - 1);
     });
@@ -29,7 +29,7 @@ test("closing a todo updates the label", () => {
 
   todos.close();
 
-  expect(untracked(realm, (read) => read(todos.$label))).toBe("1 open");
+  expect(Realm.untracked(realm, (read) => read(todos.$label))).toBe("1 open");
 });
 // #endregion
 
@@ -40,7 +40,7 @@ test("closing two todos in one update records one change", () => {
   // Declared after the realm, so it stops before the realm checks.
   using labels = record(realm, (read) => read(todos.$label));
 
-  update(realm, () => {
+  Realm.update(realm, () => {
     todos.close();
     todos.close();
   });
@@ -55,27 +55,27 @@ test("an update that throws leaves the realm as it was", () => {
   const todos = new Todos(realm);
 
   expect(() =>
-    update(realm, () => {
+    Realm.update(realm, () => {
       todos.close();
       todos.close();
       todos.close(); // nothing is open: throws, and the two before it are undone
     }),
   ).toThrow("nothing is open");
-  expect(untracked(realm, (read) => read(todos.$open))).toBe(2);
+  expect(Realm.untracked(realm, (read) => read(todos.$open))).toBe(2);
 });
 // #endregion
 
 // #region retained
 test("a refetch lets go of the rows it drops", () => {
   using realm = testRealm();
-  const $trades = collection(realm, { keyOf: (trade: { readonly id: string }) => trade.id });
-  update(realm, (_read, write) => {
+  const $trades = Collection.make(realm, { keyOf: (trade: { readonly id: string }) => trade.id });
+  Realm.update(realm, (_read, write) => {
     write.replaceAll($trades, [{ id: "a" }, { id: "b" }, { id: "c" }]);
   });
   // A reader of a row makes a box and a computed value for its key.
-  const release = observe($trades.row("c"));
+  const release = Source.observe($trades.row("c"));
 
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     write.replaceAll($trades, [{ id: "a" }]);
   });
 

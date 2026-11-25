@@ -74,7 +74,7 @@ export const checkOf = (schema: Schema.Top): Check => {
 
 /**
  * The checks `checkOf` built, one per schema. A check keeps no state of its
- * own, so every box of one schema shares it: `box` builds none.
+ * own, so every box of one schema shares it: `Box.make` builds none.
  */
 const checks = new WeakMap<Schema.Top, Check>();
 

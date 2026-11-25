@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { box, createRealm, reconcile, untracked, update, watch } from "../src/index.ts";
+import { Box, Collection, Realm } from "../src/index.ts";
 
 /**
- * Pinna's `reconcile` takes the comparison from the caller: a refetch builds
+ * Pinna's `Collection.reconcile` takes the comparison from the caller: a refetch builds
  * new objects, so identity alone would keep nothing.
  */
 
@@ -18,17 +18,17 @@ describe("reconcile", () => {
   test("identity shortcuts distinguish signed zero and preserve NaN", () => {
     const options = { keyOf: () => 1, equals: Object.is };
     const previous = [0];
-    const result = reconcile(previous, [-0], options);
+    const result = Collection.reconcile(previous, [-0], options);
     expect(Object.is(result[0], -0)).toBe(true);
     expect(result).not.toBe(previous);
     const held = [NaN];
-    expect(reconcile(held, [NaN], options)).toBe(held);
+    expect(Collection.reconcile(held, [NaN], options)).toBe(held);
   });
 
   test("keeps the previous instance where the key matches and equals holds", () => {
     const a = { id: "a", price: 1 };
     const b = { id: "b", price: 2 };
-    const next = reconcile(
+    const next = Collection.reconcile(
       [a, b],
       [
         { id: "a", price: 1 },
@@ -45,7 +45,7 @@ describe("reconcile", () => {
     const a = { id: "a", price: 1 };
     const b = { id: "b", price: 2 };
     const c = { id: "c", price: 3 };
-    const next = reconcile([a, b], [c, { id: "a", price: 1 }], { keyOf, equals });
+    const next = Collection.reconcile([a, b], [c, { id: "a", price: 1 }], { keyOf, equals });
     expect(next).toEqual([c, a]);
     expect(next[1]).toBe(a);
   });
@@ -55,7 +55,7 @@ describe("reconcile", () => {
       { id: "a", price: 1 },
       { id: "b", price: 2 },
     ];
-    const next = reconcile(
+    const next = Collection.reconcile(
       previous,
       [
         { id: "a", price: 1 },
@@ -68,7 +68,7 @@ describe("reconcile", () => {
 
   test("throws on a key the next array repeats", () => {
     expect(() =>
-      reconcile(
+      Collection.reconcile(
         [],
         [
           { id: "a", price: 1 },
@@ -82,24 +82,27 @@ describe("reconcile", () => {
   test("names a repeated key with no string form by its type", () => {
     const key: unknown = Object.create(null);
     expect(() =>
-      reconcile([], [1, 2], { keyOf: () => key, equals: (left, right) => left === right }),
+      Collection.reconcile([], [1, 2], {
+        keyOf: () => key,
+        equals: (left, right) => left === right,
+      }),
     ).toThrow("pinna: reconcile: the key (an unprintable object) appears twice");
   });
 
   test("equals is required", () => {
     // @ts-expect-error: without a schema there is no comparison to fall back on.
-    expect(() => reconcile([], [], { keyOf })).not.toThrow();
+    expect(() => Collection.reconcile([], [], { keyOf })).not.toThrow();
   });
 
   test("a refetch written through reconcile notifies nobody and keeps row identity", () => {
-    const realm = createRealm();
-    const $rows = box<ReadonlyArray<Row>>(realm, [
+    const realm = Realm.make();
+    const $rows = Box.make<ReadonlyArray<Row>>(realm, [
       { id: "a", price: 1 },
       { id: "b", price: 2 },
     ]);
-    const first = untracked(realm, (read) => read($rows))[0];
+    const first = Realm.untracked(realm, (read) => read($rows))[0];
     let notified = 0;
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($rows),
       () => {
@@ -107,7 +110,9 @@ describe("reconcile", () => {
       },
     );
     const refetch = (rows: ReadonlyArray<Row>): void =>
-      update(realm, (read, write) => write($rows, reconcile(read($rows), rows, { keyOf, equals })));
+      Realm.update(realm, (read, write) =>
+        write($rows, Collection.reconcile(read($rows), rows, { keyOf, equals })),
+      );
     refetch([
       { id: "a", price: 1 },
       { id: "b", price: 2 },
@@ -118,7 +123,7 @@ describe("reconcile", () => {
       { id: "b", price: 5 },
     ]);
     expect(notified).toBe(1);
-    expect(untracked(realm, (read) => read($rows))[0]).toBe(first);
+    expect(Realm.untracked(realm, (read) => read($rows))[0]).toBe(first);
     stop();
   });
 });

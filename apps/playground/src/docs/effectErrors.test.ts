@@ -2,7 +2,7 @@
 // Backs the claims docs/public/guides/errors.md makes about the samples in
 // `effectErrors.ts`.
 import { expect, test } from "bun:test";
-import { untracked } from "@frondruntime/pinna-effect";
+import { Realm } from "@frondruntime/pinna-effect";
 import { $signup, editPassword, issuesOf, realm, submit } from "./effectErrors.ts";
 
 test("a decode that fails gives the refused field's path and the filter's message", () => {
@@ -26,11 +26,11 @@ test("a missing field reads as Missing key at its path", () => {
 });
 
 test("a refused box write gives the same issues through its cause, and keeps the box", () => {
-  const before = untracked(realm, (read) => read($signup));
+  const before = Realm.untracked(realm, (read) => read($signup));
   expect(editPassword("short")).toEqual([
     { path: ["password"], message: "Use at least 8 characters" },
   ]);
-  expect(untracked(realm, (read) => read($signup))).toBe(before);
+  expect(Realm.untracked(realm, (read) => read($signup))).toBe(before);
   expect(editPassword("long enough")).toEqual([]);
 });
 

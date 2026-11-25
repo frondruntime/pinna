@@ -26,17 +26,17 @@ type Point = { readonly title: string; readonly body: string; readonly test: str
 const modelPoints: ReadonlyArray<Point> = [
   {
     title: "A model is a Schema.Class.",
-    body: "`SchemaModel` is an Effect `Schema.Class` whose `$` fields hold state: a `BoxField` is a box, a `CollectionField` holds rows by key. Plain fields stay plain.",
+    body: "`Model.Schema` is an Effect `Schema.Class` whose `$` fields hold state: a `Model.boxField` is a box, a `Model.collectionField` holds rows by key. Plain fields stay plain.",
     test: "packages/pinna-effect/test/class.test.ts",
   },
   {
     title: "Every write is checked.",
-    body: "A write the field's schema refuses throws to the caller, with the `Schema.SchemaError` as its cause, and the whole `update` is undone.",
+    body: "A write the field's schema refuses throws to the caller, with the `Schema.SchemaError` as its cause, and the whole `Realm.update` is undone.",
     test: "packages/pinna-effect/test/box.test.ts",
   },
   {
     title: "The wire is the schema.",
-    body: "`decode` takes JSON to a model in a realm and throws `Schema.SchemaError` on input that does not fit; `Schema.encodeSync` takes the model back to JSON with the boxes' current values.",
+    body: "`Model.decode` takes JSON to a model in a realm and throws `Schema.SchemaError` on input that does not fit; `Schema.encodeSync` takes the model back to JSON with the boxes' current values.",
     test: "packages/pinna-effect/test/mix.test.ts",
   },
 ];
@@ -49,12 +49,12 @@ const programPoints: ReadonlyArray<Point> = [
   },
   {
     title: "Programs stop with their scope.",
-    body: "`watchScoped` runs an effect on each change and interrupts the one still running. `changes` streams a value, starting with the current one. `observeScoped` holds a value observed until the scope closes.",
+    body: "`Program.watchScoped` runs an effect on each change and interrupts the one still running. `Program.changes` streams a value, starting with the current one. `Source.observeScoped` holds a value observed until the scope closes.",
     test: "packages/pinna-effect/test/effect.test.ts",
   },
   {
     title: "A stream becomes a value.",
-    body: "`fromStream` runs its stream while the value is observed and resets the value to `initial` when the last observer leaves. `whileObserved` runs a program on the same lifetime, to fill a collection only while a list shows it.",
+    body: "`Program.fromStream` runs its stream while the value is observed and resets the value to `initial` when the last observer leaves. `Program.whileObserved` runs a program on the same lifetime, to fill a collection only while a list shows it.",
     test: "packages/pinna-effect/test/effect.test.ts",
   },
 ];

@@ -9,27 +9,17 @@ import {
   readDerived,
   writeCell,
 } from "@frondruntime/pinna-core";
-import {
-  atom,
-  autorun,
-  box,
-  type Computed,
-  computed,
-  computedFunction,
-  createRealm,
-  inspect,
-  onObserved,
-  untracked,
-  update,
-  watch,
-} from "../src/index.ts";
-import { keptRead } from "./kept.ts";
-import { captureReports } from "./reports.ts";
+import { Box, Computed, Realm, Source } from "../../src/index.ts";
+import { keptRead } from "../kept.ts";
+import { captureReports } from "../reports.ts";
 
 /**
  * An observing call links or unlinks everything first, then starts or stops
  * the hooks: a hook or cleanup sees every observer count in place, and at
- * rest a source's hooks are started exactly when it is observed.
+ * rest a source's hooks are started exactly when it is observed. The cases
+ * that need only the public API, and the public twins of these, are in
+ * `test/settle.test.ts`; what stays here needs a core `Reaction`, a core
+ * graph, or `onObservedNow`.
  */
 
 const quiet = (): Graph => new Graph(() => {});
@@ -462,16 +452,19 @@ describe("a hook removed while a computed value computes", () => {
 
 describe("memo inside a compute that a read outside an update runs", () => {
   test("two calls with the same new arguments share one entry", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const core = (realm as unknown as { readonly core: Graph }).core;
-    const $trigger = box(realm, 0);
-    const $arg = box(realm, 2);
+    const $trigger = Box.make(realm, 0);
+    const $arg = Box.make(realm, 2);
     let computes = 0;
-    const square = computedFunction(realm, (_read, x: number) => {
+    const square = Computed.fn(realm, (_read, x: number) => {
       computes++;
       return x * x;
     });
-    const $sum = computed(realm, (read) => read(square(read($arg))) + read(square(read($arg))));
+    const $sum = Computed.make(
+      realm,
+      (read) => read(square(read($arg))) + read(square(read($arg))),
+    );
     // The trigger comes first, so a change to it stops the check there and
     // leaves the sum stale, and observed, for the read below.
     // A core reaction hands out no Pinna read, so the test keeps one; it reads
@@ -482,12 +475,12 @@ describe("memo inside a compute that a read outside an update runs", () => {
     reaction.activate();
     expect(computes).toBe(1);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($trigger, 1);
       write($arg, 3);
     });
     computes = 0;
-    expect(untracked(realm, (read) => read($sum))).toBe(18);
+    expect(Realm.untracked(realm, (read) => read($sum))).toBe(18);
     expect(computes).toBe(1);
     reaction.deactivate();
   });
@@ -518,48 +511,20 @@ describe("a watch that stops itself", () => {
 });
 
 describe("memo making an entry inside a compute that a read outside an update runs", () => {
-  test("does not end a hook removed earlier in the compute before the read is over", () => {
-    const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $x = box(realm, 0);
-    watch(
-      realm,
-      (read) => read($x),
-      () => {},
-    );
-    let computing = false;
-    const seen: Array<boolean> = [];
-    const remove = onObserved($x, () => () => {
-      seen.push(computing);
-    });
-    const square = computedFunction(realm, (_read, n: number) => n * n);
-    const $d = computed(realm, (read) => {
-      computing = true;
-      remove();
-      const value = read(square(5));
-      computing = false;
-      return value;
-    });
-
-    expect(untracked(realm, (read) => read($d))).toBe(25);
-    expect(errors).toEqual([]);
-    expect(seen).toEqual([false]);
-  });
-
   test("does not stop a hook a nested relink made due while the outer value computes", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const core = (realm as unknown as { readonly core: Graph }).core;
-    const $trigger = box(realm, 0);
-    const $flag = box(realm, false);
-    const $a = box(realm, 1);
-    const $b = box(realm, 2);
+    const $trigger = Box.make(realm, 0);
+    const $flag = Box.make(realm, false);
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 2);
     let computing = false;
     const seen: Array<boolean> = [];
-    onObserved($b, () => () => {
+    Source.onObserved($b, () => () => {
       seen.push(computing);
     });
-    const $e = computed(realm, (read) => (read($flag) ? read($a) : read($b)));
+    const $e = Computed.make(realm, (read) => (read($flag) ? read($a) : read($b)));
     // A core reaction hands out no Pinna read, so the test keeps one; it reads
     // and tracks inside the reaction's run.
     const read = keptRead(realm);
@@ -567,310 +532,33 @@ describe("memo making an entry inside a compute that a read outside an update ru
     reaction.track(() => read($trigger) + read($e));
     reaction.activate();
     // The trigger comes first, so the check stops there and leaves $e stale and observed.
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($trigger, 1);
       write($flag, true);
     });
-    const square = computedFunction(realm, (_read, n: number) => n * n);
-    const $d = computed(realm, (read) => {
+    const square = Computed.fn(realm, (_read, n: number) => n * n);
+    const $d = Computed.make(realm, (read) => {
       computing = true;
       const value = read($e) + read(square(7));
       computing = false;
       return value;
     });
 
-    expect(untracked(realm, (read) => read($d))).toBe(50);
+    expect(Realm.untracked(realm, (read) => read($d))).toBe(50);
     expect(errors).toEqual([]);
     expect(seen).toEqual([false]);
     reaction.deactivate();
   });
-
-  test("does not rerun, mid-compute, a watcher that reads the computing value", () => {
-    const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $x = box(realm, 0);
-    const $y = box(realm, 0);
-    watch(
-      realm,
-      (read) => read($x),
-      () => {},
-    );
-    const remove = onObserved($x, () => () => {
-      update(realm, (_read, write) => {
-        write($y, 1);
-      });
-    });
-    const square = computedFunction(realm, (_read, n: number) => n * n);
-    const $d = computed(realm, (read) => {
-      remove();
-      return read(square(3));
-    });
-    const seen: Array<number> = [];
-    watch(
-      realm,
-      (read) => read($y),
-      () => {
-        seen.push(untracked(realm, (read) => read($d)));
-      },
-    );
-
-    expect(untracked(realm, (read) => read($d))).toBe(9);
-    expect(errors.map(String)).toEqual([]);
-    expect(seen).toEqual([9]);
-  });
-
-  test("does not evict an entry made earlier in the same compute", () => {
-    const realm = createRealm();
-    let computes = 0;
-    const square = computedFunction(realm, (_read, n: number) => {
-      computes++;
-      return n * n;
-    });
-    const $d = computed(realm, (read) => read(square(2)) + read(square(3)) + read(square(2)));
-    expect(untracked(realm, (read) => read($d))).toBe(17);
-    expect(computes).toBe(2);
-  });
 });
 
 describe("a read outside an update settles once it is over", () => {
-  test("a refused update inside the compute does not evict a memo entry made earlier in it", () => {
-    const realm = createRealm();
-    let computes = 0;
-    const square = computedFunction(realm, (_read, n: number) => {
-      computes++;
-      return n * n;
-    });
-    const $d = computed(realm, (read) => {
-      const first = read(square(2));
-      expect(() => untracked(realm, () => update(realm, () => undefined))).toThrow(
-        "update cannot run in a computed value",
-      );
-      return first + read(square(2));
-    });
-    expect(untracked(realm, (read) => read($d))).toBe(8);
-    expect(computes).toBe(1);
-  });
-
-  test("a refused update inside the compute does not run a cleanup removed earlier in it", () => {
-    const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $x = box(realm, 0);
-    watch(
-      realm,
-      (read) => read($x),
-      () => {},
-    );
-    let computing = false;
-    const seen: Array<boolean> = [];
-    const remove = onObserved($x, () => () => {
-      seen.push(computing);
-    });
-    const $d = computed(realm, () => {
-      computing = true;
-      remove();
-      expect(() => untracked(realm, () => update(realm, () => undefined))).toThrow(
-        "update cannot run in a computed value",
-      );
-      computing = false;
-      return 1;
-    });
-    expect(untracked(realm, (read) => read($d))).toBe(1);
-    expect(errors).toEqual([]);
-    expect(seen).toEqual([false]);
-  });
-
-  test("a failing update inside the compute settles nothing before the read is over", () => {
-    const realm = createRealm();
-    const $y = box(realm, 0);
-    let computes = 0;
-    const square = computedFunction(realm, (_read, n: number) => {
-      computes++;
-      return n * n;
-    });
-    const $d = computed(realm, (read) => {
-      const first = read(square(2));
-      try {
-        untracked(realm, () =>
-          update(realm, (_read, write) => {
-            write($y, 1);
-          }),
-        );
-      } catch {}
-      return first + read(square(2));
-    });
-    expect(untracked(realm, (read) => read($d))).toBe(8);
-    expect(computes).toBe(1);
-  });
-
-  test("a refused update inside the compute does not rerun, mid-compute, a watcher that reads the computing value", () => {
-    const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $x = box(realm, 0);
-    const $y = box(realm, 0);
-    watch(
-      realm,
-      (read) => read($x),
-      () => {},
-    );
-    const remove = onObserved($x, () => () => {
-      update(realm, (_read, write) => {
-        write($y, 1);
-      });
-    });
-    const $d = computed(realm, () => {
-      remove();
-      expect(() => untracked(realm, () => update(realm, () => undefined))).toThrow(
-        "update cannot run in a computed value",
-      );
-      return 9;
-    });
-    const seen: Array<number> = [];
-    watch(
-      realm,
-      (read) => read($y),
-      () => {
-        seen.push(untracked(realm, (read) => read($d)));
-      },
-    );
-    expect(untracked(realm, (read) => read($d))).toBe(9);
-    expect(errors.map(String)).toEqual([]);
-    expect(seen).toEqual([9]);
-  });
-
-  test("a read that throws out of equals still runs a cleanup removed in the compute", () => {
-    const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $x = box(realm, 0);
-    watch(
-      realm,
-      (read) => read($x),
-      () => {},
-    );
-    const seen: Array<string> = [];
-    const remove = onObserved($x, () => () => {
-      seen.push("cleanup");
-    });
-    const $src = box(realm, 0);
-    const $d = computed(
-      realm,
-      (read) => {
-        const value = read($src);
-        if (value === 1) {
-          remove();
-        }
-        return value;
-      },
-      {
-        equals: (left, right) => {
-          if (right === 1) {
-            throw new Error("equals");
-          }
-          return left === right;
-        },
-      },
-    );
-    expect(untracked(realm, (read) => read($d))).toBe(0);
-    update(realm, (_read, write) => {
-      write($src, 1);
-    });
-    expect(() => untracked(realm, (read) => read($d))).toThrow("equals");
-    // Ruling 31: the cleanup runs once the outermost read is over.
-    expect(seen).toEqual(["cleanup"]);
-  });
-
-  test("a read that throws out of equals leaves nothing due, so a later hook begins at once", () => {
-    const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $x = box(realm, 0);
-    watch(
-      realm,
-      (read) => read($x),
-      () => {},
-    );
-    const remove = onObserved($x, () => undefined);
-    const $src = box(realm, 0);
-    const $d = computed(
-      realm,
-      (read) => {
-        if (read($src) === 1) {
-          remove();
-        }
-        return read($src);
-      },
-      {
-        equals: (_left, right) => {
-          if (right === 1) {
-            throw new Error("equals");
-          }
-          return false;
-        },
-      },
-    );
-    expect(untracked(realm, (read) => read($d))).toBe(0);
-    update(realm, (_read, write) => {
-      write($src, 1);
-    });
-    expect(() => untracked(realm, (read) => read($d))).toThrow("equals");
-    const log: Array<string> = [];
-    onObserved($x, () => {
-      log.push("start");
-      return undefined;
-    });
-    // Ruling 31: outside an update, compute, or observing call, a hook on an observed observable begins at once.
-    expect(log).toEqual(["start"]);
-  });
-
-  test("a read that throws out of equals after memo runs a cleanup removed in the compute once it is over", () => {
-    const realm = createRealm();
-    const $x = box(realm, 0);
-    watch(
-      realm,
-      (read) => read($x),
-      () => {},
-    );
-    let computing = false;
-    const seen: Array<boolean> = [];
-    const remove = onObserved($x, () => () => {
-      seen.push(computing);
-    });
-    const square = computedFunction(realm, (_read, n: number) => n * n);
-    const $src = box(realm, 0);
-    const $d = computed(
-      realm,
-      (read) => {
-        const value = read($src);
-        if (value === 1) {
-          computing = true;
-          remove();
-          read(square(3));
-          computing = false;
-        }
-        return value;
-      },
-      {
-        equals: (_left, right) => {
-          if (right === 1) {
-            throw new Error("equals");
-          }
-          return false;
-        },
-      },
-    );
-    expect(untracked(realm, (read) => read($d))).toBe(0);
-    update(realm, (_read, write) => {
-      write($src, 1);
-    });
-    expect(() => untracked(realm, (read) => read($d))).toThrow("equals");
-    expect(seen).toEqual([false]);
-  });
-
   test("a read that throws out of equals still reaches watchers with a hook's write", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const core = (realm as unknown as { readonly core: Graph }).core;
-    const $y = box(realm, 0);
+    const $y = Box.make(realm, 0);
     const seen: Array<number> = [];
-    watch(
+    Realm.watch(
       realm,
       (read) => read($y),
       (value) => {
@@ -878,13 +566,13 @@ describe("a read outside an update settles once it is over", () => {
       },
     );
     const source = core.derived(() => 0);
-    const $src = box(realm, 0);
-    const $d = computed(
+    const $src = Box.make(realm, 0);
+    const $d = Computed.make(
       realm,
       (read) => {
         if (read($src) === 1) {
           core.onObservedNow(source, () => {
-            update(realm, (_read, write) => {
+            Realm.update(realm, (_read, write) => {
               write($y, 7);
             });
             return undefined;
@@ -901,38 +589,12 @@ describe("a read outside an update settles once it is over", () => {
         },
       },
     );
-    expect(untracked(realm, (read) => read($d))).toBe(0);
-    update(realm, (_read, write) => {
+    expect(Realm.untracked(realm, (read) => read($d))).toBe(0);
+    Realm.update(realm, (_read, write) => {
       write($src, 1);
     });
-    expect(() => untracked(realm, (read) => read($d))).toThrow("equals");
+    expect(() => Realm.untracked(realm, (read) => read($d))).toThrow("equals");
     expect(seen).toEqual([7]);
-  });
-
-  test("a read that throws out of equals does not leave a memo entry made in it cached", () => {
-    const realm = createRealm();
-    let computes = 0;
-    const square = computedFunction(realm, (_read, n: number) => {
-      computes++;
-      return n * n;
-    });
-    const $src = box(realm, 0);
-    const $f = computed(realm, (read) => (read($src) === 1 ? read(square(6)) : 0), {
-      equals: (_left, right) => {
-        if (right === 36) {
-          throw new Error("equals");
-        }
-        return false;
-      },
-    });
-    expect(untracked(realm, (read) => read($f))).toBe(0);
-    update(realm, (_read, write) => {
-      write($src, 1);
-    });
-    expect(() => untracked(realm, (read) => read($f))).toThrow("equals");
-    computes = 0;
-    untracked(realm, (read) => read(square(6)));
-    expect(computes).toBe(1);
   });
 });
 
@@ -1033,30 +695,6 @@ describe("a computed value's equals is part of its compute", () => {
 
     expect(() => readDerived(value)).toThrow("cannot write while it computes");
     expect(readCell(source)).toBe(1);
-  });
-
-  test("an update in equals cannot write, and the value stays fresh", () => {
-    const realm = createRealm({ onError: () => {} });
-    const $source = box(realm, 0);
-    const $value = computed(realm, (read) => read($source), {
-      equals: (left, right) => {
-        if (right === 1) {
-          update(realm, (_read, write) => {
-            write($source, 100);
-          });
-        }
-        return left === right;
-      },
-    });
-    expect(untracked(realm, (read) => read($value))).toBe(0);
-    update(realm, (_read, write) => {
-      write($source, 1);
-    });
-
-    expect(() => untracked(realm, (read) => read($value))).toThrow(
-      "update cannot run in a computed value",
-    );
-    expect(untracked(realm, (read) => read($source))).toBe(1);
   });
 });
 
@@ -1400,58 +1038,6 @@ describe("a computed value that turns volatile in a run with an equal value", ()
     stop();
     expect([observerCount(inner), observerCount(first)]).toEqual([0, 0]);
   });
-
-  test("through the realm, a cycle met through it leaves nothing observed", () => {
-    const realm = createRealm({ onError: () => {} });
-    const $mode = box(realm, false);
-    const $flag = box(realm, false);
-    const $first = box(realm, 0);
-    const $k = box(realm, 1);
-    const $atom = atom(realm);
-    const events: Array<string> = [];
-    onObserved($first, () => {
-      events.push("start");
-      return () => events.push("stop");
-    });
-    let armed = false;
-    let $middle: Computed<number> | undefined;
-    const $outer = computed(realm, (read) => {
-      if (read($mode)) {
-        read($atom);
-        if (armed) {
-          armed = false;
-          if ($middle !== undefined) {
-            read($middle);
-          }
-        }
-      }
-      return read($k);
-    });
-    const $inner = computed(realm, (read) => read($first) + read($outer));
-    const $watched = computed(realm, (read) => (read($flag) ? read($inner) : 0));
-    $middle = $watched;
-    const stop = autorun(realm, (read) => {
-      read($watched);
-    });
-    untracked(realm, (read) => read($inner));
-    update(realm, (read, write) => {
-      write($mode, true);
-      write($flag, true);
-      read($inner);
-      armed = true;
-      try {
-        read($outer);
-      } catch {}
-      write($flag, false);
-    });
-    stop();
-
-    expect(inspect($inner).observers).toBe(0);
-    expect(inspect($first).observers).toBe(0);
-    expect(events.filter((event) => event === "start").length).toBe(
-      events.filter((event) => event === "stop").length,
-    );
-  });
 });
 
 describe("a value that turns volatile with an equal value is unchanged", () => {
@@ -1505,29 +1091,6 @@ describe("a value that turns volatile with an equal value is unchanged", () => {
 
     expect(changes).toBe(0);
     reaction.deactivate();
-  });
-
-  test("a realm autorun over it does not rerun", () => {
-    const realm = createRealm({ onError: () => {} });
-    const $mode = box(realm, false);
-    const $atom = atom(realm);
-    const $value = computed(realm, (read) => {
-      if (read($mode)) {
-        read($atom);
-      }
-      return 1;
-    });
-    let runs = 0;
-    const stop = autorun(realm, (read) => {
-      runs++;
-      read($value);
-    });
-    update(realm, (_read, write) => {
-      write($mode, true);
-    });
-
-    expect(runs).toBe(1);
-    stop();
   });
 });
 

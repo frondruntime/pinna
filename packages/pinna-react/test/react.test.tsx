@@ -1,19 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { BoxCell } from "@frondruntime/pinna/internal";
-import { observerCount } from "@frondruntime/pinna-core";
 import {
-  atom,
-  type Box,
-  type Computed,
-  computed,
-  createRealm,
-  fromStream,
-  inspect,
-  onObserved,
+  Atom,
+  Box,
+  Computed,
+  Program,
+  Realm,
   RealmService,
-  schemaBox,
-  untracked,
-  update,
+  Source,
 } from "@frondruntime/pinna-effect";
 import { Effect, Queue, Schema, Stream } from "effect";
 import {
@@ -112,7 +105,7 @@ class Boundary extends Component<{ readonly children: ReactNode }, { readonly fa
 }
 
 const loaded = (count: number): Portfolio => {
-  const portfolio = new Portfolio(createRealm());
+  const portfolio = new Portfolio(Realm.make());
   portfolio.load(positionsJson(count));
   return portfolio;
 };
@@ -126,12 +119,12 @@ describe("fromStream in a component", () => {
 
   for (const [form, read] of Object.entries(forms)) {
     test(`a remount shows initial until the next element, through ${form}`, async () => {
-      const realm = createRealm();
+      const realm = Realm.make();
       await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const queue = yield* Queue.unbounded<number>();
-            const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
+            const $value = yield* Program.fromStream(realm, Stream.fromQueue(queue), 0);
             function Price(): ReactNode {
               const price = read($value);
               return (
@@ -156,7 +149,7 @@ describe("fromStream in a component", () => {
             expect(view.textContent).toBe("10");
             expect(view.querySelector("button")?.disabled).toBe(false);
             act(() => root?.render(null));
-            expect(untracked(realm, (read) => read($value))).toBe(0);
+            expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
             act(() => root?.render(element));
             expect(view.textContent).toBe("0");
             expect(view.querySelector("button")?.disabled).toBe(true);
@@ -174,7 +167,7 @@ describe("fromStream in a component", () => {
     });
 
     test(`StrictMode resets the first mount before the second run emits, through ${form}`, async () => {
-      const realm = createRealm();
+      const realm = Realm.make();
       const events: Array<number> = [];
       let runs = 0;
       await Effect.runPromise(
@@ -189,11 +182,11 @@ describe("fromStream in a component", () => {
                   : Stream.fromQueue(queue);
               }),
             );
-            const $value = yield* fromStream(realm, stream, 0);
-            onObserved($value, () => {
-              events.push(untracked(realm, (read) => read($value)));
+            const $value = yield* Program.fromStream(realm, stream, 0);
+            Source.onObserved($value, () => {
+              events.push(Realm.untracked(realm, (read) => read($value)));
               return () => {
-                events.push(untracked(realm, (read) => read($value)));
+                events.push(Realm.untracked(realm, (read) => read($value)));
               };
             });
             function Price(): ReactNode {
@@ -224,14 +217,14 @@ describe("fromStream in a component", () => {
     });
 
     test(`a rerender keeps the stream observed, through ${form}`, async () => {
-      const realm = createRealm();
+      const realm = Realm.make();
       const events: Array<string> = [];
       await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const queue = yield* Queue.unbounded<number>();
-            const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
-            onObserved($value, () => {
+            const $value = yield* Program.fromStream(realm, Stream.fromQueue(queue), 0);
+            Source.onObserved($value, () => {
               events.push("start");
               return () => {
                 events.push("stop");
@@ -272,15 +265,15 @@ describe("fromStream in a component", () => {
   }
 
   test("changing a useValues source list resubscribes and resets the shared stream", async () => {
-    const realm = createRealm();
-    const $other = schemaBox(realm, Schema.Number, 1);
+    const realm = Realm.make();
+    const $other = Box.schema(realm, Schema.Number, 1);
     const events: Array<string> = [];
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<number>();
-          const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
-          onObserved($value, () => {
+          const $value = yield* Program.fromStream(realm, Stream.fromQueue(queue), 0);
+          Source.onObserved($value, () => {
             events.push("start");
             return () => {
               events.push("stop");
@@ -352,7 +345,7 @@ describe("useValue", () => {
       </RealmProvider>,
     );
     act(() =>
-      update(portfolio.realm, (read, write) => {
+      Realm.update(portfolio.realm, (read, write) => {
         const current = read(portfolio.$response);
         write(
           portfolio.$response,
@@ -365,7 +358,7 @@ describe("useValue", () => {
 
   test("reading in a render outside useValue throws", () => {
     const portfolio = loaded(1);
-    const leaked = untracked(portfolio.realm, (read) => read);
+    const leaked = Realm.untracked(portfolio.realm, (read) => read);
     function Bad() {
       return <p>{leaked(portfolio.$totalLabel)}</p>;
     }
@@ -375,7 +368,7 @@ describe("useValue", () => {
   test("unmounting stops the stream hook; StrictMode holds no extra subscription", () => {
     const portfolio = loaded(3);
     const events: Array<string> = [];
-    onObserved(portfolio.$response, () => {
+    Source.onObserved(portfolio.$response, () => {
       events.push("start");
       return () => events.push("stop");
     });
@@ -406,7 +399,7 @@ describe("useValue", () => {
       </RealmProvider>,
     );
     act(() =>
-      update(portfolio.realm, (_read, write) => {
+      Realm.update(portfolio.realm, (_read, write) => {
         write(portfolio.$currency, "EUR");
       }),
     );
@@ -426,7 +419,7 @@ describe("useValue", () => {
     const portfolio = loaded(1);
     function Writer() {
       const currency = useSelect((read) => {
-        update(portfolio.realm, () => undefined);
+        Realm.update(portfolio.realm, () => undefined);
         return read(portfolio.$currency);
       });
       return <p>{currency}</p>;
@@ -439,7 +432,7 @@ describe("useValue", () => {
           </RealmProvider>,
         ),
       ).toThrow(
-        "pinna: update cannot run in a watch's select or a selector; write from an event, a watch's effect, or an autorun",
+        "pinna: Realm.update cannot run in a watch's select or a selector; write from an event, a watch's effect, or an autorun",
       ),
     );
   });
@@ -464,7 +457,7 @@ describe("useValue", () => {
   test("a render React discards starts no onObserved hook", () => {
     const portfolio = loaded(3);
     const events: Array<string> = [];
-    onObserved(portfolio.$response, () => {
+    Source.onObserved(portfolio.$response, () => {
       events.push("start");
       return () => events.push("stop");
     });
@@ -486,15 +479,15 @@ describe("useValue", () => {
   });
 
   test("an equals that throws at subscribe leaves nothing observed", () => {
-    const realm = createRealm({ onError: () => {} });
-    const $first = schemaBox(realm, Schema.Number, 0);
-    const $source = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make({ onError: () => {} });
+    const $first = Box.schema(realm, Schema.Number, 0);
+    const $source = Box.schema(realm, Schema.Number, 0);
     const events: Array<string> = [];
-    onObserved($first, () => {
+    Source.onObserved($first, () => {
       events.push("start");
       return () => events.push("stop");
     });
-    const $value = computed(realm, (read) => read($source), {
+    const $value = Computed.make(realm, (read) => read($source), {
       equals: (_left, right) => {
         if (right === 1) {
           throw new Error("equals");
@@ -505,7 +498,7 @@ describe("useValue", () => {
     function View(): ReactNode {
       const value = useSelect((read) => read($first) + read($value));
       useLayoutEffect(() => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($source, 1);
         });
       }, []);
@@ -522,24 +515,24 @@ describe("useValue", () => {
     );
     act(() => root?.unmount());
     root = undefined;
-    expect(inspect($first).observers).toBe(0);
+    expect(Source.inspect($first).observers).toBe(0);
     expect(events.filter((event) => event === "start").length).toBe(
       events.filter((event) => event === "stop").length,
     );
   });
 
   test("an equals that throws when a write relinks leaves nothing observed", () => {
-    const realm = createRealm({ onError: () => {} });
-    const $wide = schemaBox(realm, Schema.Boolean, false);
-    const $first = schemaBox(realm, Schema.Number, 0);
-    const $atom = atom(realm);
+    const realm = Realm.make({ onError: () => {} });
+    const $wide = Box.schema(realm, Schema.Boolean, false);
+    const $first = Box.schema(realm, Schema.Number, 0);
+    const $atom = Atom.make(realm);
     const events: Array<string> = [];
-    onObserved($first, () => {
+    Source.onObserved($first, () => {
       events.push("start");
       return () => events.push("stop");
     });
     // Volatile, so linking it recomputes it, and equals runs there.
-    const $value = computed(
+    const $value = Computed.make(
       realm,
       (read) => {
         read($atom);
@@ -564,30 +557,30 @@ describe("useValue", () => {
         </RealmProvider>,
       );
       act(() => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($wide, true);
         });
       });
       act(() => root?.unmount());
     });
     root = undefined;
-    expect(inspect($first).observers).toBe(0);
+    expect(Source.inspect($first).observers).toBe(0);
     expect(events.filter((event) => event === "start").length).toBe(
       events.filter((event) => event === "stop").length,
     );
   });
 
   test("an equals that throws when a kept render relinks leaves nothing observed", () => {
-    const realm = createRealm({ onError: () => {} });
-    const $first = schemaBox(realm, Schema.Number, 0);
-    const $atom = atom(realm);
+    const realm = Realm.make({ onError: () => {} });
+    const $first = Box.schema(realm, Schema.Number, 0);
+    const $atom = Atom.make(realm);
     const events: Array<string> = [];
-    onObserved($first, () => {
+    Source.onObserved($first, () => {
       events.push("start");
       return () => events.push("stop");
     });
     // Volatile, so linking it recomputes it, and equals runs there.
-    const $value = computed(
+    const $value = Computed.make(
       realm,
       (read) => {
         read($atom);
@@ -620,7 +613,7 @@ describe("useValue", () => {
     expect(view.textContent).toBe("failed");
     act(() => root?.unmount());
     root = undefined;
-    expect(inspect($first).observers).toBe(0);
+    expect(Source.inspect($first).observers).toBe(0);
     expect(events.filter((event) => event === "start").length).toBe(
       events.filter((event) => event === "stop").length,
     );
@@ -630,11 +623,11 @@ describe("useValue", () => {
     const first = loaded(1);
     const second = loaded(1);
     const events: Array<string> = [];
-    onObserved(first.$currency, () => {
+    Source.onObserved(first.$currency, () => {
       events.push("start");
       return () => events.push("stop");
     });
-    update(second.realm, (_read, write) => {
+    Realm.update(second.realm, (_read, write) => {
       write(second.$currency, "EUR");
     });
     function Currency({ portfolio }: { readonly portfolio: Portfolio }) {
@@ -645,7 +638,7 @@ describe("useValue", () => {
     expect(events).toEqual(["start", "stop"]);
     expect(view.textContent).toBe("EUR");
     act(() => {
-      update(second.realm, (_read, write) => {
+      Realm.update(second.realm, (_read, write) => {
         write(second.$currency, "USD");
       });
     });
@@ -656,9 +649,9 @@ describe("useValue", () => {
 describe("a mounted value that fails in a later update", () => {
   const failing = (fails: "compute" | "equals") => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $source = schemaBox(realm, Schema.Number, 0);
-    const $value = computed(
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $source = Box.schema(realm, Schema.Number, 0);
+    const $value = Computed.make(
       realm,
       (read) => {
         const value = read($source);
@@ -692,7 +685,7 @@ describe("a mounted value that fails in a later update", () => {
           </Boundary>,
         );
         act(() => {
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($source, 1);
           });
         });
@@ -716,7 +709,7 @@ describe("a mounted value that fails in a later update", () => {
         </Boundary>,
       );
       act(() => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($source, 1);
         });
       });
@@ -729,7 +722,7 @@ describe("a mounted value that fails in a later update", () => {
 
 describe("useRealm", () => {
   test("returns the provided realm", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     let seen: unknown;
     function Reader() {
       seen = useRealm();
@@ -754,9 +747,9 @@ describe("useRealm", () => {
 
 describe("useValues", () => {
   test("resubscribes when a source is replaced in the same input array", () => {
-    const realm = createRealm();
-    const $first = schemaBox(realm, Schema.Number, 1);
-    const $second = schemaBox(realm, Schema.Number, 2);
+    const realm = Realm.make();
+    const $first = Box.schema(realm, Schema.Number, 1);
+    const $second = Box.schema(realm, Schema.Number, 2);
     const input = [$first];
     const seen: Array<ReadonlyArray<number>> = [];
     function Values() {
@@ -774,7 +767,7 @@ describe("useValues", () => {
     act(() => root?.render(<Values />));
     expect(view.textContent).toBe("2");
     expect([observers($first), observers($second)]).toEqual([0, 1]);
-    act(() => update(realm, (_read, write) => write($second, 3)));
+    act(() => Realm.update(realm, (_read, write) => write($second, 3)));
     expect(view.textContent).toBe("3");
     expect(seen[0]).toEqual([1]);
 
@@ -786,8 +779,8 @@ describe("useValues", () => {
   });
 
   test("drops cached values when the same input array is truncated", () => {
-    const realm = createRealm();
-    const $value = schemaBox(realm, Schema.Number, 1);
+    const realm = Realm.make();
+    const $value = Box.schema(realm, Schema.Number, 1);
     const input = [$value];
     function Values() {
       return <p>{useValues(input).join(",")}</p>;
@@ -824,7 +817,21 @@ describe("useValues", () => {
       return null;
     }
     quietly(() =>
-      expect(() => mount(<Mixed />)).toThrow("useValues takes observables of one realm"),
+      expect(() => mount(<Mixed />)).toThrow(
+        expect.objectContaining({ _tag: "PinnaUsageError", code: "pinna-react/mixed-realms" }),
+      ),
+    );
+  });
+
+  test("useRealm without a RealmProvider throws the no-provider code", () => {
+    function Orphan() {
+      useRealm();
+      return null;
+    }
+    quietly(() =>
+      expect(() => mount(<Orphan />)).toThrow(
+        expect.objectContaining({ _tag: "PinnaUsageError", code: "pinna-react/no-provider" }),
+      ),
     );
   });
 
@@ -845,7 +852,7 @@ describe("useValues", () => {
     const view = mount(<Summary />);
     expect(view.textContent).toBe("USD/30 USD");
     act(() =>
-      update(portfolio.realm, (_read, write) => {
+      Realm.update(portfolio.realm, (_read, write) => {
         write(portfolio.$currency, "EUR");
       }),
     );
@@ -864,7 +871,7 @@ describe("useValues", () => {
     act(() => root?.render(<Summary tag="b" />));
     expect(seen.at(-1)).toBe(seen[0]);
     act(() =>
-      update(portfolio.realm, (_read, write) => {
+      Realm.update(portfolio.realm, (_read, write) => {
         write(portfolio.$currency, "EUR");
       }),
     );
@@ -872,10 +879,10 @@ describe("useValues", () => {
   });
 
   test("a change past the first element reads every value", () => {
-    const realm = createRealm();
-    const $first = schemaBox(realm, Schema.Number, 1);
-    const $second = schemaBox(realm, Schema.Number, 2);
-    const $third = schemaBox(realm, Schema.Number, 3);
+    const realm = Realm.make();
+    const $first = Box.schema(realm, Schema.Number, 1);
+    const $second = Box.schema(realm, Schema.Number, 2);
+    const $third = Box.schema(realm, Schema.Number, 3);
     const seen: Array<ReadonlyArray<number>> = [];
     function Three() {
       seen.push(useValues([$first, $second, $third]));
@@ -883,13 +890,13 @@ describe("useValues", () => {
     }
     mount(<Three />);
     act(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($second, 20);
       }),
     );
     expect(seen.at(-1)).toEqual([1, 20, 3]);
     act(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($third, 30);
       }),
     );
@@ -908,7 +915,7 @@ describe("useValues", () => {
   });
 });
 
-const observers = (box: Box<number>): number => observerCount((box as BoxCell<number>).source);
+const observers = (box: Box<number>): number => Source.inspect(box).observers;
 
 const never = new Promise<never>(() => {});
 
@@ -928,9 +935,9 @@ describe("an update render React throws away", () => {
   };
   for (const [form, read] of Object.entries(forms)) {
     test(`keeps the kept render's subscription, through ${form}`, () => {
-      const realm = createRealm();
-      const $a = schemaBox(realm, Schema.Number, 1);
-      const $b = schemaBox(realm, Schema.Number, 100);
+      const realm = Realm.make();
+      const $a = Box.schema(realm, Schema.Number, 1);
+      const $b = Box.schema(realm, Schema.Number, 100);
       function Show({ $x }: { readonly $x: Box<number> }): ReactNode {
         count("Show");
         return <p>{read({ $x })}</p>;
@@ -952,7 +959,7 @@ describe("an update render React throws away", () => {
       renders.clear();
 
       act(() => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($b, 200);
         });
       });
@@ -960,7 +967,7 @@ describe("an update render React throws away", () => {
       // React also retries the transition after this update, so only the
       // screen is checked.
       act(() => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($a, 2);
         });
       });
@@ -977,14 +984,14 @@ describe("a write before the component subscribes", () => {
   };
   for (const [form, read] of Object.entries(forms)) {
     test(`a layout effect's write after the render shows, through ${form}`, () => {
-      const realm = createRealm();
-      const $a = schemaBox(realm, Schema.Number, 1);
+      const realm = Realm.make();
+      const $a = Box.schema(realm, Schema.Number, 1);
       function Show(): ReactNode {
         return <p>{read({ $x: $a })}</p>;
       }
       function Write(): null {
         useLayoutEffect(() => {
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($a, 2);
           });
         }, []);
@@ -998,7 +1005,7 @@ describe("a write before the component subscribes", () => {
       );
       expect(view.textContent).toBe("2");
       act(() => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($a, 3);
         });
       });
@@ -1006,10 +1013,10 @@ describe("a write before the component subscribes", () => {
     });
 
     test(`a hook that loads when the component subscribes shows, through ${form}`, () => {
-      const realm = createRealm();
-      const $a = schemaBox(realm, Schema.Number, 1);
-      onObserved($a, () => {
-        update(realm, (_read, write) => {
+      const realm = Realm.make();
+      const $a = Box.schema(realm, Schema.Number, 1);
+      Source.onObserved($a, () => {
+        Realm.update(realm, (_read, write) => {
           write($a, 2);
         });
         return undefined;
@@ -1030,9 +1037,9 @@ describe("a write before the component subscribes", () => {
 
 describe("switching what a mounted component reads", () => {
   test("another observable in the same realm: the component follows the new one only", () => {
-    const realm = createRealm();
-    const $a = schemaBox(realm, Schema.Number, 1);
-    const $b = schemaBox(realm, Schema.Number, 100);
+    const realm = Realm.make();
+    const $a = Box.schema(realm, Schema.Number, 1);
+    const $b = Box.schema(realm, Schema.Number, 100);
     function Show({ $x }: { readonly $x: Box<number> }): ReactNode {
       count("Show");
       return <p>{useValue($x)}</p>;
@@ -1044,13 +1051,13 @@ describe("switching what a mounted component reads", () => {
     renders.clear();
 
     act(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($a, 2);
       });
     });
     expect(renders.get("Show")).toBeUndefined();
     act(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($b, 200);
       });
     });
@@ -1061,13 +1068,13 @@ describe("switching what a mounted component reads", () => {
     // The child's layout effect writes what the old select read, so the
     // reaction tracks the old select again before the render is kept; the
     // kept render still wins.
-    const realm = createRealm();
-    const $a = schemaBox(realm, Schema.Number, 1);
-    const $b = schemaBox(realm, Schema.Number, 10);
+    const realm = Realm.make();
+    const $a = Box.schema(realm, Schema.Number, 1);
+    const $b = Box.schema(realm, Schema.Number, 10);
     function Child({ useB }: { readonly useB: boolean }): ReactNode {
       useLayoutEffect(() => {
         if (useB) {
-          update(realm, (read, write) => {
+          Realm.update(realm, (read, write) => {
             write($a, read($a) + 1);
           });
         }
@@ -1098,7 +1105,7 @@ describe("switching what a mounted component reads", () => {
     act(() => root?.render(app(true)));
     expect([observers($a), observers($b)]).toEqual([0, 1]);
     act(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($b, 11);
       });
     });
@@ -1106,9 +1113,9 @@ describe("switching what a mounted component reads", () => {
   });
 
   test("useValues over an array that grows and shrinks", () => {
-    const realm = createRealm();
-    const $a = schemaBox(realm, Schema.Number, 1);
-    const $b = schemaBox(realm, Schema.Number, 2);
+    const realm = Realm.make();
+    const $a = Box.schema(realm, Schema.Number, 1);
+    const $b = Box.schema(realm, Schema.Number, 2);
     function Sum({ list }: { readonly list: ReadonlyArray<Box<number>> }): ReactNode {
       const values = useValues(list);
       return <p>{values.join(",")}</p>;
@@ -1117,7 +1124,7 @@ describe("switching what a mounted component reads", () => {
     act(() => root?.render(<Sum list={[$a, $b]} />));
     expect(view.textContent).toBe("1,2");
     act(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($b, 3);
       });
     });
@@ -1133,9 +1140,9 @@ describe("switching what a mounted component reads", () => {
 });
 
 test("a component remounted after its error boundary resets follows its value", () => {
-  const realm = createRealm();
-  const $source = schemaBox(realm, Schema.Number, 0);
-  const $value = computed(realm, (read) => {
+  const realm = Realm.make();
+  const $source = Box.schema(realm, Schema.Number, 0);
+  const $value = Computed.make(realm, (read) => {
     const value = read($source);
     if (value === 1) {
       throw new Error("compute");
@@ -1152,7 +1159,7 @@ test("a component remounted after its error boundary resets follows its value", 
       </Boundary>,
     );
     act(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($source, 1);
       });
     });
@@ -1162,7 +1169,7 @@ test("a component remounted after its error boundary resets follows its value", 
   expect(observers($source)).toBe(0);
 
   act(() => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($source, 2);
     });
   });
@@ -1175,7 +1182,7 @@ test("a component remounted after its error boundary resets follows its value", 
   );
   expect(view.textContent).toBe("2");
   act(() => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($source, 3);
     });
   });
@@ -1183,10 +1190,10 @@ test("a component remounted after its error boundary resets follows its value", 
 });
 
 test("server rendering reads the values and observes nothing", () => {
-  const realm = createRealm();
-  const $a = schemaBox(realm, Schema.Number, 1);
+  const realm = Realm.make();
+  const $a = Box.schema(realm, Schema.Number, 1);
   const events: Array<string> = [];
-  onObserved($a, () => {
+  Source.onObserved($a, () => {
     events.push("start");
     return () => events.push("stop");
   });
@@ -1212,8 +1219,8 @@ test("server rendering reads the values and observes nothing", () => {
 
 describe("useSelect hands its function read", () => {
   test("a write that leaves the result equal rerenders nothing", () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 1);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 1);
     function View(): ReactNode {
       count("View");
       return <p>{useSelect((read) => (read($count) > 0 ? "positive" : "not positive"))}</p>;
@@ -1223,9 +1230,9 @@ describe("useSelect hands its function read", () => {
         <View />
       </RealmProvider>,
     );
-    act(() => update(realm, (_read, write) => write($count, 2)));
+    act(() => Realm.update(realm, (_read, write) => write($count, 2)));
     expect(renders.get("View")).toBeUndefined();
-    act(() => update(realm, (_read, write) => write($count, 0)));
+    act(() => Realm.update(realm, (_read, write) => write($count, 0)));
     expect(renders.get("View")).toBe(1);
     expect(element.textContent).toBe("not positive");
   });

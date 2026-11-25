@@ -14,7 +14,7 @@ application without Effect needs none of it: start at [Start](../start/index.md)
 
 ## Example
 
-`schemaBox` takes a schema before the initial value. The other calls, and the
+`Box.schema` takes a schema before the initial value. The other calls, and the
 hooks of `@frondruntime/pinna-react`, are the core's.
 
 <!-- region effectBoxes.ts#box -->
@@ -36,23 +36,27 @@ checked against the schema.
 
 ## Rules
 
-- `pinna-effect` re-exports every name of `pinna` as it is. Its `box` and
-  `collection` check nothing and compare with `Object.is` unless given
-  `{ equals }`, and its `reconcile` checks nothing and takes the `equals` it
-  is given.
-  The names it adds say they use a schema: `schemaBox`, `SchemaModel` with
-  `BoxField` and `CollectionField`, and `reconcileSchema`. An application
-  imports from one package.
-- `box` given a schema throws and names `schemaBox`, so a box meant to check a
+- `pinna-effect`'s modules hold every member of `pinna`'s as it is, except
+  `Collection.reconcile`. Its `Box.make` and `Collection.make` check nothing
+  and compare with `Object.is` unless given `{ equals }`.
+  The members it adds use a schema: `Box.schema`, `Collection.schema`, and
+  `Model.Schema` with `Model.boxField` and `Model.collectionField`. An
+  application imports from one package.
+- `Collection.reconcile` given `{ equals }` compares with it and merges
+  nothing, as `pinna`'s does. Without it, it works the comparison out from
+  the schema and writes a refetched `Model.Schema` row's values into the
+  boxes of the row it keeps, so it is not a read-only helper
+  ([Equality and hashing](./equality.md)).
+- `Box.make` given a schema throws and names `Box.schema`, so a box meant to check a
   schema never silently checks nothing.
 - A box of a plain `Schema.Array(element)` checks only the elements a write
   put there: a push onto 10,000 rows checks one. Any other box checks its
   whole value on every write. A list written one row at a time is a
   [collection field](./collections.md).
-- A `schemaBox` compares with its schema's equivalence unless `{ equals }`
+- A `Box.schema` compares with its schema's equivalence unless `{ equals }`
   says otherwise. What each schema counts as equal is on
   [Equality and hashing](./equality.md).
-- `schemaBox` throws when `initial` does not fit the schema.
+- `Box.schema` throws when `initial` does not fit the schema.
 - A value the schema accepts is plain data, `readonly` in the types. A value
   changed in place is checked by no schema.
 
@@ -60,7 +64,7 @@ checked against the schema.
 
 | Call | Answers |
 | --- | --- |
-| `schemaBox(realm, schema, initial, { name?, equals? })` | A box of the values `schema` accepts. Throws when `initial` does not fit. |
+| `Box.schema(realm, schema, initial, { name?, equals? })` | A box of the values `schema` accepts. Throws when `initial` does not fit. |
 | `write($box, value)` | Replaces the value, checked against the schema. |
 | `write.modify($box, (draft) => ...)` | Writes the drafted array or object back once, checked. |
 
@@ -72,8 +76,8 @@ a read, a recompute, or a change elsewhere does not run it. So a check holds
 only what the value itself decides.
 
 - Terms that must agree, such as the two dates of a stay, are one schema
-  value with one check. A `BoxField`'s check sees its own value and no
-  sibling field, and a check on the `SchemaModel` as a whole runs when an
+  value with one check. A `Model.boxField`'s check sees its own value and no
+  sibling field, and a check on the `Model.Schema` as a whole runs when an
   instance is made, decoded, or written to a schema box, never when a box
   of the instance changes. A filter made with `Schema.makeFilter`
   that returns a string fails with that string as its message: see

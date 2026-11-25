@@ -12,29 +12,12 @@ import {
   Scope,
   Stream,
 } from "effect";
-import {
-  box,
-  changes,
-  computed,
-  createRealm,
-  fromStream,
-  inspect,
-  observe,
-  observeScoped,
-  onObserved,
-  RealmService,
-  schemaBox,
-  untracked,
-  update,
-  watch,
-  watchScoped,
-  whileObserved,
-} from "../src/index.ts";
+import { Box, Computed, Program, Realm, RealmService, Source } from "../src/index.ts";
 
 /**
- * The Effect programs: `watchScoped` runs an effect per change, the latest value
- * winning; `changes` streams an observable's values. `watchScoped` reads the
- * realm from `RealmService`, and `changes` from the observable. `fromStream`
+ * The Effect programs: `Program.watchScoped` runs an effect per change, the latest value
+ * winning; `Program.changes` streams an observable's values. `Program.watchScoped` reads the
+ * realm from `RealmService`, and `Program.changes` from the observable. `Program.fromStream`
  * feeds a value from a stream while it is observed.
  */
 
@@ -64,13 +47,13 @@ const capture = () => {
 /** Long enough for forked fibers to run what they were handed. */
 const settle = Effect.sleep("5 millis");
 
-const run = <A>(program: Effect.Effect<A, never, RealmService>, realm = createRealm()) =>
+const run = <A>(program: Effect.Effect<A, never, RealmService>, realm = Realm.make()) =>
   Effect.runPromise(program.pipe(Effect.provideService(RealmService, realm)));
 
 for (const kind of ["whileObserved", "fromStream"] as const) {
   for (const restart of [false, true]) {
     test(`${kind} scope closure awaits released runs${restart ? " while a new run is active" : ""}`, async () => {
-      const realm = createRealm();
+      const realm = Realm.make();
       let runs = 0;
       let finished = 0;
       await run(
@@ -98,17 +81,17 @@ for (const kind of ["whileObserved", "fromStream"] as const) {
           const observable =
             kind === "fromStream"
               ? yield* Scope.provide(scope)(
-                  fromStream(realm, Stream.fromEffect(program), undefined),
+                  Program.fromStream(realm, Stream.fromEffect(program), undefined),
                 )
-              : box(realm, 0);
+              : Box.make(realm, 0);
           if (kind === "whileObserved") {
-            yield* Scope.provide(scope)(whileObserved(observable, program));
+            yield* Scope.provide(scope)(Program.whileObserved(observable, program));
           }
-          const release = observe(observable);
+          const release = Source.observe(observable);
           yield* Deferred.await(started);
           release();
           yield* Deferred.await(cleaning);
-          const releaseAgain = restart ? observe(observable) : () => undefined;
+          const releaseAgain = restart ? Source.observe(observable) : () => undefined;
           if (restart) {
             yield* Deferred.await(restarted);
           }
@@ -119,7 +102,7 @@ for (const kind of ["whileObserved", "fromStream"] as const) {
           yield* Deferred.succeed(finish, undefined);
           yield* Fiber.join(closer);
           releaseAgain();
-          const afterClose = observe(observable);
+          const afterClose = Source.observe(observable);
           yield* settle;
           afterClose();
           expect(pending).toBe(true);
@@ -135,8 +118,8 @@ for (const kind of ["whileObserved", "fromStream"] as const) {
 
 describe("watchScoped", () => {
   test("a synchronous callback throw is logged and future delivery survives until scope closure", async () => {
-    const realm = createRealm();
-    const $count = box(realm, 0);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
     const seen: Array<number> = [];
     const { logged, layer } = capture();
     const failure = new Error("factory");
@@ -145,7 +128,7 @@ describe("watchScoped", () => {
       Effect.gen(function* () {
         yield* Effect.scoped(
           Effect.gen(function* () {
-            yield* watchScoped(
+            yield* Program.watchScoped(
               realm,
               (read) => read($count),
               (value) => {
@@ -162,13 +145,13 @@ describe("watchScoped", () => {
                 );
               },
             );
-            update(realm, (_read, write) => write($count, 1));
+            Realm.update(realm, (_read, write) => write($count, 1));
             yield* settle;
-            update(realm, (_read, write) => write($count, 2));
+            Realm.update(realm, (_read, write) => write($count, 2));
             yield* settle;
           }),
         );
-        update(realm, (_read, write) => write($count, 3));
+        Realm.update(realm, (_read, write) => write($count, 3));
         yield* settle;
       }).pipe(Effect.provide(layer)),
       realm,
@@ -182,13 +165,13 @@ describe("watchScoped", () => {
   });
 
   test("runs the effect for each change, not for the current value", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const seen: Array<number> = [];
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* watchScoped(
+          yield* Program.watchScoped(
             realm,
             (read) => read($count),
             (value) =>
@@ -198,11 +181,11 @@ describe("watchScoped", () => {
           );
           yield* settle;
           expect(seen).toEqual([]);
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 1);
           });
           yield* settle;
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 2);
           });
           yield* settle;
@@ -214,14 +197,14 @@ describe("watchScoped", () => {
   });
 
   test("a result equal under options.equals neither runs the effect nor interrupts it", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const seen: Array<boolean> = [];
     let interrupted = 0;
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* watchScoped(
+          yield* Program.watchScoped(
             realm,
             (read) => ({ even: read($count) % 2 === 0 }),
             (value) =>
@@ -237,17 +220,17 @@ describe("watchScoped", () => {
               ),
             { equals: (previous, next) => previous.even === next.even },
           );
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 1);
           });
           yield* settle;
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 3);
           });
           yield* settle;
           expect(seen).toEqual([false]);
           expect(interrupted).toBe(0);
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 4);
           });
           yield* settle;
@@ -260,18 +243,18 @@ describe("watchScoped", () => {
   });
 
   test("sees a change made as soon as it returns", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const seen = await run(
       Effect.scoped(
         Effect.gen(function* () {
           const done = yield* Deferred.make<number>();
-          yield* watchScoped(
+          yield* Program.watchScoped(
             realm,
             (read) => read($count),
             (value) => Deferred.succeed(done, value),
           );
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 7);
           });
           return yield* Deferred.await(done);
@@ -283,18 +266,18 @@ describe("watchScoped", () => {
   });
 
   test("previous is the value the effect last ran with, skipping values it never saw", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const seen: Array<readonly [number, number]> = [];
     const write = (value: number) => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($count, value);
       });
     };
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* watchScoped(
+          yield* Program.watchScoped(
             realm,
             (read) => read($count),
             (value, previous) =>
@@ -323,15 +306,15 @@ describe("watchScoped", () => {
   });
 
   test("a new value interrupts the running effect, and the latest wins", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const log: Array<string> = [];
     await run(
       Effect.scoped(
         Effect.gen(function* () {
           const started = yield* Deferred.make<void>();
           const done = yield* Deferred.make<void>();
-          yield* watchScoped(
+          yield* Program.watchScoped(
             realm,
             (read) => read($count),
             (value) =>
@@ -348,11 +331,11 @@ describe("watchScoped", () => {
                     log.push(`ran ${value}`);
                   }).pipe(Effect.andThen(Deferred.succeed(done, undefined))),
           );
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 1);
           });
           yield* Deferred.await(started);
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 2);
           });
           yield* Deferred.await(done);
@@ -364,15 +347,15 @@ describe("watchScoped", () => {
   });
 
   test("closing the scope interrupts the running effect and stops watching", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const log: Array<string> = [];
     await run(
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
         yield* Effect.scoped(
           Effect.gen(function* () {
-            yield* watchScoped(
+            yield* Program.watchScoped(
               realm,
               (read) => read($count),
               (value) =>
@@ -388,13 +371,13 @@ describe("watchScoped", () => {
                   ),
                 ),
             );
-            update(realm, (_read, write) => {
+            Realm.update(realm, (_read, write) => {
               write($count, 1);
             });
             yield* Deferred.await(started);
           }),
         );
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, 2);
         });
         yield* settle;
@@ -409,24 +392,24 @@ describe("watchScoped", () => {
     globalThis.reportError = (error) => {
       reported.push(error);
     };
-    const realm = createRealm({ onError: (error) => reported.push(error) });
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
+    const $count = Box.schema(realm, Schema.Number, 0);
     const { logged, layer } = capture();
     const failure = new Error("boom");
     const seen = await run(
       Effect.scoped(
         Effect.gen(function* () {
           const done = yield* Deferred.make<number>();
-          yield* watchScoped(
+          yield* Program.watchScoped(
             realm,
             (read) => read($count),
             (value) => (value === 1 ? Effect.die(failure) : Deferred.succeed(done, value)),
           );
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 1);
           });
           yield* settle;
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 2);
           });
           return yield* Deferred.await(done);
@@ -447,15 +430,15 @@ describe("watchScoped", () => {
     globalThis.reportError = (error) => {
       reported.push(error);
     };
-    const realm = createRealm({ onError: (error) => reported.push(error) });
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
+    const $count = Box.schema(realm, Schema.Number, 0);
     const { logged, layer } = capture();
     await run(
       Effect.scoped(
         Effect.gen(function* () {
           const started = yield* Deferred.make<void>();
           const done = yield* Deferred.make<void>();
-          yield* watchScoped(
+          yield* Program.watchScoped(
             realm,
             (read) => read($count),
             (value) =>
@@ -463,11 +446,11 @@ describe("watchScoped", () => {
                 ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
                 : Deferred.succeed(done, undefined),
           );
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 1);
           });
           yield* Deferred.await(started);
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, 2);
           });
           yield* Deferred.await(done);
@@ -482,19 +465,19 @@ describe("watchScoped", () => {
 
 describe("changes", () => {
   test("runs with no RealmService provided, and streams the current value, then each change", async () => {
-    const realm = createRealm();
-    const $count = box(realm, 0);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
     // The type says it: a stream that requires nothing.
-    const stream: Stream.Stream<number> = changes($count);
+    const stream: Stream.Stream<number> = Program.changes($count);
     const values = await Effect.runPromise(
       Effect.gen(function* () {
         const fiber = yield* stream.pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
         yield* settle;
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, 1);
         });
         yield* settle;
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, 2);
         });
         return yield* Fiber.join(fiber);
@@ -504,43 +487,43 @@ describe("changes", () => {
   });
 
   test("watches the realm that made the observable, whatever RealmService holds", async () => {
-    const realm = createRealm();
-    const $count = box(realm, 0);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
     const values = await run(
       Effect.gen(function* () {
-        const fiber = yield* changes($count).pipe(
+        const fiber = yield* Program.changes($count).pipe(
           Stream.take(2),
           Stream.runCollect,
           Effect.forkChild,
         );
         yield* settle;
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, 1);
         });
         return yield* Fiber.join(fiber);
       }),
-      createRealm(),
+      Realm.make(),
     );
     expect([...values]).toEqual([0, 1]);
   });
 
   test("emits the current value, then each change", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
-    const $double = computed(realm, (read) => read($count) * 2);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
+    const $double = Computed.make(realm, (read) => read($count) * 2);
     const values = await run(
       Effect.gen(function* () {
-        const fiber = yield* changes($double).pipe(
+        const fiber = yield* Program.changes($double).pipe(
           Stream.take(3),
           Stream.runCollect,
           Effect.forkChild,
         );
         yield* settle;
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, 1);
         });
         yield* settle;
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, 2);
         });
         return yield* Fiber.join(fiber);
@@ -551,13 +534,13 @@ describe("changes", () => {
   });
 
   test("a consumer that falls behind gets the newest value, never missing the last", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const values = await run(
       Effect.gen(function* () {
         const first = yield* Deferred.make<void>();
         const gate = yield* Deferred.make<void>();
-        const fiber = yield* changes($count).pipe(
+        const fiber = yield* Program.changes($count).pipe(
           Stream.mapEffect((value) =>
             value === 0
               ? Deferred.succeed(first, undefined).pipe(
@@ -572,7 +555,7 @@ describe("changes", () => {
         );
         yield* Deferred.await(first);
         for (const next of [1, 2, 3]) {
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($count, next);
           });
         }
@@ -585,16 +568,19 @@ describe("changes", () => {
   });
 
   test("stops watching when the stream ends", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     let observed = 0;
-    onObserved($count, () => {
+    Source.onObserved($count, () => {
       observed++;
       return () => {
         observed--;
       };
     });
-    const values = await run(changes($count).pipe(Stream.take(1), Stream.runCollect), realm);
+    const values = await run(
+      Program.changes($count).pipe(Stream.take(1), Stream.runCollect),
+      realm,
+    );
     expect([...values]).toEqual([0]);
     expect(observed).toBe(0);
   });
@@ -617,18 +603,18 @@ describe("fromStream", () => {
     );
 
   test("runs the stream only while the value is observed, writing each element", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const log: Array<string> = [];
     const seen: Array<number> = [];
     await run(
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<number>();
-          const $value = yield* fromStream(realm, logged(log, queue), 0);
+          const $value = yield* Program.fromStream(realm, logged(log, queue), 0);
           yield* settle;
           expect(log).toEqual([]);
-          expect(untracked(realm, (read) => read($value))).toBe(0);
-          const stop = watch(
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
+          const stop = Realm.watch(
             realm,
             (read) => read($value),
             (value) => {
@@ -652,20 +638,20 @@ describe("fromStream", () => {
   });
 
   test("an element equal under options.equals notifies nobody, and options.name names the value", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const seen: Array<{ readonly id: number }> = [];
     await run(
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<{ readonly id: number }>();
-          const $value = yield* fromStream(
+          const $value = yield* Program.fromStream(
             realm,
             Stream.fromQueue(queue),
             { id: 0 },
             { equals: (previous, next) => previous.id === next.id, name: "Quote.latest" },
           );
-          expect(inspect($value).name).toBe("Quote.latest");
-          const stop = watch(
+          expect(Source.inspect($value).name).toBe("Quote.latest");
+          const stop = Realm.watch(
             realm,
             (read) => read($value),
             (value) => {
@@ -686,7 +672,7 @@ describe("fromStream", () => {
   });
 
   test("resets synchronously after the last observer and starts each run from initial", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     let runs = 0;
     await run(
       Effect.scoped(
@@ -698,21 +684,21 @@ describe("fromStream", () => {
               return Stream.fromQueue(queue);
             }),
           );
-          const $value = yield* fromStream(realm, counted, 0);
-          const $double = computed(realm, (read) => read($value) * 2);
-          const release = observe($value);
-          const second = observe($value);
+          const $value = yield* Program.fromStream(realm, counted, 0);
+          const $double = Computed.make(realm, (read) => read($value) * 2);
+          const release = Source.observe($value);
+          const second = Source.observe($value);
           yield* Queue.offer(queue, 10);
           yield* settle;
-          expect(untracked(realm, (read) => read($value))).toBe(10);
-          expect(untracked(realm, (read) => read($double))).toBe(20);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(10);
+          expect(Realm.untracked(realm, (read) => read($double))).toBe(20);
           release();
-          expect(untracked(realm, (read) => read($value))).toBe(10);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(10);
           second();
-          expect(untracked(realm, (read) => read($value))).toBe(0);
-          expect(untracked(realm, (read) => read($double))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($double))).toBe(0);
           const tracked: Array<number> = [];
-          const again = watch(
+          const again = Realm.watch(
             realm,
             (read) => {
               const value = read($value);
@@ -722,12 +708,12 @@ describe("fromStream", () => {
             () => {},
           );
           expect(tracked).toEqual([0]);
-          expect(untracked(realm, (read) => read($value))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
           yield* Queue.offer(queue, 20);
           yield* settle;
-          expect(untracked(realm, (read) => read($value))).toBe(20);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(20);
           again();
-          expect(untracked(realm, (read) => read($value))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
         }),
       ),
       realm,
@@ -738,26 +724,30 @@ describe("fromStream", () => {
   for (const duringUpdate of [false, true]) {
     test(`stopping a watch resets before returning${duringUpdate ? " from an update" : ""}`, async () => {
       const reported: Array<unknown> = [];
-      const realm = createRealm({ onError: (error) => reported.push(error) });
+      const realm = Realm.make({ onError: (error) => reported.push(error) });
       await run(
         Effect.scoped(
           Effect.gen(function* () {
-            const $value = yield* fromStream(realm, Stream.concat(Stream.make(1), Stream.never), 0);
-            const stop = watch(
+            const $value = yield* Program.fromStream(
+              realm,
+              Stream.concat(Stream.make(1), Stream.never),
+              0,
+            );
+            const stop = Realm.watch(
               realm,
               (read) => read($value),
               () => {},
             );
             yield* settle;
-            expect(untracked(realm, (read) => read($value))).toBe(1);
+            expect(Realm.untracked(realm, (read) => read($value))).toBe(1);
             if (duringUpdate) {
-              update(realm, () => {
+              Realm.update(realm, () => {
                 stop();
               });
             } else {
               stop();
             }
-            expect(untracked(realm, (read) => read($value))).toBe(0);
+            expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
           }),
         ),
         realm,
@@ -768,26 +758,26 @@ describe("fromStream", () => {
 
   test("resets when a computed value stops reading it during settle", async () => {
     const reported: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => reported.push(error) });
-    const $show = box(realm, true);
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
+    const $show = Box.make(realm, true);
     await run(
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<number>();
-          const $value = yield* fromStream(realm, Stream.fromQueue(queue), 0);
-          const $visible = computed(realm, (read) => (read($show) ? read($value) : -1));
-          const stop = watch(
+          const $value = yield* Program.fromStream(realm, Stream.fromQueue(queue), 0);
+          const $visible = Computed.make(realm, (read) => (read($show) ? read($value) : -1));
+          const stop = Realm.watch(
             realm,
             (read) => read($visible),
             () => {},
           );
           yield* Queue.offer(queue, 1);
           yield* settle;
-          expect(untracked(realm, (read) => read($visible))).toBe(1);
-          update(realm, (_read, write) => write($show, false));
-          expect(untracked(realm, (read) => read($value))).toBe(0);
-          update(realm, (_read, write) => write($show, true));
-          expect(untracked(realm, (read) => read($visible))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($visible))).toBe(1);
+          Realm.update(realm, (_read, write) => write($show, false));
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
+          Realm.update(realm, (_read, write) => write($show, true));
+          expect(Realm.untracked(realm, (read) => read($visible))).toBe(0);
           stop();
         }),
       ),
@@ -797,23 +787,27 @@ describe("fromStream", () => {
   });
 
   test("releasing the last observer in a failed update still resets at settle", async () => {
-    const realm = createRealm();
-    const $other = box(realm, 0);
+    const realm = Realm.make();
+    const $other = Box.make(realm, 0);
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const $value = yield* fromStream(realm, Stream.concat(Stream.make(1), Stream.never), 0);
-          const release = observe($value);
+          const $value = yield* Program.fromStream(
+            realm,
+            Stream.concat(Stream.make(1), Stream.never),
+            0,
+          );
+          const release = Source.observe($value);
           yield* settle;
-          expect(untracked(realm, (read) => read($value))).toBe(1);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(1);
           expect(() =>
-            update(realm, (_read, write) => {
+            Realm.update(realm, (_read, write) => {
               write($other, 1);
               release();
               throw new Error("rollback");
             }),
           ).toThrow("rollback");
-          expect(untracked(realm, (read) => [read($value), read($other)])).toEqual([0, 0]);
+          expect(Realm.untracked(realm, (read) => [read($value), read($other)])).toEqual([0, 0]);
         }),
       ),
       realm,
@@ -822,17 +816,17 @@ describe("fromStream", () => {
 
   test("a scope closed inside a failed update cannot restore the last element", async () => {
     const reported: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => reported.push(error) });
-    const $other = box(realm, 0);
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
+    const $other = Box.make(realm, 0);
     const seen: Array<number> = [];
     await run(
       Effect.gen(function* () {
         const scope = yield* Scope.make();
-        const $value = yield* fromStream(realm, Stream.make(1), 0).pipe(
+        const $value = yield* Program.fromStream(realm, Stream.make(1), 0).pipe(
           Effect.provideService(Scope.Scope, scope),
         );
-        const $double = computed(realm, (read) => read($value) * 2);
-        const stop = watch(
+        const $double = Computed.make(realm, (read) => read($value) * 2);
+        const stop = Realm.watch(
           realm,
           (read) => read($double),
           (value) => {
@@ -842,7 +836,7 @@ describe("fromStream", () => {
         yield* settle;
         expect(seen).toEqual([2]);
         expect(() =>
-          update(realm, (read, write) => {
+          Realm.update(realm, (read, write) => {
             write($other, 1);
             Effect.runSync(Scope.close(scope, Exit.void));
             expect(read($value)).toBe(0);
@@ -850,13 +844,13 @@ describe("fromStream", () => {
             throw new Error("rollback");
           }),
         ).toThrow("rollback");
-        expect(untracked(realm, (read) => [read($value), read($double), read($other)])).toEqual([
-          0, 0, 0,
-        ]);
+        expect(
+          Realm.untracked(realm, (read) => [read($value), read($double), read($other)]),
+        ).toEqual([0, 0, 0]);
         expect(seen).toEqual([2, 0]);
         stop();
-        const release = observe($value);
-        expect(untracked(realm, (read) => read($value))).toBe(0);
+        const release = Source.observe($value);
+        expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
         release();
       }),
       realm,
@@ -865,23 +859,23 @@ describe("fromStream", () => {
   });
 
   test("reset restores initial itself without consulting element equality", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const initial = { id: 0 };
     await run(
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<{ readonly id: number }>();
-          const $value = yield* fromStream(realm, Stream.fromQueue(queue), initial, {
+          const $value = yield* Program.fromStream(realm, Stream.fromQueue(queue), initial, {
             equals: (previous, next) => next === initial || previous.id === next.id,
           });
-          const release = observe($value);
+          const release = Source.observe($value);
           yield* Queue.offer(queue, { id: 1 });
           yield* settle;
-          expect(untracked(realm, (read) => read($value))).toEqual({ id: 1 });
+          expect(Realm.untracked(realm, (read) => read($value))).toEqual({ id: 1 });
           release();
-          expect(untracked(realm, (read) => read($value))).toBe(initial);
-          const again = observe($value);
-          expect(untracked(realm, (read) => read($value))).toBe(initial);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(initial);
+          const again = Source.observe($value);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(initial);
           again();
         }),
       ),
@@ -891,15 +885,15 @@ describe("fromStream", () => {
 
   test("takes the elements a stream emits as it starts", async () => {
     const reported: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => reported.push(error) });
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
     const seen = await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const $value = yield* fromStream(realm, Stream.make(1, 2, 3), 0);
-          const $double = computed(realm, (read) => read($value) * 2);
-          const release = observe($double);
+          const $value = yield* Program.fromStream(realm, Stream.make(1, 2, 3), 0);
+          const $double = Computed.make(realm, (read) => read($value) * 2);
+          const release = Source.observe($double);
           yield* settle;
-          const value = untracked(realm, (read) => read($double));
+          const value = Realm.untracked(realm, (read) => read($double));
           release();
           return value;
         }),
@@ -912,7 +906,7 @@ describe("fromStream", () => {
 
   test("a defect keeps its last element while observed, then resets for the next run", async () => {
     const reported: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => reported.push(error) });
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
     const { logged: logs, layer } = capture();
     const failure = new Error("boom");
     const seen = await run(
@@ -923,15 +917,15 @@ describe("fromStream", () => {
             Stream.fromQueue(queue).pipe(Stream.take(1)),
             Stream.die(failure),
           );
-          const $value = yield* fromStream(realm, stream, 0);
-          const release = observe($value);
+          const $value = yield* Program.fromStream(realm, stream, 0);
+          const release = Source.observe($value);
           yield* Queue.offer(queue, 1);
           yield* settle;
-          const value = untracked(realm, (read) => read($value));
+          const value = Realm.untracked(realm, (read) => read($value));
           release();
-          expect(untracked(realm, (read) => read($value))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
           const tracked: Array<number> = [];
-          const stop = watch(
+          const stop = Realm.watch(
             realm,
             (read) => {
               const value = read($value);
@@ -943,9 +937,9 @@ describe("fromStream", () => {
           expect(tracked).toEqual([0]);
           yield* Queue.offer(queue, 2);
           yield* settle;
-          expect(untracked(realm, (read) => read($value))).toBe(2);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(2);
           stop();
-          expect(untracked(realm, (read) => read($value))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
           return value;
         }),
       ).pipe(Effect.provide(layer)),
@@ -961,16 +955,16 @@ describe("fromStream", () => {
   });
 
   test("a stream that completes keeps its last element while observed, as one that dies does", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const $value = yield* fromStream(realm, Stream.make(1, 2), 0);
-          const release = observe($value);
+          const $value = yield* Program.fromStream(realm, Stream.make(1, 2), 0);
+          const release = Source.observe($value);
           yield* settle;
-          expect(untracked(realm, (read) => read($value))).toBe(2);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(2);
           release();
-          expect(untracked(realm, (read) => read($value))).toBe(0);
+          expect(Realm.untracked(realm, (read) => read($value))).toBe(0);
         }),
       ),
       realm,
@@ -978,7 +972,7 @@ describe("fromStream", () => {
   });
 
   test("closing the scope stops the stream, and observing again does not restart it", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const log: Array<string> = [];
     const seen: Array<number> = [];
     await run(
@@ -986,8 +980,8 @@ describe("fromStream", () => {
         const queue = yield* Queue.unbounded<number>();
         const held = yield* Effect.scoped(
           Effect.gen(function* () {
-            const $value = yield* fromStream(realm, logged(log, queue), 0);
-            const release = watch(
+            const $value = yield* Program.fromStream(realm, logged(log, queue), 0);
+            const release = Realm.watch(
               realm,
               (read) => read($value),
               (value) => {
@@ -1002,13 +996,13 @@ describe("fromStream", () => {
         );
         expect(log).toEqual(["start", "stop"]);
         expect(seen).toEqual([1, 0]);
-        expect(untracked(realm, (read) => read(held.$value))).toBe(0);
+        expect(Realm.untracked(realm, (read) => read(held.$value))).toBe(0);
         held.release();
-        const release = observe(held.$value);
+        const release = Source.observe(held.$value);
         yield* settle;
         release();
         expect(log).toEqual(["start", "stop"]);
-        expect(untracked(realm, (read) => read(held.$value))).toBe(0);
+        expect(Realm.untracked(realm, (read) => read(held.$value))).toBe(0);
       }),
       realm,
     );
@@ -1016,11 +1010,11 @@ describe("fromStream", () => {
 
   test("runs the stream with the services of the program that made the value", async () => {
     class Greeting extends Context.Service<Greeting, string>()("test/Greeting") {}
-    const realm = createRealm();
+    const realm = Realm.make();
     const seen = await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const $value = yield* fromStream(
+          const $value = yield* Program.fromStream(
             realm,
             Stream.fromEffect(
               Effect.gen(function* () {
@@ -1029,9 +1023,9 @@ describe("fromStream", () => {
             ),
             "",
           );
-          const release = observe($value);
+          const release = Source.observe($value);
           yield* settle;
-          const value = untracked(realm, (read) => read($value));
+          const value = Realm.untracked(realm, (read) => read($value));
           release();
           return value;
         }),
@@ -1065,17 +1059,17 @@ describe("whileObserved", () => {
     );
 
   test("runs the program from the start for each observation, releasing its scope between runs", async () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
     const log: Array<string> = [];
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* whileObserved($value, logged(log));
+          yield* Program.whileObserved($value, logged(log));
           yield* settle;
           expect(log).toEqual([]);
-          const first = observe($value);
-          const second = observe($value);
+          const first = Source.observe($value);
+          const second = Source.observe($value);
           yield* settle;
           expect(log).toEqual(["start"]);
           first();
@@ -1084,7 +1078,7 @@ describe("whileObserved", () => {
           second();
           yield* settle;
           expect(log).toEqual(["start", "interrupt", "release"]);
-          const third = observe($value);
+          const third = Source.observe($value);
           yield* settle;
           expect(log).toEqual(["start", "interrupt", "release", "start"]);
           third();
@@ -1096,26 +1090,26 @@ describe("whileObserved", () => {
   });
 
   test("a program writes what an observer reads, in updates of its own", async () => {
-    const realm = createRealm();
-    const $count = box(realm, 0);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
     const seen: Array<number> = [];
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<number>();
-          yield* whileObserved(
+          yield* Program.whileObserved(
             $count,
             Stream.fromQueue(queue).pipe(
               Stream.runForEach((value) =>
                 Effect.sync(() => {
-                  update(realm, (_read, write) => {
+                  Realm.update(realm, (_read, write) => {
                     write($count, value);
                   });
                 }),
               ),
             ),
           );
-          const stop = watch(
+          const stop = Realm.watch(
             realm,
             (read) => read($count),
             (value) => {
@@ -1136,23 +1130,23 @@ describe("whileObserved", () => {
 
   test("runs the program with the services of the program that called it", async () => {
     class Greeting extends Context.Service<Greeting, string>()("test/Greeting") {}
-    const realm = createRealm();
-    const $value = box(realm, "");
+    const realm = Realm.make();
+    const $value = Box.make(realm, "");
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* whileObserved(
+          yield* Program.whileObserved(
             $value,
             Effect.gen(function* () {
               const greeting = yield* Greeting;
-              update(realm, (_read, write) => {
+              Realm.update(realm, (_read, write) => {
                 write($value, greeting);
               });
             }),
           );
-          const release = observe($value);
+          const release = Source.observe($value);
           yield* settle;
-          expect(untracked(realm, (read) => read($value))).toBe("hello");
+          expect(Realm.untracked(realm, (read) => read($value))).toBe("hello");
           release();
         }),
       ).pipe(Effect.provideService(Greeting, "hello")),
@@ -1161,25 +1155,25 @@ describe("whileObserved", () => {
 
   test("a defect is logged, and the next observation starts the program again", async () => {
     const reported: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => reported.push(error) });
-    const $value = box(realm, 0);
+    const realm = Realm.make({ onError: (error) => reported.push(error) });
+    const $value = Box.make(realm, 0);
     const { logged: logs, layer } = capture();
     const failure = new Error("boom");
     let runs = 0;
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* whileObserved(
+          yield* Program.whileObserved(
             $value,
             Effect.suspend(() => {
               runs++;
               return Effect.die(failure);
             }),
           );
-          const first = observe($value);
+          const first = Source.observe($value);
           yield* settle;
           first();
-          const second = observe($value);
+          const second = Source.observe($value);
           yield* settle;
           second();
         }),
@@ -1195,14 +1189,14 @@ describe("whileObserved", () => {
   });
 
   test("closing the scope stops a run and waits for it, and observing again does not restart it", async () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
     const log: Array<string> = [];
     const release = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* whileObserved($value, logged(log));
-          const release = observe($value);
+          yield* Program.whileObserved($value, logged(log));
+          const release = Source.observe($value);
           yield* settle;
           return release;
         }),
@@ -1210,7 +1204,7 @@ describe("whileObserved", () => {
     );
     expect(log).toEqual(["start", "interrupt", "release"]);
     release();
-    const again = observe($value);
+    const again = Source.observe($value);
     await Effect.runPromise(settle);
     again();
     expect(log).toEqual(["start", "interrupt", "release"]);
@@ -1219,7 +1213,7 @@ describe("whileObserved", () => {
 
 describe("RealmService", () => {
   test("a realm from createRealm() provides it", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const provided = await run(
       Effect.gen(function* () {
         return yield* RealmService;
@@ -1232,10 +1226,10 @@ describe("RealmService", () => {
 
 describe("observeScoped", () => {
   test("holds an observable while its scope is open", async () => {
-    const realm = createRealm();
-    const $value = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $value = Box.schema(realm, Schema.Number, 0);
     const events: Array<string> = [];
-    onObserved($value, () => {
+    Source.onObserved($value, () => {
       events.push("start");
       return () => events.push("stop");
     });
@@ -1243,7 +1237,7 @@ describe("observeScoped", () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* observeScoped($value);
+          yield* Source.observeScoped($value);
           events.push("inside");
         }),
       ).pipe(Effect.provideService(RealmService, realm)),

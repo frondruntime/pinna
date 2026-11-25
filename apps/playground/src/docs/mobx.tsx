@@ -1,6 +1,6 @@
 // The site's docs print the regions of this file (docs/public/start/mobx.md), so
 // `bun run typecheck` compiles both sides. The two regions build the same cart.
-import { box, computed, createRealm, Model, update, watch } from "@frondruntime/pinna";
+import { Box, Computed, Model, Realm } from "@frondruntime/pinna";
 import { useValue } from "@frondruntime/pinna-react";
 import { makeAutoObservable, reaction } from "mobx";
 import { observer } from "mobx-react-lite";
@@ -40,22 +40,22 @@ const StoreTotal = observer(function StoreTotal() {
 // #endregion
 
 // #region pinna
-class Cart extends Model {
-  readonly $quantity = box(this.realm, 1);
-  readonly $price = box(this.realm, 10);
-  readonly $total = computed(this.realm, (read) => read(this.$quantity) * read(this.$price));
+class Cart extends Model.Class {
+  readonly $quantity = Box.make(this.realm, 1);
+  readonly $price = Box.make(this.realm, 10);
+  readonly $total = Computed.make(this.realm, (read) => read(this.$quantity) * read(this.$price));
 
   add(): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       write(this.$quantity, read(this.$quantity) + 1);
     });
   }
 }
 
-const realm = createRealm();
+const realm = Realm.make();
 const cart = new Cart(realm);
 
-watch(
+Realm.watch(
   realm,
   (read) => read(cart.$total),
   (total) => {

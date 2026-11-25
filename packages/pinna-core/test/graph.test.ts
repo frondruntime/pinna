@@ -3,6 +3,7 @@ import {
   Graph,
   peekCell,
   peekDerived,
+  placeDeriving,
   Reaction,
   readCell,
   readDerived,
@@ -63,8 +64,8 @@ describe("two graphs", () => {
     const second = new Graph();
     const b = second.cell(0);
     const a = first.derived(() => {
-      expect(first.deriving).toBeDefined();
-      expect(second.deriving).toBeUndefined();
+      expect(first.place & placeDeriving).not.toBe(0);
+      expect(second.place & placeDeriving).toBe(0);
       writeCell(b, 1);
       return peekCell(b);
     });
@@ -607,6 +608,126 @@ describe("a reaction's pending run", () => {
     expect(changes).toBe(1);
     graph.batch(() => writeCell(b, 12));
     expect(changes).toBe(2);
+    reaction.deactivate();
+    expectAtRest(graph);
+  });
+});
+
+describe("a reaction notified when marked", () => {
+  test("is told of each settle that marks it, with no refresh first", () => {
+    const graph = new Graph();
+    const cell = graph.cell(0);
+    let computes = 0;
+    const doubled = graph.derived(() => {
+      computes++;
+      return readCell(cell) * 2;
+    });
+    let notices = 0;
+    const reaction = new Reaction(graph, () => notices++, "marked", "marked");
+    reaction.track(() => readDerived(doubled));
+    reaction.activate();
+    computes = 0;
+
+    for (let value = 1; value <= 100; value++) {
+      writeCell(cell, value);
+    }
+
+    expect(notices).toBe(100);
+    expect(computes).toBe(0);
+    expect(reaction.changed()).toBe(true);
+    expect(computes).toBe(1);
+    reaction.deactivate();
+    expectAtRest(graph);
+  });
+
+  test("changed is false when a derived value cuts the change off", () => {
+    const graph = new Graph();
+    const cell = graph.cell(0);
+    const parity = graph.derived(() => readCell(cell) % 2);
+    let notices = 0;
+    const reaction = new Reaction(graph, () => notices++, "parity", "marked");
+    reaction.track(() => readDerived(parity));
+    reaction.activate();
+
+    writeCell(cell, 2);
+
+    expect(notices).toBe(1);
+    expect(reaction.changed()).toBe(false);
+    reaction.deactivate();
+    expectAtRest(graph);
+  });
+
+  test("changed is false once a track has read the change, and while inactive", () => {
+    const graph = new Graph();
+    const cell = graph.cell(0);
+    const reaction = new Reaction(graph, () => undefined, "reader", "marked");
+    reaction.track(() => readCell(cell));
+    expect(reaction.changed()).toBe(false);
+    reaction.activate();
+    writeCell(cell, 1);
+    expect(reaction.changed()).toBe(true);
+    reaction.track(() => readCell(cell));
+    expect(reaction.changed()).toBe(false);
+    reaction.deactivate();
+    writeCell(cell, 2);
+    expect(reaction.changed()).toBe(false);
+    expectAtRest(graph);
+  });
+
+  test("a reaction notified when changed is told only of a real change", () => {
+    const graph = new Graph();
+    const cell = graph.cell(0);
+    const parity = graph.derived(() => readCell(cell) % 2);
+    let notices = 0;
+    const reaction = new Reaction(graph, () => notices++);
+    reaction.track(() => readDerived(parity));
+    reaction.activate();
+
+    writeCell(cell, 2);
+    writeCell(cell, 3);
+
+    expect(notices).toBe(1);
+    reaction.deactivate();
+    expectAtRest(graph);
+  });
+});
+
+describe("a reaction's track that writes", () => {
+  test("is notified when the run wrote a source it read for the first time", () => {
+    const graph = new Graph();
+    const gate = graph.cell(false);
+    const cell = graph.cell(0);
+    let notices = 0;
+    const reaction = new Reaction(graph, () => notices++);
+    const run = (): void => {
+      if (readCell(gate)) {
+        writeCell(cell, readCell(cell) + 1);
+      }
+    };
+    reaction.track(run);
+    reaction.activate();
+    writeCell(gate, true);
+    expect(notices).toBe(1);
+    notices = 0;
+
+    // The run reads `cell` for the first time and writes it: no mark reaches
+    // the edge it links only at the run's end.
+    reaction.track(run);
+
+    expect(notices).toBe(1);
+    reaction.deactivate();
+    expectAtRest(graph);
+  });
+
+  test("a run that writes nothing it read is not notified", () => {
+    const graph = new Graph();
+    const source = graph.cell(0);
+    const target = graph.cell(0);
+    let notices = 0;
+    const reaction = new Reaction(graph, () => notices++);
+    reaction.activate();
+    reaction.track(() => writeCell(target, readCell(source) + 1));
+    expect(notices).toBe(0);
     reaction.deactivate();
     expectAtRest(graph);
   });

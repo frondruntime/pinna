@@ -1,50 +1,43 @@
 // The site's docs print the regions of this file (docs/public/state/updates.md, "Stages"),
 // so `bun run typecheck` compiles what the page shows.
 import {
-  applyStage,
-  box,
-  collection,
-  computed,
-  createRealm,
-  dropStage,
+  Box,
+  Collection,
+  Computed,
   Model,
-  openStage,
-  type Recipe,
-  realmRead,
-  type Stage,
+  Realm,
+  Stage,
   StageConflictError,
-  stageRead,
-  stageUpdate,
-  update,
+  type UpdateRecipe,
 } from "@frondruntime/pinna";
 
 // #region setup
-const realm = createRealm();
-const $balance = box(realm, 100);
-const $status = box<"idle" | "sent">(realm, "idle");
+const realm = Realm.make();
+const $balance = Box.make(realm, 100);
+const $status = Box.make<"idle" | "sent">(realm, "idle");
 // #endregion
 
 // #region stage
 const transfer = async (amount: number, send: (amount: number) => Promise<void>) => {
-  const stage = openStage(realm, { name: "transfer" });
+  const stage = Stage.make(realm, { name: "transfer" });
   try {
-    stageUpdate(stage, (read, write) => {
+    Stage.update(stage, (read, write) => {
       write($balance, read($balance) - amount);
       write($status, "sent");
     });
     // Until applyStage, $balance and $status keep their values and nothing reruns.
     await send(amount);
-    applyStage(stage);
+    Stage.apply(stage);
   } finally {
     // Does nothing once applied: a failure anywhere above leaves nothing behind.
-    dropStage(stage);
+    Stage.drop(stage);
   }
 };
 // #endregion
 
 // #region compare
 const pendingDebit = (stage: Stage): number =>
-  realmRead(stage, (read) => read($balance)) - stageRead(stage, (read) => read($balance));
+  Stage.realmRead(stage, (read) => read($balance)) - Stage.read(stage, (read) => read($balance));
 // #endregion
 
 // #region reads
@@ -53,45 +46,45 @@ interface Line {
   readonly price: number;
 }
 
-const $lines = collection<string, Line>(realm, { keyOf: (line) => line.sku });
-const $total = computed(realm, (read) =>
+const $lines = Collection.make<string, Line>(realm, { keyOf: (line) => line.sku });
+const $total = Computed.make(realm, (read) =>
   read($lines.rows).reduce((total, line) => total + line.price, 0),
 );
 
 const refetch = async (load: () => Promise<ReadonlyArray<Line>>) => {
-  const stage = openStage(realm);
+  const stage = Stage.make(realm);
   try {
     const lines = await load();
-    stageUpdate(stage, (read, write) => {
+    Stage.update(stage, (read, write) => {
       write.replaceAll($lines, lines);
       // The stage reads its own rows: $total here is the refetched total.
       if (read($total) > 1000) {
         write($status, "idle");
       }
     });
-    applyStage(stage);
+    Stage.apply(stage);
   } finally {
-    dropStage(stage);
+    Stage.drop(stage);
   }
 };
 // #endregion
 
 // #region recipe
-class Cart extends Model {
-  readonly $count = box(this.realm, 0);
+class Cart extends Model.Class {
+  readonly $count = Box.make(this.realm, 0);
 
   // A change handed back as a Recipe runs in an update or in a stage alike.
-  add(amount: number): Recipe {
+  add(amount: number): UpdateRecipe {
     return (read, write) => write(this.$count, read(this.$count) + amount);
   }
 }
 
 const cart = new Cart(realm);
-update(realm, cart.add(1));
+Realm.update(realm, cart.add(1));
 // #endregion
 
 // #region pure
-const $orders = collection<string, { readonly id: string; readonly at: number }>(realm, {
+const $orders = Collection.make<string, { readonly id: string; readonly at: number }>(realm, {
   keyOf: (order) => order.id,
 });
 
@@ -99,7 +92,7 @@ const placeOrder = (stage: Stage) => {
   // Made outside the recipe: the recipe runs again when the stage is applied,
   // and a new id or time there would land a different order than the one staged.
   const order = { id: crypto.randomUUID(), at: Date.now() };
-  stageUpdate(stage, (_read, write) => {
+  Stage.update(stage, (_read, write) => {
     write.upsert($orders, order);
   });
   return order.id;
@@ -107,45 +100,45 @@ const placeOrder = (stage: Stage) => {
 // #endregion
 
 // #region savepoint
-const $note = box<string | undefined>(realm, undefined);
+const $note = Box.make<string | undefined>(realm, undefined);
 
 const transferWithNote = async (amount: number, describe: () => Promise<string>) => {
-  const stage = openStage(realm);
+  const stage = Stage.make(realm);
   try {
-    stageUpdate(stage, (read, write) => {
+    Stage.update(stage, (read, write) => {
       write($balance, read($balance) - amount);
     });
     // A child stage is a savepoint: dropped, it leaves the outer stage as it was.
-    const section = openStage(stage);
+    const section = Stage.make(stage);
     try {
       // A note that fails to load leaves the transfer to land without one.
       const note = await describe();
-      stageUpdate(section, (_read, write) => {
+      Stage.update(section, (_read, write) => {
         write($note, note);
       });
-      applyStage(section);
+      Stage.apply(section);
     } catch {
-      dropStage(section);
+      Stage.drop(section);
     }
-    applyStage(stage);
+    Stage.apply(stage);
   } finally {
-    dropStage(stage);
+    Stage.drop(stage);
   }
 };
 // #endregion
 
 // #region conflicts
-const $price = box(realm, 10);
+const $price = Box.make(realm, 10);
 
 const checkout = (stage: Stage) => {
-  stageUpdate(stage, (read, write) => {
+  Stage.update(stage, (read, write) => {
     write($balance, read($balance) - read($price));
   });
 };
 
 const land = (stage: Stage): boolean => {
   try {
-    applyStage(stage);
+    Stage.apply(stage);
     return true;
   } catch (error) {
     // Opened with { conflicts: "fail" }: $price changed since the stage read it.
@@ -156,22 +149,22 @@ const land = (stage: Stage): boolean => {
   }
 };
 
-const priced = openStage(realm, { conflicts: "fail" });
+const priced = Stage.make(realm, { conflicts: "fail" });
 checkout(priced);
 // #endregion
 
 // #region join
-const $log = box<ReadonlyArray<string>>(realm, []);
+const $log = Box.make<ReadonlyArray<string>>(realm, []);
 
 const landWithLog = (stage: Stage, entry: string) => {
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     write.modify($log, (log) => {
       log.push(entry);
     });
     // Nested in this update: watchers see the log entry and the staged writes
     // once, together. A replay that throws undoes only the stage's writes.
     try {
-      applyStage(stage);
+      Stage.apply(stage);
     } catch {
       write.modify($log, (log) => {
         log.push(`${entry} failed`);
@@ -182,15 +175,85 @@ const landWithLog = (stage: Stage, entry: string) => {
 
 // #endregion
 
+// #region visible
+const $title = Box.make(realm, "Untitled");
+
+const rename = async (title: string, save: (title: string) => Promise<void>) => {
+  // Shown at once over the realm's confirmed values; the guess is the answer.
+  const stage = Stage.make(realm, { name: "rename", visible: true });
+  try {
+    Stage.update(stage, (_read, write) => {
+      write($title, title);
+    });
+    await save(title);
+    Stage.apply(stage);
+  } finally {
+    // A failed save takes the guess off the screen: $title shows the confirmed title.
+    Stage.drop(stage);
+  }
+};
+// #endregion
+
+// #region settle
+interface Item {
+  readonly id: string;
+  readonly done: boolean;
+}
+
+const $items = Collection.make<string, Item>(realm, { keyOf: (item) => item.id, name: "items" });
+const $saving = Box.make(realm, false);
+
+const toggle = async (id: string, done: boolean, send: () => Promise<Item>) => {
+  const guess = Stage.make(realm, { name: "toggle (guess)", visible: true });
+  const answer = Stage.make(realm, { name: "toggle" });
+  try {
+    Stage.update(guess, (_read, write) => {
+      write.upsert($items, { id, done });
+      // A pending marker the guess writes: it shows while the guess shows.
+      write($saving, true);
+    });
+    const saved = await send();
+    Stage.update(answer, (_read, write) => {
+      write.upsert($items, saved);
+    });
+    // The server's answer wins: one update lands it and takes the guess off,
+    // so a watcher runs once, with the settled row.
+    Realm.update(realm, () => {
+      Stage.apply(answer);
+      Stage.drop(guess);
+    });
+  } finally {
+    Stage.drop(answer);
+    Stage.drop(guess);
+  }
+};
+// #endregion
+
+// #region stopped
+const showFailure = (stage: Stage): string | undefined => {
+  const { showing, failure, status } = Stage.inspect(stage);
+  // A guess that can no longer apply stops showing and keeps the reason.
+  return status === "open" && !showing && failure instanceof Error ? failure.message : undefined;
+};
+
+// #endregion
+
 export {
+  $items,
   $price,
+  $saving,
+  $title,
   cart,
   land,
   landWithLog,
   pendingDebit,
   placeOrder,
   priced,
+  realm,
   refetch,
+  rename,
+  showFailure,
+  toggle,
   transfer,
   transferWithNote,
 };

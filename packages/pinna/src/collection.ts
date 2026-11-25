@@ -1,8 +1,8 @@
 /**
  * A keyed collection: a box for each key a reader reads and one for the
  * order of the keys, so a write to one row costs the readers of that row,
- * not the readers of the list. `collection` makes one without a schema;
- * pinna-effect's `CollectionField` makes one a `SchemaModel` field, checked
+ * not the readers of the list. `Collection.make` makes one without a schema;
+ * pinna-effect's `Model.collectionField` makes one a `Model.Schema` field, checked
  * by the field's schema.
  *
  * The rows live in a map, `held`, that holds exactly the present keys. A
@@ -11,37 +11,50 @@
  * the row as a cell's write would. A reader of a key reads that key's cell,
  * or, while the key is missing, the order; a removed key's cell is set to
  * `undefined` before it leaves, so its readers rerun and find it gone. `rows`
- * reads the order and `changes`, a box every change to `held` writes. Map
+ * reads the order and `Program.changes`, a box every change to `held` writes. Map
  * changes are put back by the realm when an update fails, like box writes.
  */
 
-import { type Equals, forgetValue, peekCell, readCell } from "@frondruntime/pinna-core";
+import {
+  type Equals,
+  forgetValue,
+  PinnaUsageError,
+  peekCell,
+  readCell,
+  restoreCell,
+  touchSource,
+} from "@frondruntime/pinna-core";
 import {
   acceptAll,
-  assertNotInRecipe,
-  assertUpdateCanRun,
-  BoxCell,
+  type BoxCell,
   type Check,
   type Collection,
+  CollectionCell,
   type Computed,
   ComputedValue,
   checkName,
   computedFunction,
-  equalKey,
-  hashKey,
-  identityHash,
   nameSource,
-  type ObservableRealm,
-  type Read,
   type Realm,
-  recipeMakeError,
-  type StagedPlace,
-  stageMarker,
-  type UpsertOptions,
-  update,
   verifyValue,
-  type Write,
-} from "./observable.ts";
+} from "./box.ts";
+import { equalKey, hashKey, identityHash } from "./identity.ts";
+import { deleteMember, deleteMembers, type UndoTarget } from "./journal.ts";
+import { beforeAllChange, beforeKeyChanges, type RowPatch } from "./patch.ts";
+import {
+  assertNotInRecipe,
+  assertUpdateCanRun,
+  inRecipe,
+  type ObservableRealm,
+  orderOwners,
+  type RecordedCollection,
+  recipeMakeError,
+  update,
+  type VisibleStack,
+} from "./realm.ts";
+import { type CollectionChange, noteCollection } from "./record.ts";
+import { collectionKey } from "./snapshot.ts";
+import type { Read, StagedPlace, UpsertOptions, Write } from "./verbs.ts";
 
 /**
  * The order of the keys notifies only when a key is added, removed, or
@@ -51,6 +64,10 @@ const sameElements = <Element>(
   previous: ReadonlyArray<Element>,
   next: ReadonlyArray<Element>,
 ): boolean => {
+  // The same array holds the same elements: an elementwise pass would say so too.
+  if (previous === next) {
+    return true;
+  }
   if (previous.length !== next.length) {
     return false;
   }
@@ -101,6 +118,9 @@ export const keyName = (key: unknown): string => {
 export const repeatedKeyMessage = (key: unknown): string =>
   `pinna: the collection key ${keyName(key)} appears twice`;
 
+const undefinedRow = (): PinnaUsageError =>
+  new PinnaUsageError("pinna/undefined-row", "pinna: a collection row cannot be undefined");
+
 /**
  * Plans the merge of `fresh` into `held` and writes nothing: `false` when
  * `fresh` replaces `held`, otherwise `held` stays, and the answer is the
@@ -127,6 +147,166 @@ export interface CollectionRead {
   readonly key: unknown;
 }
 
+/**
+ * The first record of a key order changed in place: the order the update
+ * began with is the array the box holds once the later changes are undone,
+ * so nothing is copied to keep it. `OrderCell.before` builds it when asked.
+ */
+const unchangedOrder = Object.freeze({}) as ReadonlyArray<never>;
+
+/** Undoes one change in place: `-1` an append, `-2` a prepend, an index a removal of `key` from it. */
+const unchange = <Key>(order: Array<Key>, index: number, key: Key): void => {
+  if (index === -1) {
+    order.pop();
+  } else if (index === -2) {
+    order.shift();
+  } else {
+    order.splice(index, 0, key);
+  }
+};
+
+/**
+ * The key-order box, which `keys` is. The collection changes the array it
+ * holds in place while `live` is that array; a read or a peek hands the
+ * array out, so it clears `live` and the next write copies.
+ */
+class OrderCell<Key> extends CollectionCell<ReadonlyArray<Key>> {
+  /**
+   * The array the box holds while nothing outside the collection holds it,
+   * `undefined` once anything may: a reader, a stage, the visible stack, or
+   * the change stream. A write that finds it changes the order in place;
+   * one that does not copies, and the copy is live.
+   */
+  declare live: Array<Key> | undefined;
+  /**
+   * Three slots for each change in place in the outermost update: the
+   * operation, the key, and the box's version before it. A rollback takes
+   * each back with its version; `before` undoes them on a copy.
+   */
+  declare log: Array<unknown>;
+  /** The order's length when the outermost update began, while its first record is `unchangedOrder`. */
+  declare startLength: number;
+  /** The journal's target for a change in place, made on the first one. */
+  declare target: UndoTarget | undefined;
+
+  constructor(realm: ObservableRealm, keys: Array<Key>) {
+    super(realm, acceptAll, keys, sameElements);
+    this.live = keys;
+    this.log = [];
+    this.startLength = 0;
+    this.target = undefined;
+  }
+
+  override read(): ReadonlyArray<Key> {
+    this.live = undefined;
+    return readCell(this.source);
+  }
+
+  override peek(): ReadonlyArray<Key> {
+    this.live = undefined;
+    return peekCell(this.source);
+  }
+
+  /**
+   * The live array, while a change may be made in place: no update listener
+   * needs the order before and no visible stage covers it. `undefined` when
+   * the write copies.
+   */
+  inPlace(): Array<Key> | undefined {
+    const live = this.live;
+    const realm = this.realm;
+    return live !== undefined &&
+      live === peekCell(this.source) &&
+      realm.updateListeners === undefined &&
+      realm.stack === undefined
+      ? live
+      : undefined;
+  }
+
+  /**
+   * Changes the live array in place: appends or prepends `key` (`index` -1
+   * or -2), or removes it from `index`. Its first record keeps
+   * `unchangedOrder`, a journal step puts the change back, and an order equal
+   * to the one the update began with puts that version back, as a box's
+   * write does.
+   */
+  change(live: Array<Key>, index: number, key: Key): void {
+    const realm = this.realm;
+    const source = this.source;
+    if (this.nextRecorded === undefined) {
+      realm.recordFirst(this as BoxCell<unknown>, unchangedOrder, source.version);
+      this.log.length = 0;
+      this.startLength = live.length;
+    }
+    this.log.push(index, key, source.version);
+    if (index === -1) {
+      live.push(key);
+    } else if (index === -2) {
+      live.unshift(key);
+    } else {
+      live.splice(index, 1);
+    }
+    this.target ??= { undo: (index, key) => this.undoChange(index as number, key as Key) };
+    realm.step(this.target, index, key);
+    const before = this.valueBefore as ReadonlyArray<Key>;
+    const marked = before === unchangedOrder;
+    if (live.length === (marked ? this.startLength : before.length)) {
+      if (sameElements(marked ? this.before() : before, live)) {
+        // A box's write that puts back its first value puts back its version.
+        restoreCell(source, marked ? live : before, this.versionBefore);
+        if (!marked) this.live = undefined;
+        return;
+      }
+    }
+    touchSource(source);
+  }
+
+  /** Puts back the last change in place, with the version the box had before it. */
+  private undoChange(index: number, key: Key): void {
+    const log = this.log;
+    const version = log[log.length - 1] as number;
+    log.length -= 3;
+    const current = peekCell(this.source);
+    const order = current === this.live ? (current as Array<Key>) : current.slice();
+    unchange(order, index, key);
+    this.live = order;
+    restoreCell(this.source, order, version);
+  }
+
+  /** The order the outermost update began with, built from the live array and the log. */
+  private before(): ReadonlyArray<Key> {
+    const order = peekCell(this.source).slice();
+    const log = this.log;
+    for (let index = log.length - 3; index >= 0; index -= 3) {
+      unchange(order, log[index] as number, log[index + 1] as Key);
+    }
+    return order;
+  }
+
+  /** Replaces `unchangedOrder` in the first record with the order it stands for: a caller reads `valueBefore`. */
+  settleBefore(): void {
+    if (this.nextRecorded !== undefined && this.valueBefore === unchangedOrder) {
+      this.valueBefore = this.before();
+    }
+  }
+
+  /** A rollback's or the visible stack's put-back; `unchangedOrder` keeps the array, its changes already undone. */
+  override restore(value: unknown, version: number): void {
+    restoreCell(
+      this.source,
+      value === unchangedOrder ? peekCell(this.source) : (value as ReadonlyArray<Key>),
+      version,
+    );
+  }
+
+  /** Writes a new order array, which the collection made and nobody holds yet. */
+  replace(order: Array<Key>): void {
+    this.settleBefore();
+    this.write(order);
+    this.live = order;
+  }
+}
+
 /** The collection behind each `rows` and `row(key)` computed value, set once when it is made. */
 export const collectionReads = new WeakMap<object, CollectionRead>();
 
@@ -146,6 +326,10 @@ export interface StagedRows<Key, Value> {
     | undefined;
   setRow(key: Key, row: Value): void;
   deleteRow(key: Key): void;
+  /** Adds `key`, absent from the rows, to the order at its start or end. */
+  addKey(key: Key, at: "start" | "end"): void;
+  /** Removes `key`, present in the rows, from the order. */
+  removeKey(key: Key): void;
   setOrder(order: ReadonlyArray<Key>): void;
   setAll(rows: Map<Key, Value>, order: ReadonlyArray<Key>, written: ReadonlySet<Key>): void;
 }
@@ -160,7 +344,7 @@ export interface RowChange<Key, Value> {
   readonly after: Value | undefined;
 }
 
-/** What `onRowChange` calls: inside the writer's update, with its `read` and `write`. */
+/** What `Collection.onRowChange` calls: inside the writer's update, with its `read` and `write`. */
 export type RowListener<Key, Value> = (
   change: RowChange<Key, Value>,
   read: Read,
@@ -169,9 +353,27 @@ export type RowListener<Key, Value> = (
 
 const ignore = (): undefined => undefined;
 
-export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
+/** A key the outermost update added: it had no row when the update began. */
+const absent: unique symbol = Symbol("absent");
+
+/** A step's row when the step made the key's cell: the rollback empties and drops it. */
+const madeCell: unique symbol = Symbol("made cell");
+
+/** A step's key when the step replaced every row: its row is the `held` map before. */
+const replacedAll: unique symbol = Symbol("replaced all");
+
+/** A step's row when the step let go of the key's cell and row computed: the rollback puts both back. */
+class Forgotten {
+  constructor(
+    readonly cell: BoxCell<unknown> | undefined,
+    readonly row: ComputedValue<unknown> | undefined,
+  ) {}
+}
+
+export class KeyedCollection<Key, Value> implements Collection<Key, Value>, RecordedCollection {
   readonly keys: Computed<ReadonlyArray<Key>>;
-  private readonly order: BoxCell<ReadonlyArray<Key>>;
+  /** The key order: a write changes it in place while its `live` is the array it holds. */
+  private readonly order: OrderCell<Key>;
   /**
    * The row of every present key. A key is present exactly while it is here,
    * and a key's cell, when it has one, holds the same row.
@@ -192,7 +394,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
   private readonly cellEquals: Equals<Value | undefined>;
   /**
    * Plans the merge of a row arriving under a held key into the row held: a
-   * `CollectionField` of models gives one. Asked before `equals`; a row it
+   * `Model.collectionField` of models gives one. Asked before `equals`; a row it
    * keeps notifies nobody that reads the row, only the readers of what its
    * writes changed.
    */
@@ -212,13 +414,33 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
    */
   private allRows: ComputedValue<ReadonlyArray<Value>> | undefined = undefined;
   /**
-   * The `onRowChange` listeners, or `undefined` when there are none, so a
+   * The `Collection.onRowChange` listeners, or `undefined` when there are none, so a
    * collection nobody listens to pays one check a write. Replaced whole on
    * each change: a report runs the listeners it began with.
    */
   private listeners: ReadonlyArray<RowListener<Key, Value>> | undefined = undefined;
   /** True while a listener runs: its collection takes no write and no new listener. */
   reporting = false;
+  /**
+   * True when every row is a `Model.Schema` instance, as pinna-effect sets
+   * for a collection of a model class: `write.restore` then refuses to add a
+   * row from plain data, even while no row is held.
+   */
+  holdsModels = false;
+  /** True while the realm's record of the outermost update lists this collection. */
+  recording = false;
+  /**
+   * The open stages' patches that read through the base rows: a base change
+   * hands each the row it is about to replace (`patch.ts`). `undefined` when
+   * none, so a write without stages pays one check.
+   */
+  patches: Set<RowPatch<Key, Value>> | undefined = undefined;
+  /**
+   * The row each key had when the outermost update began, kept on the first
+   * write to the key while the realm has a `Realm.onUpdate` listener, or
+   * `undefined`: a collection nobody records keeps nothing.
+   */
+  private rowsBefore: Map<Key, Value | typeof absent> | undefined = undefined;
 
   /**
    * Every key the collection keeps something for: its row, its cell, or its
@@ -236,13 +458,14 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     readonly realm: ObservableRealm,
     check: Check,
     equals: Equals<Value>,
-    private readonly keyOf: (value: Value) => Key,
+    /** The key of a row: `Collection.make`'s `keyOf`. */
+    readonly keyOf: (value: Value) => Key,
     values: ReadonlyArray<Value>,
     merge?: Merge<Value>,
-    /** A name for `inspect`, errors, and a stage's reports; its keys are `<name>.keys`. */
+    /** A name for `Source.inspect`, errors, and a stage's reports; its keys are `<name>.keys`. */
     readonly name?: string,
   ) {
-    if (realm.core.deriving === stageMarker) {
+    if (inRecipe(realm.core)) {
       throw recipeMakeError("a collection");
     }
     checkName(name);
@@ -280,18 +503,19 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     for (let index = 0; index < values.length; index++) {
       const value = values[index] as Value;
       if (value === undefined) {
-        throw new Error("pinna: a collection row cannot be undefined");
+        throw undefinedRow();
       }
       const key = keyOf(value);
       if (held.has(key)) {
-        throw new Error(repeatedKeyMessage(key));
+        throw new PinnaUsageError("pinna/repeated-key", repeatedKeyMessage(key));
       }
       held.set(key, value);
       keys[index] = key;
     }
     this.held = held;
-    this.order = new BoxCell<ReadonlyArray<Key>>(realm, acceptAll, keys, sameElements);
-    this.changes = new BoxCell<number>(realm, acceptAll, 0, Object.is);
+    this.order = new OrderCell<Key>(realm, keys);
+    this.changes = new CollectionCell<number>(realm, acceptAll, 0, Object.is);
+    orderOwners.set(this.order, this);
     this.keys = this.order;
     if (name !== undefined) {
       nameSource(this.order.source, `${name}.keys`);
@@ -324,7 +548,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     if (cell !== undefined) {
       return cell;
     }
-    const made = new BoxCell<Value | undefined>(
+    const made = new CollectionCell<Value | undefined>(
       this.realm,
       this.cellCheck,
       this.held.get(key),
@@ -333,12 +557,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     );
     this.cells.set(key, made);
     if (this.changes.nextRecorded !== undefined) {
-      this.realm.recordUndo(() => {
-        made.restore(undefined, this.realm.core.nextCellVersion());
-        if (this.cells.get(key) === made) {
-          this.cells.delete(key);
-        }
-      });
+      this.realm.step(this, key, madeCell);
     }
     cell = made;
     return cell;
@@ -367,8 +586,54 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     return this.held;
   }
 
-  /** The box of the key order: a stage holds its staged order there, and checks its version. */
+  /** The base rows, which a stage's patch reads through: the rows held, or under a showing guess its base. */
+  rowsNow(): ReadonlyMap<Key, Value> {
+    return (this.realm.stack?.baseRows(this) as ReadonlyMap<Key, Value> | undefined) ?? this.held;
+  }
+
+  /**
+   * Puts `row` under `key` in the rows held, or removes the key when not
+   * `present`, raw: no record, check, merge, report, or patch told. For a
+   * visible stage's window alone, which exchanges the base row and the
+   * shown row of each key the stack wrote, and moves the version of the
+   * order and `changesCell` itself.
+   */
+  putHeld(key: Key, present: boolean, row: Value | undefined): void {
+    if (present) {
+      this.held.set(key, row as Value);
+    } else {
+      this.held.delete(key);
+    }
+    this.forgetAllRows();
+  }
+
+  /** The cell a reader made for `key`, if any: for a visible stage's window. */
+  cellAt(key: Key): BoxCell<Value | undefined> | undefined {
+    return this.cells.get(key);
+  }
+
+  /**
+   * Keeps `cell` as the cell of `key`, or no cell when `undefined`, raw: for
+   * a visible stage's window, which keeps a cell exactly while its key is
+   * present, as every other write does.
+   */
+  placeCell(key: Key, cell: BoxCell<Value | undefined> | undefined): void {
+    if (cell === undefined) {
+      this.cells.delete(key);
+    } else {
+      this.cells.set(key, cell);
+    }
+    this.forgetRow(key);
+  }
+
+  /**
+   * The box of the key order: a stage holds its staged order there, and
+   * checks its version. Whoever asks may keep the array it holds, so the
+   * next write copies.
+   */
   get orderCell(): BoxCell<ReadonlyArray<Key>> {
+    this.order.live = undefined;
+    this.order.settleBefore();
     return this.order;
   }
 
@@ -388,7 +653,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     }
     let row = this.rowsByKey.get(key);
     if (row === undefined) {
-      // Not `computed`, which a stage recipe refuses: reading a row there makes this one.
+      // Not `Computed.make`, which a stage recipe refuses: reading a row there makes this one.
       row = new ComputedValue(this.realm, () => this.read(key), Object.is);
       collectionReads.set(row, this.tag(false, key));
       this.rowsByKey.set(key, row);
@@ -402,7 +667,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
 
   /**
    * Made on first read, so a collection nobody reads whole costs no computed
-   * value. It reads the order and `changes`, not a cell per key, so it makes
+   * value. It reads the order and `Program.changes`, not a cell per key, so it makes
    * no cell.
    */
   get rows(): Computed<ReadonlyArray<Value>> {
@@ -429,7 +694,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     // cannot write the collection it is reporting.
     this.assertNotReporting("write.upsert");
     if (value === undefined) {
-      throw new Error("pinna: a collection row cannot be undefined");
+      throw undefinedRow();
     }
     if (this.listeners === undefined) {
       this.upsertAccepted(value, options);
@@ -465,14 +730,19 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       this.hold(held, key, kept, previous as Value, true);
       return;
     }
-    const order = peekCell(this.order.source).slice();
-    if (options?.at === "end") {
-      order.push(key);
+    // The order is written before `Program.changes`, in every write that changes both.
+    const live = this.order.inPlace();
+    if (live !== undefined) {
+      this.order.change(live, options?.at === "end" ? -1 : -2, key);
     } else {
-      order.unshift(key);
+      const order = peekCell(this.order.source).slice();
+      if (options?.at === "end") {
+        order.push(key);
+      } else {
+        order.unshift(key);
+      }
+      this.order.replace(order);
     }
-    // The order is written before `changes`, in every write that changes both.
-    this.order.write(order);
     this.hold(held, key, kept, undefined, false);
   }
 
@@ -497,17 +767,23 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     }
     this.forget(key);
     const previous = held.get(key) as Value;
+    if (this.realm.updateListeners !== undefined) {
+      this.noteRow(key, true, previous);
+    }
+    if (this.patches !== undefined) beforeKeyChanges(this, key);
     held.delete(key);
-    this.realm.recordUndo(() => {
-      held.set(key, previous);
-      this.forgetAllRows();
-    });
+    this.realm.step(this, key, previous);
     const order = peekCell(this.order.source);
     const index = indexOfKey(order, key);
     if (index !== -1) {
-      const next = order.slice();
-      next.splice(index, 1);
-      this.order.write(next);
+      const live = this.order.inPlace();
+      if (live !== undefined) {
+        this.order.change(live, index, key);
+      } else {
+        const next = order.slice();
+        next.splice(index, 1);
+        this.order.replace(next);
+      }
     }
     this.changed();
   }
@@ -515,23 +791,8 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
   replaceRows(values: ReadonlyArray<Value>): void {
     this.realm.assertWritable();
     this.assertNotReporting("write.replaceAll");
-    const keyOf = this.keyOf;
     const count = values.length;
-    const keys = new Array<Key>(count);
-    // The next rows, and the check that no key appears twice.
-    const next = new Map<Key, Value>();
-    for (let index = 0; index < count; index++) {
-      const value = values[index] as Value;
-      if (value === undefined) {
-        throw new Error("pinna: a collection row cannot be undefined");
-      }
-      const key = keyOf(value);
-      if (next.has(key)) {
-        throw new Error(repeatedKeyMessage(key));
-      }
-      next.set(key, value);
-      keys[index] = key;
-    }
+    const { keys, next } = this.keyed(values);
     // A row the check rejects puts back the rows already dropped or
     // written, even when the caller catches the error.
     this.realm.undoOnThrow(() => {
@@ -582,26 +843,115 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
           this.forgetRow(key);
         }
       }
+      if (this.realm.updateListeners !== undefined) {
+        this.noteRows(held, next);
+      }
+      if (this.patches !== undefined) beforeAllChange(this);
       this.held = next;
-      this.realm.recordUndo(() => {
-        this.held = held;
-        // A key this write added leaves, with any row computed asked for since;
-        // a kept key's row computed lets go of a row the write put there.
-        for (const key of this.rowsByKey.keys()) {
-          this.forgetRow(key);
-          if (!held.has(key)) {
-            this.rowsByKey.delete(key);
-          }
-        }
-        this.forgetAllRows();
-      });
-      this.order.write(keys);
+      this.realm.step(this, replacedAll, held);
+      // Made here from the rows: nothing else holds it.
+      this.order.replace(keys);
       if (changed) {
         this.changed();
         if (this.listeners !== undefined) {
           this.reportReplaced(heldOrder, held, next);
         }
       }
+    });
+  }
+
+  /**
+   * Keeps the row `key` had when the outermost update began, on the first
+   * write to it, for the change stream; a rollback takes the note back.
+   */
+  private noteRow(key: Key, present: boolean, previous: Value | undefined): void {
+    let notes = this.rowsBefore;
+    if (notes === undefined) {
+      notes = new Map();
+      this.rowsBefore = notes;
+    }
+    if (notes.has(key)) {
+      return;
+    }
+    notes.set(key, present ? (previous as Value) : absent);
+    noteCollection(this.realm, this as KeyedCollection<unknown, unknown>);
+    this.realm.step(deleteMember, notes, key);
+  }
+
+  /**
+   * `noteRow` for every key `replaceAll` may change, the held ones and the
+   * new ones, under one undo entry rather than one per key.
+   */
+  private noteRows(held: ReadonlyMap<Key, Value>, next: ReadonlyMap<Key, Value>): void {
+    let notes = this.rowsBefore;
+    if (notes === undefined) {
+      notes = new Map();
+      this.rowsBefore = notes;
+    }
+    const added: Array<Key> = [];
+    for (const [key, row] of held) {
+      if (!notes.has(key)) {
+        notes.set(key, row);
+        added.push(key);
+      }
+    }
+    for (const key of next.keys()) {
+      if (!held.has(key) && !notes.has(key)) {
+        notes.set(key, absent);
+        added.push(key);
+      }
+    }
+    if (added.length === 0) {
+      return;
+    }
+    noteCollection(this.realm, this as KeyedCollection<unknown, unknown>);
+    this.realm.step(deleteMembers, notes, added);
+  }
+
+  /**
+   * The collection's part of the record: each noted key whose base row now
+   * differs from the one it had, and the key order when its box moved.
+   * Forgets the notes.
+   */
+  takeChange(stack: VisibleStack | undefined): CollectionChange | undefined {
+    this.recording = false;
+    const notes = this.rowsBefore;
+    this.rowsBefore = undefined;
+    const base = stack?.baseRows(this) ?? this.held;
+    const rows: Array<RowChange<unknown, unknown>> = [];
+    if (notes !== undefined) {
+      for (const [key, noted] of notes) {
+        const before = noted === absent ? undefined : noted;
+        const after = base.get(key);
+        if (!Object.is(before, after)) {
+          rows.push(Object.freeze({ key, before, after }));
+        }
+      }
+    }
+    let keys: CollectionChange["keys"];
+    const order = this.order;
+    // The record keeps the array the order holds: the next write copies.
+    order.live = undefined;
+    order.settleBefore();
+    if (order.nextRecorded !== undefined) {
+      const now =
+        stack === undefined
+          ? { value: peekCell(order.source), version: order.source.version }
+          : stack.baseOf(order as BoxCell<unknown>);
+      if (now.version !== order.versionBefore) {
+        keys = Object.freeze({
+          before: order.valueBefore as ReadonlyArray<unknown>,
+          after: now.value as ReadonlyArray<unknown>,
+        });
+      }
+    }
+    if (rows.length === 0 && keys === undefined) {
+      return undefined;
+    }
+    return Object.freeze({
+      collection: this as Collection<unknown, unknown>,
+      rows: Object.freeze(rows),
+      keys,
     });
   }
 
@@ -625,8 +975,9 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
 
   private assertNotReporting(verb: string): void {
     if (this.reporting) {
-      throw new Error(
-        `pinna: ${verb} on the collection an onRowChange listener is reporting; ` +
+      throw new PinnaUsageError(
+        "pinna/row-listener-reentrant",
+        `pinna: ${verb} on the collection a Collection.onRowChange listener is reporting; ` +
           "a listener writes other boxes and collections, never its own",
       );
     }
@@ -695,7 +1046,10 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       if (typeof (result as { readonly then?: unknown }).then === "function") {
         (result as PromiseLike<unknown>).then(undefined, ignore);
       }
-      throw new Error("pinna: an onRowChange listener is synchronous and returns nothing");
+      throw new PinnaUsageError(
+        "pinna/row-listener-returns-value",
+        "pinna: a Collection.onRowChange listener is synchronous and returns nothing",
+      );
     }
   }
 
@@ -722,12 +1076,6 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     }
   }
 
-  /** The rows in key order, read without tracking: what the field encodes. */
-  values(): ReadonlyArray<Value> {
-    const held = this.held;
-    return peekCell(this.order.source).map((key) => held.get(key) as Value);
-  }
-
   /**
    * The row a write of `value` leaves under a key with no cell: checked as a
    * cell's write is, and the row held kept when `equals` finds the two equal.
@@ -746,6 +1094,27 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
    * Whether the row held under `key` stays, with `value` merged into it:
    * `value` is checked as a landing row is, then the merge's writes run.
    */
+  /** The key of each of `values`, and the rows by key: throws on an `undefined` row or a repeated key. */
+  private keyed(values: ReadonlyArray<Value>): { keys: Array<Key>; next: Map<Key, Value> } {
+    const keyOf = this.keyOf;
+    const count = values.length;
+    const keys = new Array<Key>(count);
+    const next = new Map<Key, Value>();
+    for (let index = 0; index < count; index++) {
+      const value = values[index] as Value;
+      if (value === undefined) {
+        throw undefinedRow();
+      }
+      const key = keyOf(value);
+      if (next.has(key)) {
+        throw new PinnaUsageError("pinna/repeated-key", repeatedKeyMessage(key));
+      }
+      next.set(key, value);
+      keys[index] = key;
+    }
+    return { keys, next };
+  }
+
   private merges(held: Map<Key, Value>, key: Key, value: Value): boolean {
     const merge = this.merge;
     if (merge === undefined || !held.has(key)) {
@@ -756,7 +1125,28 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       return false;
     }
     const place = this.realm.place();
-    const writes = merge(previous, value, place.read, place.write);
+    const realm = this.realm;
+    return this.mergeInto(merge, previous, value, place.read, place.write, (writes) =>
+      realm.undoOnThrow(writes),
+    );
+  }
+
+  /**
+   * Runs the merge of `value` into `previous`: `false` when it declines,
+   * otherwise the check runs on `value` and the merge's writes run in a
+   * scope of their own (`undoOnThrow`), so a throw from a nested write,
+   * such as a nested collection's listener, puts back the whole merge, not
+   * half of it, even when the caller catches the error.
+   */
+  private mergeInto(
+    merge: NonNullable<typeof this.merge>,
+    previous: Value,
+    value: Value,
+    read: Read,
+    write: Write,
+    undoOnThrow: (writes: () => void) => unknown,
+  ): boolean {
+    const writes = merge(previous, value, read, write);
     if (writes === false) {
       return false;
     }
@@ -764,10 +1154,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       verifyValue(this.realm, this.check, value, previous);
     }
     if (writes !== undefined) {
-      // A scope of its own, so a throw from a nested write, such as a nested
-      // collection's listener, puts back the whole merge, not half of it,
-      // even when the caller catches the error.
-      this.realm.undoOnThrow(writes);
+      undoOnThrow(writes);
     }
     return true;
   }
@@ -786,7 +1173,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
   ): void {
     this.assertNotReporting("write.upsert");
     if (value === undefined) {
-      throw new Error("pinna: a collection row cannot be undefined");
+      throw undefinedRow();
     }
     const key = this.keyOf(value);
     const present = target.rows.has(key);
@@ -804,13 +1191,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     }
     target.setRow(key, kept);
     if (!present) {
-      const order = target.order.slice();
-      if (options?.at === "end") {
-        order.push(key);
-      } else {
-        order.unshift(key);
-      }
-      target.setOrder(order);
+      target.addKey(key, options?.at === "end" ? "end" : "start");
     }
     this.reportTo(this.listeners, key, previous, kept, read, write);
   }
@@ -823,12 +1204,7 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     }
     const previous = target.rows.get(key);
     target.deleteRow(key);
-    const index = indexOfKey(target.order, key);
-    if (index !== -1) {
-      const order = target.order.slice();
-      order.splice(index, 1);
-      target.setOrder(order);
-    }
+    target.removeKey(key);
     this.reportTo(this.listeners, key, previous, undefined, read, write);
   }
 
@@ -840,22 +1216,8 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     write: Write,
   ): void {
     this.assertNotReporting("write.replaceAll");
-    const keyOf = this.keyOf;
     const count = values.length;
-    const keys = new Array<Key>(count);
-    const next = new Map<Key, Value>();
-    for (let index = 0; index < count; index++) {
-      const value = values[index] as Value;
-      if (value === undefined) {
-        throw new Error("pinna: a collection row cannot be undefined");
-      }
-      const key = keyOf(value);
-      if (next.has(key)) {
-        throw new Error(repeatedKeyMessage(key));
-      }
-      next.set(key, value);
-      keys[index] = key;
-    }
+    const { keys, next } = this.keyed(values);
     const held = target.rows;
     const heldOrder = target.order;
     let changed = held.size !== count;
@@ -905,17 +1267,10 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     if (merge === undefined || Object.is(previous, value)) {
       return false;
     }
-    const writes = merge(previous, value, read, write);
-    if (writes === false) {
-      return false;
-    }
-    if (this.check !== acceptAll) {
-      verifyValue(this.realm, this.check, value, previous);
-    }
-    if (writes !== undefined) {
-      (this.realm.stagedPlace as StagedPlace).undoOnThrow(writes);
-    }
-    return true;
+    const place = this.realm.stagedPlace as StagedPlace;
+    return this.mergeInto(merge, previous, value, read, write, (writes) =>
+      place.undoOnThrow(writes),
+    );
   }
 
   /**
@@ -941,11 +1296,12 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
         operations.push(() => {
           // Removal's cell check and equality accept undefined without user code.
           this.forget(key);
+          if (this.realm.updateListeners !== undefined) {
+            this.noteRow(key, true, previous);
+          }
+          if (this.patches !== undefined) beforeKeyChanges(this, key);
           held.delete(key);
-          this.realm.recordUndo(() => {
-            held.set(key, previous as Value);
-            this.forgetAllRows();
-          });
+          this.realm.step(this, key, previous);
           this.changed();
         });
       } else {
@@ -979,22 +1335,13 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
     if (present && Object.is(row, previous)) {
       return;
     }
+    if (this.realm.updateListeners !== undefined) {
+      this.noteRow(key, present, previous);
+    }
+    if (this.patches !== undefined) beforeKeyChanges(this, key);
     held.set(key, row);
     this.forgetRow(key);
-    this.realm.recordUndo(
-      present
-        ? () => {
-            held.set(key, previous as Value);
-            this.forgetRow(key);
-            this.forgetAllRows();
-          }
-        : () => {
-            held.delete(key);
-            this.forgetRow(key);
-            this.rowsByKey.delete(key);
-            this.forgetAllRows();
-          },
-    );
+    this.realm.step(this, key, present ? previous : absent);
     this.changed();
   }
 
@@ -1049,25 +1396,70 @@ export class KeyedCollection<Key, Value> implements Collection<Key, Value> {
       forgetValue(row.source);
     }
     this.rowsByKey.delete(key);
-    this.realm.recordUndo(() => {
+    this.realm.step(this, key, new Forgotten(cell as BoxCell<unknown> | undefined, row));
+  }
+
+  /**
+   * A journal step on the collection, the last first: `before` is the row
+   * `key` held (`absent` when it held none), `madeCell` for a cell the step
+   * made, or a `Forgotten` cell and row computed; under `replacedAll`, the
+   * `held` map a whole replace swapped out.
+   */
+  undo(key: unknown, before: unknown): void {
+    if (key === replacedAll) {
+      const held = before as Map<Key, Value>;
+      if (this.patches !== undefined) beforeAllChange(this);
+      this.held = held;
+      // A key the replace added leaves, with any row computed asked for since;
+      // a kept key's row computed lets go of a row the replace put there.
+      for (const rowKey of this.rowsByKey.keys()) {
+        this.forgetRow(rowKey);
+        if (!held.has(rowKey)) {
+          this.rowsByKey.delete(rowKey);
+        }
+      }
+    } else if (before === madeCell) {
+      // A cell made after the update changed `held` holds a row the rollback
+      // takes back: it empties with a new version, so its readers rerun.
+      const cell = this.cells.get(key as Key);
       if (cell !== undefined) {
-        this.cells.set(key, cell);
+        cell.restore(undefined, this.realm.core.nextCellVersion());
+        this.cells.delete(key as Key);
       }
-      if (row !== undefined) {
-        forgetValue(row.source);
-        this.rowsByKey.set(key, row);
+      return;
+    } else if (before instanceof Forgotten) {
+      if (before.cell !== undefined) {
+        this.cells.set(key as Key, before.cell as BoxCell<Value | undefined>);
       }
-    });
+      if (before.row !== undefined) {
+        forgetValue(before.row.source);
+        this.rowsByKey.set(key as Key, before.row as ComputedValue<Value | undefined>);
+      }
+      return;
+    } else if (before === absent) {
+      if (this.patches !== undefined) beforeKeyChanges(this, key as Key);
+      this.held.delete(key as Key);
+      this.forgetRow(key as Key);
+      this.rowsByKey.delete(key as Key);
+    } else {
+      if (this.patches !== undefined) beforeKeyChanges(this, key as Key);
+      this.held.set(key as Key, before as Value);
+      this.forgetRow(key as Key);
+    }
+    this.forgetAllRows();
   }
 }
 
-/** What `collection` takes. */
+// `write.restore` tells a collection by this mark, without importing the class.
+Object.defineProperty(KeyedCollection.prototype, collectionKey, { value: true });
+
+/** What `Collection.make` takes. */
 export interface CollectionOptions<Key, Value> {
   /** The key of a row; two rows with one key are an error. */
   readonly keyOf: (value: Value) => Key;
   /**
-   * A name for tools: `inspect` reports its `keys` as `<name>.keys` and its
-   * `rows` as `<name>.rows`, and a stage's conflict error and `inspectStage`
+   * A name for tools: `Source.inspect` reports its `keys` as `<name>.keys` and its
+   * `rows` as `<name>.rows`, and a stage's conflict error and `Stage.inspect`
    * name the collection by it.
    */
   readonly name?: string;
@@ -1102,14 +1494,14 @@ export const collection = <Key, Value>(
 
 /**
  * Calls `listener` for every row a write adds, replaces, or removes in
- * `collection`, inside the writer's update, after the row is written, with
+ * `Collection.make`, inside the writer's update, after the row is written, with
  * that update's `read` and `write`. What the listener writes commits and
  * rolls back with the row, so state it keeps in boxes, such as an index of
  * the rows, never falls behind them. A listener that throws fails the write:
  * the row is put back, and the error reaches the writer.
  *
  * Every write path reports: `write.upsert`, `write.remove`,
- * `write.replaceAll` (a row at a time), and a `CollectionField`'s reconcile.
+ * `write.replaceAll` (a row at a time), and a `Model.collectionField`'s reconcile.
  * A write that leaves a row as it was reports nothing, and so does a model
  * row whose box fields alone differ: it is merged in place, so its boxes
  * change, not the row, and a reader of those boxes sees it. A listener
@@ -1123,7 +1515,7 @@ export const collection = <Key, Value>(
  * replay's writes stay committed.
  *
  * The listener sees rows the collection replaces, never a write to a box
- * inside a row: a sum over a `BoxField` is a `computed`. `replaceAll` writes
+ * inside a row: a sum over a `Model.boxField` is a `Computed.make`. `replaceAll` writes
  * every row before its first report, so a listener that reads the
  * collection sees rows ahead of their reports.
  *
@@ -1131,33 +1523,63 @@ export const collection = <Key, Value>(
  * fails after calling it does not add it back. Added inside an update that
  * fails, the listener is removed with the update's writes. A listener added
  * while one of the collection's listeners runs throws, and so does
- * `onRowChange` in a computed value or a watch's select, where an update
+ * `Collection.onRowChange` in a computed value or a watch's select, where an update
  * cannot run. Each call replays the held rows to its listener, so a host
  * adds a listener once, beside the boxes it fills.
  */
 export const onRowChange = <Key, Value>(
   collection: Collection<Key, Value>,
   listener: RowListener<Key, Value>,
+): (() => void) => listenRows(collection, listener, "Collection.onRowChange", "onRowChange");
+
+/**
+ * `Collection.onRowChange` for a caller inside Pinna, such as a view: `call`
+ * names it in errors, and `label` in the realm's registrations, so
+ * `testRealm` reports it by what made it.
+ */
+export const listenRows = <Key, Value>(
+  collection: Collection<Key, Value>,
+  listener: RowListener<Key, Value>,
+  call: string,
+  label: string,
+  onStopped?: () => void,
 ): (() => void) => {
   if (!(collection instanceof KeyedCollection)) {
-    throw new Error("pinna: onRowChange needs a collection made by Pinna");
+    throw new PinnaUsageError(
+      "pinna/not-made-by-pinna",
+      `pinna: ${call} needs a collection made by Pinna`,
+    );
   }
   const keyed = collection as KeyedCollection<Key, Value>;
   const realm = keyed.realm;
-  assertUpdateCanRun(realm, "onRowChange");
-  assertNotInRecipe(realm, "onRowChange");
+  assertUpdateCanRun(realm, call);
+  assertNotInRecipe(realm, call);
+  realm.assertOpen(call === "Collection.onRowChange" ? "a Collection.onRowChange listener" : call);
   let stop: () => void = () => undefined;
   // A recipe failure undoes replay writes; a settle failure keeps them.
   // Both remove the listener, since the caller receives no stop function.
   try {
     update(realm, () => {
       if (keyed.reporting) {
-        throw new Error(
-          "pinna: onRowChange on the collection an onRowChange listener is reporting",
+        throw new PinnaUsageError(
+          "pinna/row-listener-reentrant",
+          `pinna: ${call} on the collection a Collection.onRowChange listener is reporting`,
         );
       }
-      const remove = keyed.listen(listener);
-      stop = realm.running?.("onRowChange", remove) ?? remove;
+      const listening = keyed.listen(listener);
+      // A visible stage that wrote the collection replays through the new
+      // listener as this update ends, so what it shows includes the listener's writes.
+      realm.stack?.invalidate();
+      // Every way the listener ends tells the caller: its stop, a rollback
+      // of the update that added it, and `Realm.dispose`.
+      const remove =
+        onStopped === undefined
+          ? listening
+          : () => {
+              listening();
+              onStopped();
+            };
+      stop = realm.register(label, remove);
       realm.recordUndo(stop);
       keyed.replay(listener);
     });

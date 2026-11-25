@@ -5,7 +5,7 @@
  * a slot, a signal of its row, so a component reads one row and not the list.
  *
  * Followed:
- * - README "Basic APIs" (`signal`, `computed`, `effect`): a signal is called
+ * - README "Basic APIs" (`signal`, `Computed.make`, `effect`): a signal is called
  *   to read and called with a value to write, and a write of a value `!==`
  *   the held one notifies nobody, so a tick field is written only where the
  *   value changed by `equalBig` / `equalDate`, as the harness contract asks.

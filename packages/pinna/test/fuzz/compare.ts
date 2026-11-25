@@ -1,4 +1,4 @@
-import { type Api, execute } from "./interpret.ts";
+import { type Api, type Check, execute } from "./interpret.ts";
 import { generate, type Operation, type Program } from "./program.ts";
 
 export interface Difference {
@@ -72,14 +72,14 @@ const loggingOnly = (operations: ReadonlyArray<Operation>): ReadonlyArray<Operat
         : operation,
   );
 
-const traceOf = (program: Program, api: Api): Array<string> => {
-  const trace = execute(program, api);
+const traceOf = (program: Program, api: Api, check?: Check): Array<string> => {
+  const trace = execute(program, api, check);
   const counted = ignoreRuns() ? withoutRuns(trace) : trace;
   return ignoreOrder() ? withoutOrder(counted) : counted;
 };
 
-export const differs = (program: Program, ours: Api, reference: Api): boolean =>
-  firstDifference(traceOf(program, ours), traceOf(program, reference)) !== undefined;
+export const differs = (program: Program, ours: Api, reference: Api, check?: Check): boolean =>
+  firstDifference(traceOf(program, ours, check), traceOf(program, reference)) !== undefined;
 
 /** Every program one operation smaller: one removed, at the top or inside an update. */
 const smaller = function* (
@@ -103,14 +103,14 @@ const smaller = function* (
 };
 
 /** Removes operations one at a time while the two implementations still differ. */
-export const shrink = (program: Program, ours: Api, reference: Api): Program => {
+export const shrink = (program: Program, ours: Api, reference: Api, check?: Check): Program => {
   let current = program;
   let progress = true;
   while (progress) {
     progress = false;
     for (const operations of smaller(current.operations)) {
       const candidate = { ...current, operations };
-      if (differs(candidate, ours, reference)) {
+      if (differs(candidate, ours, reference, check)) {
         current = candidate;
         progress = true;
         break;
@@ -128,17 +128,30 @@ export interface Mismatch {
 }
 
 /** Runs one seed against both implementations; on a mismatch, shrinks it. */
-export const checkSeed = (seed: number, ours: Api, reference: Api): Mismatch | undefined => {
+/**
+ * Compares one seed's program; `check` runs on this checkout's graph after
+ * each operation (`test/internal/graph-check.ts`), so a broken invariant is
+ * a mismatch too.
+ */
+export const checkSeed = (
+  seed: number,
+  ours: Api,
+  reference: Api,
+  check?: Check,
+): Mismatch | undefined => {
   const generated = generate(seed);
   const program = ignoreOrder()
     ? { ...generated, operations: loggingOnly(generated.operations) }
     : generated;
-  const difference = firstDifference(traceOf(program, ours), traceOf(program, reference));
+  const difference = firstDifference(traceOf(program, ours, check), traceOf(program, reference));
   if (difference === undefined) {
     return undefined;
   }
-  const shrunk = shrink(program, ours, reference);
-  const shrunkDifference = firstDifference(traceOf(shrunk, ours), traceOf(shrunk, reference));
+  const shrunk = shrink(program, ours, reference, check);
+  const shrunkDifference = firstDifference(
+    traceOf(shrunk, ours, check),
+    traceOf(shrunk, reference),
+  );
   return { seed, difference, shrunk, shrunkDifference: shrunkDifference ?? difference };
 };
 

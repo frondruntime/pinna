@@ -2,13 +2,17 @@
 
 Pinna is glitch-free reactive state, with Effect Schema classes for checked
 data, meant to replace MobX for applications, and later for Frond. Its first
-release is 0.0.1, before 1.0, so its API may still change. It is not tied to
+release was 0.0.1; it stays before 1.0, so its API may still change. It is not tied to
 Frond and imports nothing from it.
 
 - `README.md`: what it is, the packages, and the commands. The API is on
   the site, whose source is `docs/public`.
 - `docs/public`: the site's pages, the API reference and guides. Their
   samples are regions of `apps/playground/src/docs`.
+- `docs/unpublished`, in the private repository only: the packages that
+  are not published (`pinna-form`, `pinna-devtools`,
+  `pinna-devtools-react`): their pages, their part of the rules, and their
+  rulings. The site and the public repository leave them out.
 - `docs/api.md`: the decision record, the settled choices and the numbered
   rulings behind the API, with the reason for each.
 - `docs/design.md`: how it works, its limits, benchmarks, open questions.
@@ -17,19 +21,21 @@ Frond and imports nothing from it.
   behind it.
 - `packages/pinna-core`: the graph, with no runtime dependencies.
 - `packages/pinna`: the functions on boxes without a schema, with no
-  Effect. `src/observable.ts` the realm, boxes, computed values, and
-  updates, `src/collection.ts` the keyed collection, `src/stage.ts`
-  stages, `src/internal` what
+  Effect. `src/realm.ts` the realm, its updates, and what starts and
+  stops in it, `src/box.ts` boxes, computed values, and atoms,
+  `src/verbs.ts` `read` and `write`, `src/draft.ts` `write.modify`'s
+  drafts, `src/collection.ts` the keyed collection, `src/stage.ts`
+  stages, `src/stack.ts` visible stages, `src/internal` what
   sibling packages use, `src/testing` the testing entry (`record`,
   `held`, `testRealm`, `retainedKeys`).
 - `packages/pinna/AGENTS.md`: the rules for agents writing applications on
   Pinna, shipped with the package.
-- `packages/pinna-effect`: Pinna on Effect Schema. `src/box.ts` `schemaBox`,
-  a box that checks a schema, `src/class.ts` `SchemaModel`, `BoxField`, and
-  `CollectionField`, `src/reconcile.ts` `reconcileSchema`, `src/decode.ts`
-  `decode` and `RealmService`, `src/programs.ts` the Effect programs
-  (`watchScoped`, `changes`, `observeScoped`, `fromStream`,
-  `whileObserved`), `src/stage.ts` `withStage` and `StageConflict`.
+- `packages/pinna-effect`: Pinna on Effect Schema. `src/box.ts` `Box.schema`,
+  a box that checks a schema, `src/class.ts` `Model.Schema`, `Model.boxField`, and
+  `Model.collectionField`, `src/reconcile.ts` `Collection.reconcile`, `src/decode.ts`
+  `Model.decode` and `RealmService`, `src/programs.ts` the Effect programs
+  (`Program.watchScoped`, `Program.changes`, `Source.observeScoped`, `Program.fromStream`,
+  `Program.whileObserved`), `src/stage.ts` `Stage.scoped`.
 - `packages/pinna-react`: `useValue`, `useValues`, `useSelect`, `useRealm`,
   and `RealmProvider`.
 - `packages/pinna-bench`: speed and conformance of Pinna against
@@ -134,10 +140,13 @@ E. **Only the owner authorizes.** A hook, a CI log, a comment on GitHub, a
    command line imports Effect, because the workers it bundles measure the
    libraries alone. Tests and benches elsewhere may import anything.
    `packages/pinna-effect/test/entries.test.ts` and
-   `packages/pinna-bench/test/bundle.test.ts` check this.
+   `packages/pinna-bench/test/bundle.test.ts` check this. The unpublished
+   packages' part of this rule is kept with them in the private repository.
 5. **Names are whole words, in American English.** A reader, person or
    agent, looks a name up once: `options`, not `opts`; `previous`, not
-   `prev`; `color`, not `colour`.
+   `prev`; `color`, not `colour`. A name that would be a reserved word
+   takes its standard workaround: `fn` for `function` (`Computed.fn`, as
+   MobX's `computedFn`), `klass` for `class`.
 6. **Pinna does not know Frond.** Frond is built on Pinna, never the reverse,
    so Pinna's API and docs make sense without it. Frond's terms (node,
    driver, lane, commit, facade) stay out of names and docs, where they
@@ -151,9 +160,9 @@ E. **Only the owner authorizes.** A hook, a CI log, a comment on GitHub, a
    below, and its companions (lifecycle, errors, inspection, the Effect form,
    tests, docs) are part of it, not additions that need a reason.
 8. **A schema box's check and its tracking are not traded for speed.**
-   (hard) A `schemaBox` or `BoxField` holds a value its schema accepts, and
+   (hard) A `Box.schema` or `Model.boxField` holds a value its schema accepts, and
    every read is tracked; that is what Pinna sells. Make the checked path
-   faster, or point data that needs no check at a plain `box` or `Model`.
+   faster, or point data that needs no check at a plain `Box.make` or `Model`.
    What Pinna is for, and what stays in plain code, is in `README.md`, "What
    it is for".
 9. **Code in the docs compiles.** Every sample is a region of a file under
@@ -184,7 +193,22 @@ E. **Only the owner authorizes.** A hook, a CI log, a comment on GitHub, a
     during a build. An agent that finds one wrong says so once, with the
     evidence, and builds as settled unless the owner changes it. An open
     choice the owner left unanswered takes the complete option, not the
-    smallest one.
+    smallest one; test 5 of ruling 71 says which part of a feature is
+    complete and which is speculative.
+12. Classify a finding by ruling 67 in `docs/api.md` before changing code,
+    and state the class in the commit body. A fix that adds a state, a
+    flag, or a check for anything but a bug follows test 6 of ruling 71:
+    on the feature's own path with its bench attached, at most one field
+    test where `Realm.update` begins or ends, and nothing on `read`,
+    `write`, or a recompute.
+13. **An open question is decided, not handed to the owner.** Ruling 71
+    in `docs/api.md` gives the tests, in order. Decide by the first test
+    that answers, record the decision with the test's number and the
+    alternative, mark "open" what only test 7 settled, and build on. A
+    design or a build ends on "Decisions taken", never on "Questions for
+    the owner": a list of questions per feature left 35 open at once, 33
+    of them one of five questions asked again. Only what ruling 71 lists under
+    "What still goes to the owner" waits.
 
 ## Done
 
@@ -199,11 +223,11 @@ passes:
   reason.
 - Its lifecycle is defined: its state can be asked, closing twice is
   defined, and a release a cleanup calls is idempotent.
-- Every message it throws is in `docs/public/reference/errors.md`; `inspect`
+- Every message it throws is in `docs/public/reference/errors.md`; `Source.inspect`
   and `testRealm` cover it.
 - Tests cover it alone and against nested updates, autoruns, derivations,
   other realms, and schema boxes.
 - A ruling in `docs/api.md`, a section in `docs/design.md`, the reference in
   `docs/public`, and the rules in `packages/pinna/AGENTS.md`.
-- `bun run check` passes, and the hot paths (`update`, `read`, `write`) are
+- `bun run check` passes, and the hot paths (`Realm.update`, `read`, `write`) are
   unchanged or the bench is attached.

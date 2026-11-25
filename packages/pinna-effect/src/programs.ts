@@ -1,39 +1,68 @@
 /**
  * Effect programs over a realm. A service reacts to state in three ways:
  *
- * - `watchScoped(select, effect)` runs `effect` for each change of what `select`
+ * - `Program.watchScoped(select, effect)` runs `effect` for each change of what `select`
  *   reads, in the caller's scope. A new value interrupts a running effect and
  *   starts one for the new value: the latest value wins.
- * - `changes($x)` streams an observable's current value, then each change.
- * - `observeScoped($x)` holds an observable observed until the scope closes.
+ * - `Program.changes($x)` streams an observable's current value, then each change.
+ * - `Source.observeScoped($x)` holds an observable observed until the scope closes.
  *
- * And state reacts to a service: `fromStream(stream, initial)` is a value fed
- * by a stream while something observes it, and `whileObserved($x, program)`
+ * And state reacts to a service: `Program.fromStream(stream, initial)` is a value fed
+ * by a stream while something observes it, and `Program.whileObserved($x, program)`
  * runs a program while something observes `$x`, such as a feed that writes
  * the rows of a collection.
  *
- * None requires `RealmService`: `watchScoped` and `fromStream` take the
- * realm first, as `watch` does, and `changes`, `observeScoped`, and
- * `whileObserved` take it from the observable. A program that refuses every
+ * None requires `RealmService`: `Program.watchScoped` and `Program.fromStream` take the
+ * realm first, as `Realm.watch` does, and `Program.changes`, `Source.observeScoped`, and
+ * `Program.whileObserved` take it from the observable. A program that refuses every
  * requirement but `Scope` runs each of them.
  */
 
 import {
-  type Atom,
-  atom,
+  Atom,
   type Box,
-  type Computed,
-  computed,
-  type Options,
-  observe,
-  onObserved,
+  Computed,
   type Read,
-  type Realm,
-  update,
-  watch,
+  Realm,
+  type RealmOptions,
+  Source,
+  type UpdateRecord,
+  type ValueOptions,
+  type WatchOptions,
 } from "@frondruntime/pinna";
-import { peek, realmOf } from "@frondruntime/pinna/internal";
+import { peek, realmOf, onDispose as whenDisposed } from "@frondruntime/pinna/internal";
 import { Cause, type Context, Effect, Fiber, Queue, type Scope, Stream } from "effect";
+
+/**
+ * Runs `onDispose` when `realm` is disposed, until the scope closes. It runs
+ * before the realm stops anything, so a program ends before its watch is
+ * stopped under it. A realm that began disposing after the program's watch
+ * started, while the fiber yielded, runs `onDispose` at once: its listeners
+ * have already run.
+ */
+const untilDisposed = (
+  realm: Realm,
+  onDispose: () => void,
+): Effect.Effect<void, never, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.sync(() => whenDisposed(realm, onDispose)),
+    (remove) => Effect.sync(remove),
+  );
+
+/**
+ * A realm that lives as long as the caller's scope: closing the scope runs
+ * `Realm.dispose`. Programs started after it in the same scope stop first,
+ * since a scope closes in reverse order, so each awaits its own release
+ * before the realm disposes. A `Layer` is
+ * `Layer.effect(RealmService, Realm.scoped())`.
+ */
+export const createRealmScoped = (
+  options?: RealmOptions,
+): Effect.Effect<Realm, never, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.sync(() => Realm.make(options)),
+    (realm) => Effect.sync(() => Realm.dispose(realm)),
+  );
 
 /**
  * Runs `effect` whenever `select`'s result changes, not for the current
@@ -43,15 +72,17 @@ import { Cause, type Context, Effect, Fiber, Queue, type Scope, Stream } from "e
  * effect saw it is never `previous`. The effect's error type is `never`, so a
  * defect is a bug: it is logged at the error level, through the program's
  * logger, and the watch keeps running. Closing the scope stops the watch and
- * interrupts the running effect. `options` are `watch`'s: `equals` decides
+ * interrupts the running effect. `options` are `Realm.watch`'s: `equals` decides
  * whether a result is a change, so an equal one neither runs the effect nor
- * interrupts it, and `name` names the watch in its error messages.
+ * interrupts it, `name` names the watch in its error messages, and
+ * `scheduler` runs the select when the scheduler calls `run`, once for every
+ * write before it, rather than before `Realm.update` returns.
  */
 export const watchScoped = <Value>(
   realm: Realm,
   select: (read: Read) => Value,
   effect: (value: Value, previous: Value) => Effect.Effect<void>,
-  options?: Options<Value>,
+  options?: WatchOptions<Value>,
 ): Effect.Effect<void, never, Scope.Scope> =>
   Effect.gen(function* () {
     // Subscribed before this returns, so a write right after it is seen.
@@ -60,7 +91,7 @@ export const watchScoped = <Value>(
     let ranWith: { readonly value: Value } | undefined;
     yield* Effect.acquireRelease(
       Effect.sync(() =>
-        watch(
+        Realm.watch(
           realm,
           select,
           (value, previous) => {
@@ -74,21 +105,31 @@ export const watchScoped = <Value>(
       ),
       (stop) => Effect.sync(stop),
     );
-    yield* Stream.fromQueue(values).pipe(
-      Stream.switchMap((value) => {
-        const previous = (ranWith as { readonly value: Value }).value;
-        ranWith = { value };
-        return Stream.fromEffect(
-          Effect.suspend(() => effect(value, previous)).pipe(
-            Effect.catchDefect((defect) =>
-              Effect.logError("pinna: a watch effect died", Cause.die(defect)),
+    // A new value interrupts the running effect, and waits for it to stop,
+    // before the next runs. A queue and a child fiber, not a `Stream`, so
+    // `Realm.make` does not keep Effect's streams in a bundle.
+    const fiber = yield* Effect.forkScoped(
+      Effect.gen(function* () {
+        let running: Fiber.Fiber<void> | undefined;
+        while (true) {
+          const value = yield* Queue.take(values);
+          if (running !== undefined) {
+            yield* Fiber.interrupt(running);
+          }
+          const previous = (ranWith as { readonly value: Value }).value;
+          ranWith = { value };
+          running = yield* Effect.forkChild(
+            Effect.suspend(() => effect(value, previous)).pipe(
+              Effect.catchDefect((defect) =>
+                Effect.logError("pinna: a watch effect died", Cause.die(defect)),
+              ),
             ),
-          ),
-        );
+          );
+        }
       }),
-      Stream.runDrain,
-      Effect.forkScoped,
     );
+    // Disposing the realm stops the watch; this ends the effect it may be running.
+    yield* untilDisposed(realm, () => fiber.interruptUnsafe());
   });
 
 /**
@@ -105,7 +146,7 @@ export const changes = <Value>(observable: Box<Value> | Computed<Value>): Stream
         Queue.offerUnsafe(queue, peek(observable));
         yield* Effect.acquireRelease(
           Effect.sync(() =>
-            watch(
+            Realm.watch(
               realm,
               (read) => read(observable),
               (value) => {
@@ -115,12 +156,41 @@ export const changes = <Value>(observable: Box<Value> | Computed<Value>): Stream
           ),
           (stop) => Effect.sync(stop),
         );
+        // Disposing the realm stops the watch; this ends the stream.
+        yield* untilDisposed(realm, () => {
+          Queue.endUnsafe(queue);
+        });
       }),
     { bufferSize: 1, strategy: "sliding" },
   );
 
 /**
- * Holds `observable` observed, as pinna's `observe` does, until the caller's
+ * Each record of `realm`'s landed updates, as `Realm.onUpdate` hands them
+ * out, from the update after the stream starts. The buffer is unbounded: a
+ * consumer that falls behind gets every record, since persistence that
+ * skips one loses data. Ends when the realm is disposed, and requires no
+ * `RealmService`.
+ */
+export const updates = (realm: Realm): Stream.Stream<UpdateRecord> =>
+  Stream.callback<UpdateRecord>((queue) =>
+    Effect.gen(function* () {
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Realm.onUpdate(realm, (record) => {
+            Queue.offerUnsafe(queue, record);
+          }),
+        ),
+        (stop) => Effect.sync(stop),
+      );
+      // Disposing the realm stops the listener; this ends the stream.
+      yield* untilDisposed(realm, () => {
+        Queue.endUnsafe(queue);
+      });
+    }),
+  );
+
+/**
+ * Holds `observable` observed, as pinna's `Source.observe` does, until the caller's
  * scope closes.
  */
 export const observeScoped = (
@@ -128,7 +198,7 @@ export const observeScoped = (
 ): Effect.Effect<void, never, Scope.Scope> =>
   Effect.gen(function* () {
     yield* Effect.acquireRelease(
-      Effect.sync(() => observe(observable)),
+      Effect.sync(() => Source.observe(observable)),
       (release) => Effect.sync(release),
     );
   });
@@ -152,7 +222,7 @@ const runWhileObserved = <Requirements>(
   const running = new Set<Fiber.Fiber<void>>();
   return Effect.acquireRelease(
     Effect.sync(() =>
-      onObserved(observable, () => {
+      Source.onObserved(observable, () => {
         const { program, stop } = start();
         const fiber = Effect.runForkWith(context)(
           Effect.scoped(program).pipe(
@@ -184,7 +254,7 @@ const runWhileObserved = <Requirements>(
  * observer arrives, from the beginning each time, and is interrupted when the
  * last one leaves. Each run has a scope of its own, closed when the run ends,
  * so what the program acquires is released between runs. The program runs
- * with the services of the program that called `whileObserved`. Its error
+ * with the services of the program that called `Program.whileObserved`. Its error
  * type is `never`, so a defect is a bug: it is logged at the error level, and
  * the next observation starts it again. Closing the caller's scope interrupts
  * a run and waits for it to end; observing the value later does not start it
@@ -217,24 +287,24 @@ export const whileObserved = <Requirements = never>(
  * stream and resets the value to `initial`; observing the value later does
  * not start it again. `options.equals` compares an element
  * with the value held, so an equal one notifies nobody; `options.name` names
- * the value for `inspect`.
+ * the value for `Source.inspect`.
  */
 export const fromStream = <Value, Requirements = never>(
   realm: Realm,
   stream: Stream.Stream<Value, never, Requirements>,
   initial: Value,
-  options?: Options<Value>,
+  options?: ValueOptions<Value>,
 ): Effect.Effect<Computed<Value>, never, Scope.Scope | Requirements> =>
   Effect.gen(function* () {
     const context = yield* Effect.context<Requirements>();
     // Lifecycle state cannot belong to an update's rollback journal: closing
     // the scope inside an update that throws must not restore a stale value.
     // An atom tracks the closure, and its invalidation survives rollback too.
-    const $changed = atom(realm);
+    const $changed = Atom.make(realm);
     let latest = initial;
     const equals = options?.equals ?? Object.is;
     const name = options?.name;
-    const $value = computed<Value>(
+    const $value = Computed.make<Value>(
       realm,
       (read) => {
         read($changed);
@@ -250,7 +320,7 @@ export const fromStream = <Value, Requirements = never>(
           program: Stream.runForEach(stream, (value) =>
             Effect.sync(() => {
               if (active && !Object.is(latest, value) && !equals(latest, value)) {
-                update(realm, (_read, write) => {
+                Realm.update(realm, (_read, write) => {
                   latest = value;
                   write.changed($changed);
                 });
@@ -262,7 +332,7 @@ export const fromStream = <Value, Requirements = never>(
             // Reset before interruption can run stream finalizers. The reset
             // bypasses element equality: it must restore `initial` itself.
             latest = initial;
-            update(realm, (_read, write) => write.changed($changed));
+            Realm.update(realm, (_read, write) => write.changed($changed));
           },
         };
       },
@@ -271,3 +341,22 @@ export const fromStream = <Value, Requirements = never>(
     );
     return $value;
   });
+
+/**
+ * `Program.fromStream` over one Effect: a read-only value that is, while
+ * observed, what `effect` succeeded with in this observation, or `initial`
+ * before it succeeds; while unobserved, `initial`. The effect runs when the
+ * first observer arrives, from the start each time, and is interrupted when
+ * the last one leaves, which resets the value to `initial`. Its error type is
+ * `never`, so a failure is mapped into the value first, with `Effect.catch`,
+ * and a defect is a bug, logged at the error level. A promise enters through
+ * `Effect.tryPromise`, whose signal aborts on the interruption. Scope,
+ * services, `options`, and disposal are `Program.fromStream`'s.
+ */
+export const fromEffect = <Value, Requirements = never>(
+  realm: Realm,
+  effect: Effect.Effect<Value, never, Requirements>,
+  initial: Value,
+  options?: ValueOptions<Value>,
+): Effect.Effect<Computed<Value>, never, Scope.Scope | Requirements> =>
+  fromStream(realm, Stream.fromEffect(effect), initial, options);
