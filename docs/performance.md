@@ -295,7 +295,7 @@ What it was, and what replaced it:
 - A function that holds a closure gets the closure's scope on entry, before
   any early return: about 80 bytes per call. `drain` returns before the
   function that makes the closures, and a watcher calls its effect inline
-  instead of through `untracked`.
+  instead of through `Realm.untracked`.
 - The pending watchers are a fixed array with a length; a round swaps it
   with a spare instead of making a new one.
 
@@ -352,9 +352,9 @@ The same probe, bytes per operation on Hermes:
 What it was, and what replaced it:
 
 - **`batch` took a closure**, so every `realm.update` paid a scope. The
-  graph has `beginBatch` and `endBatch`, and `update` calls them directly;
+  graph has `beginBatch` and `endBatch`, and `Realm.update` calls them directly;
   `batch` is written with them.
-- **The check ran inside `untracked`**, another closure per write. It now
+- **The check ran inside `Realm.untracked`**, another closure per write. It now
   saves and restores the tracker inline.
 - **A schema that accepts every value still built a check.** `Unknown` and
   `Any` without refinements share one function that returns nothing; a
@@ -650,7 +650,7 @@ This closes the two open decisions from the last entry, at the owner's word.
 
 - **A Computed `peek` makes no closure.** The core's derived node has a
   `peek`, as a cell has: it clears the tracker, reads, and puts it back, with
-  `untracked` written out. The realm's `peekDerived` keeps the untracked
+  `Realm.untracked` written out. The realm's `peekDerived` keeps the untracked
   depth that `realm.untracked` kept, so a hook or cleanup that runs inside a
   `peek` may read as before.
 - **`useValues` reads every value and compares as it goes.** A new array
@@ -836,7 +836,7 @@ line
   by time; a collection returns the same row for a key and edits its order
   with native array calls; a box a decode built does not check its value
   again.
-- **Step 2**: a `SchemaModel` decode parses and checks each field once;
+- **Step 2**: a `Model.Schema` decode parses and checks each field once;
   `Schema.encodeKeys` ran every check twice.
 - **Step 3**: a class builds its boxes after one realm lookup per row,
   not one effectful transformation per box, about 5 µs each.
@@ -924,10 +924,10 @@ showed which calls make and dispose and increment paid, and these went:
 
 - **A box write inside an update**: a four-slot journal entry,
   a first-write path, and one `try` per update.
-- **The core**: `watch` and `disposeWatch` ask `checkObserving`
+- **The core**: `Realm.watch` and `disposeWatch` ask `checkObserving`
   only inside a run, and check for due work before calling the settle;
   `subscribe` and `unsubscribe` handle the source without the stack;
-  `reconcile` takes whether the node is observed from its caller; a walk's
+  `Collection.reconcile` takes whether the node is observed from its caller; a walk's
   entry and exit are written out where they happen.
 - **The public layer**: a read inside a run checks `canRead`
   without a call; `realm.watch` without options and an unnamed computed
@@ -1164,7 +1164,7 @@ read here as noise until a quieter run shows otherwise.
 `bench:hermes-blackbox` now run Legend State (`@legendapp/state`
 3.0.0-beta.48, the 3.x line its docs teach) through the same `Library`
 wrapper as the others: a source is `observable(value)`, a computed value
-`observable(fn)`, a watch `observe`, and an update `batch`. `computed` and
+`observable(fn)`, a watch `Source.observe`, and an update `batch`. `Computed.make` and
 `observablePrimitive` measure the same as `observable(fn)` on Bun.
 
 `bench:hermes-graph`, minimum ms of 9 runs (KB allocated by one run). Pinna, alien-signals, and MobX are within 7% of
@@ -1512,7 +1512,7 @@ same on both: MobX 397 MB, Pinna 99.6 (`useSelect`) and 99.9 (cells).
 ### Removing the methods: the verbs are the only path (2026-11-13)
 
 Boxes lost `get`, `peek`, `set`, and `modify`; computed values `get` and
-`peek`; atoms `observe` and `changed`; collections their writers. Reading
+`peek`; atoms `Source.observe` and `changed`; collections their writers. Reading
 and writing go only through `read` and `write`, and `peek` moved to
 `@frondruntime/pinna/testing`, since removed: tests read through
 `realm.untracked`, and `peek` stays in `/internal` for pinna-react and the
@@ -1864,7 +1864,7 @@ that shape through its own library's tools, and its header cites the page
 it follows:
 
 - **Pinna** (`src/pinna/store.ts`): a `Model` per row with three plain
-  boxes, each with an `equals` for its `Big` or date, in a `collection`;
+  boxes, each with an `equals` for its `Big` or date, in a `Collection.make`;
   `useValue` and `useValues` read them. Plain boxes check nothing; a
   schema box is not measured here.
 - **MobX 6.15.3** (`src/mobx/model.ts`): `observable.ref` on the three
@@ -1972,7 +1972,7 @@ stores allocated the same bytes in both:
 That is about 2.6 KB and 2.8 µs per row in the app, against 1.1 KB from the
 command line. Why the app pays more, and why the plain-object store
 allocates 9.2 MB in the app against 12.9 MB from the command line, is not
-explained. Every `SchemaModel` and `Model` an application constructs under
+explained. Every `Model.Schema` and `Model` an application constructs under
 these defaults pays the same, which this run does not measure. The figures
 of 17.8 MB per load and 184 bytes and about 3 ms for `extends Model`, found
 earlier this day, came from inlined helpers, which the app does not use, and
@@ -2091,9 +2091,9 @@ rows, Pinna at 52.0 ms on load, 256.6 on the merge, and 28.9 on the ticks.
 Make and dispose had sat on the 2× budget since 2026-11-09. Four calls
 that `hermesc -O` does not inline went from its path: a first run of a
 derived value or a watch now links its new edges at the end of the run
-itself, with no `finishRun` and no `reconcile`; `subscribe` and
+itself, with no `finishRun` and no `Collection.reconcile`; `subscribe` and
 `unsubscribe` link and unlink the edge they are given without `append` and
-`detach`; `watch` and `disposeWatch` call `checkObserving` only inside a
+`detach`; `Realm.watch` and `disposeWatch` call `checkObserving` only inside a
 run.
 
 `bench:hermes-graph`, ms minimum of 9 runs (pinna ÷ alien-signals):
@@ -2225,7 +2225,7 @@ A box, a computed value, or an atom was a handle object around a
 pinna-core node. The spike makes each the node: one object per
 observable. A node carries what the handle did: the read of its kind,
 Effect's identity keys, and, on a cell, the host's check and what an update
-recorded of it. The label and `onObserved` hooks move to a part made on
+recorded of it. The label and `Source.onObserved` hooks move to a part made on
 the first of either. On a trial branch, not rebased over the first-run
 linking above. `bun run check` passes, and 100,000 fuzz seeds match
 the `main` it branched from.
@@ -2729,7 +2729,7 @@ on the JS thread.
    fuzzing proves both accept the same inputs. Generated at build time, since
    Hermes bytecode does not take `new Function`. Belongs to
    `pinna-effect`, the class layer.
-2. **Per-update and per-write allocation:** done 2026-11-05 for `update` and
+2. **Per-update and per-write allocation:** done 2026-11-05 for `Realm.update` and
    a write. Left: `write.modify` (then `box.modify`) with a recipe, about
    1.5 KB per call in the draft as measured on 2026-11-05.
 3. **Fewer objects per row:** done 2026-11-12 the cheap way, by building a
@@ -2780,6 +2780,29 @@ Other ideas:
 - **Fair comparisons.** Compare the graph alone with alien-signals, and the
   class layer with serializr plus MobX, not with bare MobX.
 
+### The core rewrite's row probes (2026-11-25)
+
+The core rewrite (ruling 73) makes the row costs flat in a collection's
+size, except what still copies the key order. `bun run --cwd
+packages/pinna bench:rows`, Bun 1.4.4, one operation, median of 7 runs, at
+100,000 rows:
+
+| Probe | `next` before the rewrite | After |
+| --- | ---: | ---: |
+| add a key at the end | 461 µs | 0.86 µs |
+| add a key at the start | 1.43 ms | 1.10 µs |
+| remove a key | 137 µs | 11.9 µs |
+| one row through a hidden stage, applied | 4.02 ms | 8.98 µs |
+| a base row write under one single-row guess | 2.79 ms | 5.33 µs |
+| a new key through a hidden stage, applied | 1.2 ms | 0.57 ms |
+
+- A remove still finds the key with `indexOf` and `splice`, O(keys).
+- A key a stage adds copies the order once at the landing, about 0.5 ms
+  of the 0.57: a stage's read of `orderCell` hands the array out, so the
+  landing cannot change it in place.
+- Node graph scenarios against `next` stay within +3% (deep-chain −0.4%,
+  increment +3.1%); Hermes is measured in the bench thread against `main`.
+
 ### rere-benchmark (read 2026-11-04)
 
 [rere-benchmark](https://github.com/NullVoxPopuli/rere-benchmark) ("The
@@ -2817,7 +2840,8 @@ effects"), which may be closer to the graph-only question.
   default, while a schema box compares by its schema.
 - Whether collection key hashing is pluggable in the core or lives in the
   class layer.
-- How a list grows without a copy (plan item 5).
+- How a list grows without a copy (plan item 5). Decided 2026-11-25 for
+  the key order: in place while nothing holds it (ruling 73).
 - Whether `adopt` keeps the links when a render read what the kept one did,
   as `track` does, rather than relinking (the React hooks entry: on Hermes it
   doubles the graph work per render and allocates). A change in the core.

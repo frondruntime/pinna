@@ -5,7 +5,7 @@ description: Read when writing state. Write a box in an update, draft arrays and
 
 ## Example
 
-A box has one way in: `update`, which hands out `read` and `write`. An array
+A box has one way in: `Realm.update`, which hands out `read` and `write`. An array
 or a plain object is changed through a draft from `write.modify` — mutated
 inside the recipe, then written back once. The samples on this page and on
 [Reacting](./reacting.md) share this realm and box.
@@ -20,14 +20,14 @@ after a rollback they see the old state.
 
 <!-- region state.ts#atomic -->
 
-A refetch hands back new objects for items that did not change. `reconcile`
+A refetch hands back new objects for items that did not change. `Collection.reconcile`
 keeps the previous object of every item that did not change, so what derives
 one item from the list returns the same value and its readers do not rerun.
 
 <!-- region state.ts#reconcile -->
 
 An event handler wants the value as it is now, not a subscription. It reads
-through `untracked`.
+through `Realm.untracked`.
 
 <!-- region state.ts#untracked -->
 
@@ -73,24 +73,24 @@ through `untracked`.
 
 | Call | Answers |
 | --- | --- |
-| `update(realm, (read, write) => ...)` | Runs the recipe atomically. If it throws, every box it wrote gets its old value back. |
+| `Realm.update(realm, (read, write) => ...)` | Runs the recipe atomically. If it throws, every box it wrote gets its old value back. |
 | `write($box, value)` | Replaces the value. |
 | `write.modify($box, (draft) => ...)` | Writes the drafted array or object back once. |
 | `Write` | The type of `write`, for a function an update hands it to. Each of its calls returns `undefined`, so a recipe can end in one. |
-| `reconcile(previous, next, { keyOf, equals })` | `next`, with each item `equals` finds unchanged replaced by its previous instance; `previous` itself when nothing changed. A key repeated in `next` throws. |
-| `untracked(realm, (read) => ...)` | What the function returns, read without subscribing. |
-| `openStage(realm, { name?, conflicts? })` | A new `Stage` over the realm, holding nothing. `conflicts: "fail"` makes `applyStage` refuse when what the stage read changed. |
-| `openStage(stage, { name? })` | A child stage over `stage`: a savepoint that applies into it. |
-| `stageUpdate(stage, (read, write) => ...)` | Runs the recipe at once against the stage and keeps it. No box changes. A recipe that throws puts back what it wrote to the stage and is not kept. |
-| `stageRead(stage, (read) => ...)` | What the function returns, reading through the stage: its own writes, and the realm's current values elsewhere. |
-| `realmRead(stage, (read) => ...)` | What the function returns, reading the realm's values as `untracked` does, ignoring the stage. These reads are not recorded for the conflict check. |
-| `applyStage(stage)` | Replays its recipes in order: over a realm, into a fresh overlay, then lands its final state in one update nested in an open one; over a stage, into that stage. A conflict or replay throw drops it; a precondition failure leaves it open. |
-| `dropStage(stage)` | Closes the stage and its open children, and discards them. No box changes. Does nothing to a closed stage. |
-| `stageStatus(stage)` | `"open"`, `"applied"`, or `"dropped"`. |
-| `inspectStage(stage)` | The stage's name, realm, parent, status, and conflict mode; the names of the boxes and collections it wrote; under `{ conflicts: "fail" }`, the names of what it read and `applyStage` checks; and how many recipes and open children it holds. |
-| `Recipe` | `(read, write) => undefined`: what `update` and `stageUpdate` run. |
-| `StageClosedError` | Thrown by `stageUpdate`, `stageRead`, `realmRead`, `applyStage`, or `openStage` of a child on a closed stage; `stage` is its name and `status` how it closed. |
-| `StageConflictError` | Thrown by `applyStage` on a conflict; `changed` names what changed, a named box or collection by its `name`, and `observables` holds it. |
+| `Collection.reconcile(previous, next, { keyOf, equals })` | `next`, with each item `equals` finds unchanged replaced by its previous instance; `previous` itself when nothing changed. A key repeated in `next` throws. |
+| `Realm.untracked(realm, (read) => ...)` | What the function returns, read without subscribing. |
+| `Stage.make(realm, { name?, conflicts?, visible? })` | A new `Stage` over the realm, holding nothing. `conflicts: "fail"` makes `Stage.apply` refuse when what the stage read or wrote changed. `visible: true` shows its writes over the realm's confirmed values until it applies or drops. |
+| `Stage.make(stage, { name? })` | A child stage over `stage`: a savepoint that applies into it. |
+| `Stage.update(stage, (read, write) => ...)` | Runs the recipe at once against the stage and keeps it. No box changes. A recipe that throws puts back what it wrote to the stage and is not kept. |
+| `Stage.read(stage, (read) => ...)` | What the function returns, reading through the stage: its own writes, then, for a visible stage, the showing stages below it, and the realm's confirmed values elsewhere. |
+| `Stage.realmRead(stage, (read) => ...)` | What the function returns, reading the realm's confirmed values, ignoring every stage. These reads are not recorded for the conflict check. |
+| `Stage.apply(stage)` | Replays its recipes in order: over a realm, into a fresh overlay, then lands its final state in one update nested in an open one; over a stage, into that stage. A conflict or replay throw drops it; a precondition failure leaves it open. |
+| `Stage.drop(stage)` | Closes the stage and its open children, and discards them. No box changes. Does nothing to a closed stage. |
+| `Stage.status(stage)` | `"open"`, `"applied"`, or `"dropped"`. |
+| `Stage.inspect(stage)` | The stage's name, realm, parent, status, and conflict mode; the names of the boxes and collections it wrote; under `{ conflicts: "fail" }`, the names of what it read or wrote and `Stage.apply` checks; how many recipes and open children it holds; `visible`; `showing`, `false` for a hidden stage and a stopped one; and `failure`, the error a stopped stage keeps. |
+| `UpdateRecipe` | `(read, write) => undefined`: what `Realm.update` and `Stage.update` run. |
+| `StageClosedError` | Thrown by `Stage.update`, `Stage.read`, `Stage.realmRead`, `Stage.apply`, or `Stage.make` of a child on a closed stage; `_tag` is `"StageClosedError"`, `stage` its name, and `status` how it closed. |
+| `StageConflictError` | Thrown by `Stage.apply` on a conflict, and by `Stage.update` and `Stage.read` on a visible stage stopped by one; `_tag` is `"StageConflictError"`, `changed` names what changed, a named box or collection by its `name`, and `observables` holds it. |
 
 ## Effects after the update
 
@@ -106,18 +106,18 @@ request carries both items.
 <!-- region state.ts#afterUpdate -->
 
 An effect that needs no state from the realm, such as closing a dialog,
-runs in the event handler after its `update` returns, and a throw leaves
+runs in the event handler after its `Realm.update` returns, and a throw leaves
 the handler before it. This holds only for the outermost update: code after
-an `update` that joined an outer one runs before the outer one ends, and
+a `Realm.update` that joined an outer one runs before the outer one ends, and
 the outer one can still throw.
 
 ## Stages
 
 A stage holds back the writes of asynchronous work until it succeeds:
-`applyStage` lands them in one update, and `dropStage` discards them. Until
+`Stage.apply` lands them in one update, and `Stage.drop` discards them. Until
 then no box changes, so nothing renders a half-done result and a failure
-leaves nothing to undo. An optimistic write, one meant to show before the
-work succeeds, stays a plain `update` that the application undoes by hand.
+leaves nothing to undo. A write meant to show before the work succeeds
+goes in a visible stage ([Visible stages](#visible-stages)).
 
 <!-- region stages.ts#setup -->
 
@@ -130,16 +130,16 @@ which the stage evaluates over its own values. A refetch stages
 
 <!-- region stages.ts#reads -->
 
-`realmRead` reads what the realm holds, to compare it with the stage.
+`Stage.realmRead` reads what the realm holds, to compare it with the stage.
 
 <!-- region stages.ts#compare -->
 
-A function that hands back a change returns a `Recipe`, which `update` and
-`stageUpdate` both run.
+A function that hands back a change returns a `UpdateRecipe`, which `Realm.update` and
+`Stage.update` both run.
 
 <!-- region stages.ts#recipe -->
 
-A recipe runs once when staged and once per `applyStage` along its path
+A recipe runs once when staged and once per `Stage.apply` along its path
 through parent stages to the realm. Row listeners run for each change on
 each run. Root replay runs in a fresh overlay over the realm's current values under the same
 recipe guard, then one update lands the final state without user code in
@@ -155,7 +155,9 @@ its parent; dropped, it leaves the parent as it was.
 <!-- region stages.ts#savepoint -->
 
 A stage opened with `{ conflicts: "fail" }` refuses to land when something it
-read changed in the realm since.
+read changed in the realm since: a box, a collection, or an atom, read
+directly or beneath a computed value. An atom read beneath a computed value
+is reported by that value's name.
 
 <!-- region stages.ts#conflicts -->
 
@@ -166,20 +168,20 @@ failed replay in the same update.
 
 ### Rules
 
-- Every call takes the stage first, as `update` takes the realm. The realm
-  keeps no current stage, so `update` and `read` cost the same with stages
+- Every call takes the stage first, as `Realm.update` takes the realm. The realm
+  keeps no current stage, so `Realm.update` and `read` cost the same with stages
   in use.
 - A recipe is a function of its `read`. It runs once when staged and once
-  per `applyStage` through its parents to the realm, over the destination's
+  per `Stage.apply` through its parents to the realm, over the destination's
   values at that moment, so an id, a time, or an observable it made would
-  differ between runs. Inside a recipe, inside a `stageRead` function, and
+  differ between runs. Inside a recipe, inside a `Stage.read` function, and
   inside a computed value the stage evaluates, making a box, a computed
   value, a computed function, an atom, a collection, or a model throws, and
-  so do `update` writing the realm, a `read` or a `write` kept from another place,
-  `untracked`, `watch`, `autorun`, `observe`, `onObserved`, `onRowChange`,
+  so do `Realm.update` writing the realm, a `read` or a `write` kept from another place,
+  `Realm.untracked`, `Realm.watch`, `Realm.autorun`, `Source.observe`, `Source.onObserved`, `Collection.onRowChange`,
   and every stage call. The guard covers the stage's own realm;
-  `update(otherRealm, ...)` runs on every recipe run, and its writes survive
-  `dropStage`. Pinna has no
+  `Realm.update(otherRealm, ...)` runs on every recipe run, and its writes survive
+  `Stage.drop`. Pinna has no
   development mode, so these checks run in every build.
 - A read through a stage sees the stage's writes; what it did not write
   reads the realm's current value. It is not a snapshot: a box the stage
@@ -187,29 +189,31 @@ failed replay in the same update.
   Once a stage writes a collection it holds that collection's rows and
   order, so the two agree.
 - A computed value read through a stage runs its own function against the
-  stage's `read`, outside the graph: it starts no `onObserved` source, and
+  stage's `read`, outside the graph: it starts no `Source.onObserved` source, and
   a value nothing observes reads what its boxes hold. The result is cached
   on the stage until the stage, a parent stage, or the realm changes.
 - A stage writes boxes (`write`, `write.modify`), collections
   (`write.upsert`, `write.remove`, `write.replaceAll`), and atoms
   (`write.changed`, which reruns observers when the stage is applied). A
   collection write keeps a row equal to the one held, merges a refetched
-  `SchemaModel` into the held instance, and runs `onRowChange` listeners
+  `Model.Schema` into the held instance, and runs `Collection.onRowChange` listeners
   with the stage's `read` and `write`, as in an update.
 - A schema box or a schema collection checks a staged write at
-  `stageUpdate`, so the work learns of a refused value where it wrote it,
-  and during each `applyStage`'s guarded replay. Landing skips the check
+  `Stage.update`, so the work learns of a refused value where it wrote it,
+  and during each `Stage.apply`'s guarded replay. Landing skips the check
   already performed by that same box or collection.
-- `applyStage` replays over the realm's values when it runs. By default it
+- `Stage.apply` replays over the realm's values when it runs. By default it
   does not detect a conflict: a stage that added 2 to a box at 1 lands 7
   when another update moved the box to 5. With `{ conflicts: "fail" }` it
   throws a `StageConflictError` instead and lands nothing, when a box or
   collection the stage read, directly or through a computed value, changed
   since. A `write.modify` counts as a read of its box when its base comes
-  from the realm, as `read` does. A box the stage wrote without reading is
-  the last writer's. Reading two different versions of one box or collection
+  from the realm, as `read` does. A box or collection the stage wrote
+  without reading counts too: under `"fail"` the first writer wins, so a
+  change underneath a blind write is a conflict, not a silent overwrite.
+  Under `"replay"` that box is the last writer's. Reading two different versions of one box or collection
   conflicts even if a rollback restores the first version.
-- `applyStage` replays into a fresh overlay, then lands its final box
+- `Stage.apply` replays into a fresh overlay, then lands its final box
   values, collection rows and order, and atom marks in one update, nested
   in an update already open. Row listeners run during replay, once per
   change; landing does not call them again. A replay throw, including a
@@ -220,27 +224,115 @@ failed replay in the same update.
   If an enclosing update rolls back the landing, the stage reads
   `"dropped"`; stage the work again in a new stage. An empty journal stays
   `"applied"`, since it had no landing to undo.
-- A stage closes once, `"applied"` or `"dropped"`, and `stageStatus` says
-  which. A conflict or a replay throw drops it. An `applyStage` precondition
+- A stage closes once, `"applied"` or `"dropped"`, and `Stage.status` says
+  which. A conflict or a replay throw drops it. A `Stage.apply` precondition
   failure, such as an open child or a call inside a recipe or computed
-  value, leaves it open. After closing, `stageStatus` and `inspectStage`
-  remain callable outside a recipe; `dropStage` does nothing, so a `finally`
+  value, leaves it open. After closing, `Stage.status` and `Stage.inspect`
+  remain callable outside a recipe; `Stage.drop` does nothing, so a `finally`
   drops whether or not the work applied. Every other stage call throws
   `StageClosedError`. A `read` or a `write` kept past its recipe throws.
 - Watch effects and autoruns settle after landing. Their errors go to
   `onError` and the stage stays `"applied"`.
-- A child stage reads through its parent. `applyStage` replays it into the
-  parent as one `stageUpdate`, and a throw leaves the parent as it was. A
+- A child stage reads through its parent. `Stage.apply` replays it into the
+  parent as one `Stage.update`, and a throw leaves the parent as it was. A
   parent with an open child does not apply; dropping the parent drops its
   children.
-- Staged values are not observable. Nothing subscribes to them, and
-  `stageRead` and `realmRead` throw in a computed value, a watch's select,
-  or a selector, which would go stale on them. `stageUpdate` and
-  `applyStage` throw there as `update` does.
+- A hidden stage's values are not observable. Nothing subscribes to them, and
+  `Stage.read` and `Stage.realmRead` throw in a computed value, a watch's select,
+  or a selector, which would go stale on them. `Stage.update` and
+  `Stage.apply` throw there as `Realm.update` does.
 - A stage left open holds its overlay until it is collected. A test realm's
   dispose reports it as `stage "name" still running`, and drops it
-  ([Testing](../guides/testing.md)). `inspectStage` reports its name,
+  ([Testing](../guides/testing.md)). `Stage.inspect` reports its name,
   parent, status, and what it holds.
+
+## Visible stages
+
+A stage made with `{ visible: true }` shows its writes at once, over the
+realm's confirmed values, and keeps showing them until `Stage.apply` lands
+them or `Stage.drop` takes them off. An optimistic write is a visible
+stage: a failure drops it and leaves nothing to undo by hand, and a refetch
+that lands under it keeps the guess on top. When the guess is the answer,
+the stage applies on success.
+
+<!-- region stages.ts#visible -->
+
+When the server's answer wins, the guess goes in a visible stage, the
+answer in a hidden one, and one `Realm.update` applies the answer and drops
+the guess, so a watcher runs once, with the settled value. A box the guess
+writes, such as `$saving`, marks the row as pending for exactly as long as
+the guess shows.
+
+<!-- region stages.ts#settle -->
+
+A visible stage replays its recipes each time something it read changes
+under it. One that `Stage.apply` would refuse, by a conflict under
+`{ conflicts: "fail" }` or a recipe that throws on replay, stops showing
+and keeps the reason.
+
+<!-- region stages.ts#stopped -->
+
+### Rules
+
+- The realm's own values are the confirmed values. Visible stages stack in
+  the order made, and every reader at rest (a computed value, a watch, an
+  autorun, a hook, `Realm.untracked`, `Source.peek`) sees the confirmed
+  values with each showing stage on top, the newest last.
+- A `Realm.update` recipe reads and writes the confirmed values, even where
+  the screen shows a guess: a recipe that added 1 to a shown 11 would leave
+  12 after the guess dropped. A further change to a guessed value goes in a
+  stage made above the guess. Pinna does not check this, because the read
+  path cannot afford the check.
+- A value read at rest and written later in an update writes the shown
+  value into the confirmed values: `Source.peek($count)` in a handler, then
+  `write($count, count)` in an update, confirms a guess. Read inside the
+  recipe instead. Pinna does not check this either.
+- After each outermost update that changed something a showing stage read,
+  the stack replays from the lowest such stage: each recipe runs again over
+  the confirmed values and the showing stages below it. A shown value equal
+  to the one shown before keeps its version, so an update that moves
+  nothing under the stack reruns no reader. Showing or taking off a guess
+  writes nothing to the confirmed values; a rollback restores them.
+- A visible stage reads the showing stages below it. A hidden stage and
+  `Stage.realmRead` read the confirmed values, so a hidden stage's
+  `{ conflicts: "fail" }` check sees a guess only once it is applied.
+- A stage that `Stage.apply` would refuse stops showing for good:
+  `Stage.inspect(stage).showing` is `false`, its status stays `"open"`, the
+  stages above replay without it, and the update that moved the value under
+  it does not fail. `Stage.update`, `Stage.read`, and `Stage.apply` throw the
+  error it keeps, and `Stage.apply` also drops it. A recipe's own throw also
+  reaches the realm's `onError` once, when the stage stops, since the
+  answer-wins flow never applies the guess; a `StageConflictError` does not.
+- Under `{ conflicts: "fail" }`, a read of a value a lower guess covers
+  records the confirmed version, so the upper stage conflicts when the
+  lower one applies.
+- `Stage.apply` of a visible stage takes it off the stack and lands it as a
+  hidden one lands; the stages above replay over the new values. Applying
+  the bottom stage notifies nobody, since it shows what it lands. A throw
+  drops the stage and reaches the caller; the caller's update keeps its own
+  writes if it catches it.
+- A box's `equals` runs while the stack settles what it shows, under the
+  same guard as a recipe: one that updates or observes throws there. A
+  throw counts as unequal and goes to `onError`, so the stack never stops
+  half shown.
+- An atom a visible stage marks reruns its readers when the mark starts
+  showing and when it stops, not again when the stage applies.
+- A child of a visible stage is a hidden savepoint; `{ visible: true }` on a
+  child throws `pinna/stage-visible-option`.
+- Every stage call runs inside an update while a visible stage is open, so
+  it is allowed exactly where `Realm.update` is. A view made while a guess is
+  pending shows the guessed rows.
+- `Realm.dispose` takes every visible stage off and drops it, so a read after
+  disposal returns confirmed values. A test realm reports a visible stage
+  left open as it reports a hidden one. `Source.inspect($box).stages` names
+  the showing stages over a box, bottom first.
+- An update under a guess replays the guess's recipes and swaps the rows of
+  the keys the guess wrote, not the collection: about 5 µs per update under
+  a one-row guess at 100,000 rows (`bench:rows`). A guess that adds or
+  removes keys copies the key order once each time it replays and once when
+  it applies: about 0.6 ms at 100,000 rows.
+- A `Computed.fromPromise` or `Program.fromStream` value is not writable, so
+  no guess stands over it: copy the answer into a box or a collection.
 
 ## See also
 
@@ -248,5 +340,5 @@ failed replay in the same update.
 - [Reacting](./reacting.md): running code when a value changes.
 - [Schema-checked boxes](../effect/boxes.md): what a write checks when the box has a schema.
 - [Collections](./collections.md): `write.upsert`, `write.remove`, and `write.replaceAll`.
-- [Equality and hashing](../effect/equality.md): what `equals` and `reconcile` count as unchanged.
+- [Equality and hashing](../effect/equality.md): what `equals` and `Collection.reconcile` count as unchanged.
 - [Live data](../guides/live-data.md): a WebSocket feed and a refetch, written one update per message.

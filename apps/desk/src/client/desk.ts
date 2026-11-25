@@ -1,14 +1,5 @@
-import {
-  box,
-  type Computed,
-  computed,
-  Model,
-  type Realm,
-  untracked,
-  update,
-  watch,
-} from "@frondruntime/pinna";
-import { RealmService, schemaBox, whileObserved } from "@frondruntime/pinna-effect";
+import { Computed, Model, Realm } from "@frondruntime/pinna";
+import { Box, Program, RealmService } from "@frondruntime/pinna-effect";
 import { Clock, Effect, type Fiber, Option, type Scope, Stream } from "effect";
 import type { Transport } from "../transport.ts";
 import { Account } from "./account.ts";
@@ -46,13 +37,13 @@ export interface PriceDisplay {
 
 const units = (decimal: string) => BigInt(decimal.replace(".", ""));
 
-export class Desk extends Model {
-  readonly $notional = box(this.realm, defaultNotional, {
+export class Desk extends Model.Class {
+  readonly $notional = Box.make(this.realm, defaultNotional, {
     name: "Desk.notional",
   });
-  readonly $execution = schemaBox(this.realm, ExecutionState, "idle", { name: "Desk.execution" });
-  readonly $confirmation = box<Direction | null>(this.realm, null);
-  readonly $canExecute = computed(
+  readonly $execution = Box.schema(this.realm, ExecutionState, "idle", { name: "Desk.execution" });
+  readonly $confirmation = Box.make<Direction | null>(this.realm, null);
+  readonly $canExecute = Computed.make(
     this.realm,
     (read) =>
       isPositiveDecimal(read(this.$notional)) &&
@@ -63,7 +54,7 @@ export class Desk extends Model {
   private running: Fiber.Fiber<void> | undefined;
 
   setNotional(value: string) {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write(this.$notional, value);
       write(this.$confirmation, null);
     });
@@ -73,7 +64,7 @@ export class Desk extends Model {
   execute(direction: Direction, seenRate?: string, confirmed = false) {
     const desk = this;
     return Effect.suspend(() => {
-      const input = untracked(desk.realm, (read) => ({
+      const input = Realm.untracked(desk.realm, (read) => ({
         allowed: read(desk.$canExecute),
         notional: read(desk.$notional),
         price: read(desk.$prices).current,
@@ -81,7 +72,7 @@ export class Desk extends Model {
       }));
       if (!input.allowed || input.price === null) return Effect.void;
       if (!confirmed && compareDecimal(input.notional, input.threshold) > 0) {
-        update(desk.realm, (_read, write) => write(desk.$confirmation, direction));
+        Realm.update(desk.realm, (_read, write) => write(desk.$confirmation, direction));
         return Effect.void;
       }
       desk.cancelExecution();
@@ -96,7 +87,7 @@ export class Desk extends Model {
       };
       const current = () => desk.active === token;
       const setState = (state: ExecutionState) => {
-        if (current()) update(desk.realm, (_read, write) => write(desk.$execution, state));
+        if (current()) Realm.update(desk.realm, (_read, write) => write(desk.$execution, state));
       };
       return Effect.gen(function* () {
         const time = new Date(yield* Clock.currentTimeMillis).toISOString();
@@ -153,7 +144,7 @@ export class Desk extends Model {
         Effect.ensuring(
           Effect.sync(() => {
             if (current()) {
-              if (untracked(desk.realm, (read) => read(desk.$execution)) === "pending")
+              if (Realm.untracked(desk.realm, (read) => read(desk.$execution)) === "pending")
                 desk.trades.withdraw(token.id);
               setState("idle");
               desk.active = undefined;
@@ -168,11 +159,11 @@ export class Desk extends Model {
     this.running = this.runExecution(this.execute(direction, seenRate));
   }
   confirmExecution() {
-    const direction = untracked(this.realm, (read) => read(this.$confirmation));
+    const direction = Realm.untracked(this.realm, (read) => read(this.$confirmation));
     if (direction) this.running = this.runExecution(this.execute(direction, undefined, true));
   }
   dismissConfirmation() {
-    update(this.realm, (_read, write) => write(this.$confirmation, null));
+    Realm.update(this.realm, (_read, write) => write(this.$confirmation, null));
   }
 
   cancelExecution() {
@@ -182,12 +173,12 @@ export class Desk extends Model {
     this.running?.interruptUnsafe();
     this.running = undefined;
     if (active !== undefined) {
-      if (untracked(this.realm, (read) => read(this.$execution)) === "pending")
+      if (Realm.untracked(this.realm, (read) => read(this.$execution)) === "pending")
         this.trades.withdraw(active.id);
-      update(this.realm, (_read, write) => write(this.$execution, "idle"));
+      Realm.update(this.realm, (_read, write) => write(this.$execution, "idle"));
     }
   }
-  readonly $display = computed<PriceDisplay>(
+  readonly $display = Computed.make<PriceDisplay>(
     this.realm,
     (read) => {
       const { current, previous, error } = read(this.$prices);
@@ -232,14 +223,14 @@ export class Desk extends Model {
   }
 }
 
-export class Workspace extends Model implements Disposable {
+export class Workspace extends Model.Class implements Disposable {
   readonly $openSymbols;
-  readonly $panelShown = box(this.realm, true);
+  readonly $panelShown = Box.make(this.realm, true);
   readonly positions: Positions;
   readonly layouts: Layouts;
   private readonly stopClosing: () => void;
   /** A coherent headless view with exactly the same conditional dependencies as the UI. */
-  readonly $view = computed(this.realm, (read) => ({
+  readonly $view = Computed.make(this.realm, (read) => ({
     tiles: read(this.$openSymbols).map((symbol) => ({
       symbol,
       price: read(this.tile(symbol).$prices).current,
@@ -257,14 +248,14 @@ export class Workspace extends Model implements Disposable {
     store?: WorkspaceStore,
   ) {
     super(realm);
-    this.$openSymbols = box<readonly PairSymbol[]>(
+    this.$openSymbols = Box.make<readonly PairSymbol[]>(
       realm,
       tiles.map((tile) => tile.pair.symbol),
     );
     this.positions = new Positions(realm, tiles, trades);
     this.layouts = new Layouts(this, store);
     // Cancellation cannot roll back. Wait for a successful outer update before interrupting.
-    this.stopClosing = watch(
+    this.stopClosing = Realm.watch(
       realm,
       (read) => read(this.$openSymbols),
       (open, previous) => {
@@ -280,7 +271,7 @@ export class Workspace extends Model implements Disposable {
   }
   closeTile(symbol: PairSymbol) {
     this.tile(symbol);
-    update(this.realm, (read, write) =>
+    Realm.update(this.realm, (read, write) =>
       write(
         this.$openSymbols,
         read(this.$openSymbols).filter((open) => open !== symbol),
@@ -289,13 +280,13 @@ export class Workspace extends Model implements Disposable {
   }
   openTile(symbol: PairSymbol) {
     this.tile(symbol);
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       if (!read(this.$openSymbols).includes(symbol))
         write(this.$openSymbols, [...read(this.$openSymbols), symbol]);
     });
   }
   showPositions(shown: boolean) {
-    update(this.realm, (_read, write) => write(this.$panelShown, shown));
+    Realm.update(this.realm, (_read, write) => write(this.$panelShown, shown));
   }
   [Symbol.dispose]() {
     this.stopClosing();
@@ -316,9 +307,9 @@ export const makeDesk = (transport: Transport, store?: WorkspaceStore) =>
     for (const pair of pairs) {
       const initial: PriceState = { current: null, previous: null, error: null };
       // History belongs to the desk; it never supplies an executable quote.
-      const $lastPrice = box<Price | null>(realm, null, { name: "Desk.lastPrice" });
-      const $prices = box<PriceState>(realm, initial, { name: "Desk.prices" });
-      yield* whileObserved(
+      const $lastPrice = Box.make<Price | null>(realm, null, { name: "Desk.lastPrice" });
+      const $prices = Box.make<PriceState>(realm, initial, { name: "Desk.prices" });
+      yield* Program.whileObserved(
         $prices,
         transport.subscribe(`prices/${pair.symbol}`).pipe(
           Stream.mapEffect((raw) =>
@@ -332,7 +323,7 @@ export const makeDesk = (transport: Transport, store?: WorkspaceStore) =>
           ),
           Stream.runForEach((current) =>
             Effect.sync(() =>
-              update(realm, (read, write) => {
+              Realm.update(realm, (read, write) => {
                 write($prices, { current, previous: read($lastPrice), error: null });
                 write($lastPrice, current);
               }),
@@ -340,7 +331,7 @@ export const makeDesk = (transport: Transport, store?: WorkspaceStore) =>
           ),
           Effect.catch((error) =>
             Effect.sync(() =>
-              update(realm, (read, write) =>
+              Realm.update(realm, (read, write) =>
                 write($prices, { ...read($prices), error: String(error) }),
               ),
             ),
@@ -349,7 +340,7 @@ export const makeDesk = (transport: Transport, store?: WorkspaceStore) =>
           // either way the tile must not keep a quote nobody streams.
           Effect.andThen(Effect.never),
           Effect.ensuring(
-            Effect.sync(() => update(realm, (_read, write) => write($prices, initial))),
+            Effect.sync(() => Realm.update(realm, (_read, write) => write($prices, initial))),
           ),
         ),
       );

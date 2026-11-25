@@ -1,9 +1,10 @@
 /**
- * `reconcile` keeps row identity across a refetch: an item whose key and
+ * `Collection.reconcile` keeps row identity across a refetch: an item whose key and
  * value are unchanged is the previous instance, so a box of the result
  * notifies nobody and a row's component does not rerender.
  */
 
+import { PinnaUsageError } from "@frondruntime/pinna-core";
 import { keyName } from "./collection.ts";
 
 export interface ReconcileOptions<Item, Key> {
@@ -39,7 +40,10 @@ export const reconcile = <Item, Key>(
     const item = next[index] as Item;
     const key = keyOf(item);
     if (seen.has(key)) {
-      throw new Error(`pinna: reconcile: the key ${keyName(key)} appears twice`);
+      throw new PinnaUsageError(
+        "pinna/repeated-key",
+        `pinna: reconcile: the key ${keyName(key)} appears twice`,
+      );
     }
     seen.add(key);
     const kept = byKey.get(key) as Item;

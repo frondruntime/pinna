@@ -18,16 +18,7 @@
  * has since ba6c982.
  */
 import { Reaction } from "@frondruntime/pinna-core";
-import {
-  type Box,
-  box,
-  type Computed,
-  computed,
-  createRealm,
-  type Read,
-  type Realm,
-  update,
-} from "../src/index.ts";
+import { Box, Computed, type Read, Realm } from "../src/index.ts";
 import { peek, realmOf } from "../src/internal/index.ts";
 import type { Host, Measured } from "./graph-model.ts";
 
@@ -236,9 +227,9 @@ const middle = (values: Array<number>): number => {
 
 const makeRows = (realm: Realm, count: number): Array<Row> =>
   Array.from({ length: count }, () => {
-    const $a = box(realm, 1);
-    const $b = box(realm, 0);
-    const $sum = computed(realm, (read) => read($a) + read($b));
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 0);
+    const $sum = Computed.make(realm, (read) => read($a) + read($b));
     return { $a, $b, $sum };
   });
 
@@ -271,7 +262,7 @@ const expect = (actual: number, expected: number, scenario: string): void => {
 /** Mounts `count` rows and unmounts them. */
 const mount = (host: Host, hook: Hook, count: number): Measured =>
   measureOne(host, () => {
-    const rows = makeRows(createRealm(), count);
+    const rows = makeRows(Realm.make(), count);
     return () => {
       const mounted = rows.map((row) => hook(row, () => {}));
       for (const each of mounted) {
@@ -290,7 +281,7 @@ const tick = (
   scenario: string,
 ): Measured =>
   measureOne(host, () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const rows = makeRows(realm, count);
     const dirty: Array<Mounted> = [];
     const mounted: Array<Mounted> = [];
@@ -300,7 +291,7 @@ const tick = (
     }
     return () => {
       for (let pass = 0; pass < passes; pass++) {
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           for (let index = 0; index < ticking; index++) {
             const row = rows[index] as Row;
             write(row.$a, read(row.$a) + 1);

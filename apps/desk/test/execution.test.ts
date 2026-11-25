@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { untracked, update } from "@frondruntime/pinna";
+import { Realm } from "@frondruntime/pinna";
 import { testRealm } from "@frondruntime/pinna/testing";
-import { observeScoped, RealmService } from "@frondruntime/pinna-effect";
+import { RealmService, Source } from "@frondruntime/pinna-effect";
 import { Clock, Effect, Exit, Fiber, type Scope } from "effect";
 import { TestClock } from "effect/testing";
 import { type Desk, makeDesk } from "../src/client/desk.ts";
@@ -10,8 +10,9 @@ import { type ExchangeOptions, makeExchange } from "../src/exchange/index.ts";
 import { inMemoryTransport } from "../src/transport.ts";
 import { foldLog } from "./oracle.ts";
 
-const executionState = (desk: Desk) => untracked(desk.realm, (read) => read(desk.$execution));
-const trades = (desk: Desk) => untracked(desk.realm, (read) => read(desk.trades.$trades.rows));
+const executionState = (desk: Desk) => Realm.untracked(desk.realm, (read) => read(desk.$execution));
+const trades = (desk: Desk) =>
+  Realm.untracked(desk.realm, (read) => read(desk.trades.$trades.rows));
 
 async function scenario(
   options: Partial<ExchangeOptions>,
@@ -34,8 +35,8 @@ async function scenario(
     });
     const memory = inMemoryTransport(exchange);
     const desk = (yield* makeDesk(memory.transport)).tile("EURUSD");
-    yield* observeScoped(desk.$display);
-    yield* observeScoped(desk.trades.$keys);
+    yield* Source.observeScoped(desk.$display);
+    yield* Source.observeScoped(desk.trades.$keys);
     yield* TestClock.adjust(10);
     yield* check(desk, memory);
   }).pipe(
@@ -55,7 +56,7 @@ test("fill replaces the immediate pending row and returns to idle three seconds 
       expect(executionState(desk)).toBe("pending");
       expect(trades(desk)).toHaveLength(1);
       expect(trades(desk)[0]?.status).toBe("pending");
-      expect(untracked(desk.realm, (read) => read(desk.$canExecute))).toBe(false);
+      expect(Realm.untracked(desk.realm, (read) => read(desk.$canExecute))).toBe(false);
       expect(
         JSON.parse(memory.log.find((entry) => entry.address === "/execute")?.raw ?? "{}").notional,
       ).toBe("250000.125");
@@ -147,7 +148,7 @@ test("the workflow accepts only positive decimal notionals without rendering Rea
         "one",
       ]) {
         desk.setNotional(notional);
-        expect(untracked(desk.realm, (read) => read(desk.$canExecute))).toBe(false);
+        expect(Realm.untracked(desk.realm, (read) => read(desk.$canExecute))).toBe(false);
         yield* desk.execute("buy");
       }
       expect(memory.log.some((entry) => entry.address === "/execute")).toBe(false);
@@ -162,7 +163,9 @@ test("an invalid execution state throws at the write and rolls back", () =>
   scenario({}, (desk) =>
     Effect.sync(() => {
       expect(() =>
-        update(desk.realm, (_read, write) => write(desk.$execution, "filled" as ExecutionState)),
+        Realm.update(desk.realm, (_read, write) =>
+          write(desk.$execution, "filled" as ExecutionState),
+        ),
       ).toThrow("the box rejects this value");
       expect(executionState(desk)).toBe("idle");
     }),
@@ -195,8 +198,8 @@ test("1,000 seeded ticks with other desks and random executions match the comple
     });
     const memory = inMemoryTransport(exchange);
     const desk = (yield* makeDesk(memory.transport)).tile("EURUSD");
-    yield* observeScoped(desk.$display);
-    yield* observeScoped(desk.trades.$keys);
+    yield* Source.observeScoped(desk.$display);
+    yield* Source.observeScoped(desk.trades.$keys);
     let randomState = 87321;
     const random = () => {
       randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
@@ -206,7 +209,7 @@ test("1,000 seeded ticks with other desks and random executions match the comple
     const compare = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const expected = foldLog(memory.log, now);
-      const actual = untracked(realm, (read) => ({
+      const actual = Realm.untracked(realm, (read) => ({
         pair: desk.pair,
         prices: read(desk.$prices),
         trades: read(desk.trades.$keys).map((key) => {
@@ -224,7 +227,7 @@ test("1,000 seeded ticks with other desks and random executions match the comple
     for (let tick = 0; tick < 1000; tick++) {
       yield* TestClock.adjust(20);
       yield* compare;
-      if (random() < 0.045 && untracked(realm, (read) => read(desk.$canExecute))) {
+      if (random() < 0.045 && Realm.untracked(realm, (read) => read(desk.$canExecute))) {
         desk.setNotional(`${1000 + Math.floor(random() * 100000)}.25`);
         yield* desk.execute(random() < 0.5 ? "buy" : "sell").pipe(Effect.forkScoped);
         yield* TestClock.adjust(0);

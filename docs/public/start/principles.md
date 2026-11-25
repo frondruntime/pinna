@@ -34,19 +34,19 @@ which is why there is no `observer` wrapper and no lint rule for reads in
 render.
 
 The cost is code. Every read is a call, a derived value is a `$` field built
-with `computed` instead of a getter, and `read` is passed down as an argument
+with `Computed.make` instead of a getter, and `read` is passed down as an argument
 to whatever needs it.
 
 ## A write has one place
 
-A box changes only inside `update`, through the `write` it hands out. A box
-field has no setter, and a `write` kept past its update throws. So every write in an application sits inside an
-`update`.
+A box changes only inside `Realm.update`, through the `write` it hands out. A box
+field has no setter, and a `write` kept past its update throws. So every write in an application sits inside a
+`Realm.update`.
 
 An update is atomic. An error thrown from the recipe, such as the
 `not enough in stock` below, undoes every write before it in the same update,
 and watchers run once, after the update ends. A write the schema of a
-`schemaBox` rejects throws in the recipe the same way, and is undone the same
+`Box.schema` rejects throws in the recipe the same way, and is undone the same
 way: see [Schema-checked boxes](../effect/boxes.md).
 
 <!-- region state.ts#atomic -->
@@ -59,11 +59,13 @@ expects a batch that throws to keep its writes, and Pinna fails it by design.
 
 ## Misuse is loud
 
-A mistake that can be detected throws, and the error says where the call
-belongs: `read(...) runs outside a place`, `write inside update`,
-`the box rejects this value`. An observable made with `{ name }` is named in
-its errors, and `inspect($x)` reports what a value read and why it last
-recomputed.
+Checks at supported boundaries fail loudly: `read(...) runs outside a place`,
+`write inside Realm.update`, and `the box rejects this value` identify the
+correction. Detection does not extend to the limits below. An observable
+made with `{ name }` is named in its errors, and `Source.inspect($x)` reports
+what a value read and why it last recomputed. Every error carries a literal
+`_tag`, and a misuse a `code`, so code matches what went wrong without
+parsing the message.
 
 Some mistakes are not caught:
 
@@ -78,7 +80,7 @@ Some mistakes are not caught:
   closure per run.
 - **A kept `write` called inside another realm.** Each realm's `read` and
   `write` throw for an observable of another realm, but a `write` kept from
-  one realm's `update` still writes that realm while the update is open,
+  one realm's `Realm.update` still writes that realm while the update is open,
   even from a computed value of another realm.
 - **A value of another realm, stored.** A box, a collection, or a nested
   `make` keeps a model instance of another realm, because a stored value is
@@ -89,9 +91,28 @@ Some mistakes are not caught:
 - **A value changed in place through a cast.** A value is plain data, not a
   proxy, so the change is checked by no schema and seen by no watcher.
 - **A write that breaks a check on the class as a whole.** A write checks the
-  box's own schema. A check on a `SchemaModel` as a whole runs when an
+  box's own schema. A check on a `Model.Schema` as a whole runs when an
   instance is made, decoded, or written to a schema box, never on a write to
   one of its boxes.
+- **An update that decides on a guess.** While a visible stage shows a
+  guess, a `Realm.update` recipe reads the confirmed value under it, so a
+  recipe that adds 1 to a shown 11 leaves 12 after the guess drops. Change
+  a guessed value through a stage made above the guess. Checking every read
+  for a guess would cost the read path a branch.
+- **A shown value read at rest and written later.** `Source.peek($count)` in
+  a handler, then `write($count, count)` in an update, writes the shown
+  guess into the confirmed values. Read the value inside the recipe that
+  writes it.
+- **A write during a React render.** `Realm.update` in a component's render
+  body lands, and every mounted reader settles on it; React logs "Cannot
+  update a component while rendering a different component" when the write
+  reaches another mounted component. Refusing it
+  would cost every write a check for a renderer Pinna does not know. Write
+  in an event handler or an effect.
+- **Two copies of Pinna in one application.** A `read` or a `write` of one
+  copy given an observable of the other throws `pinna/foreign-realm`, but
+  `Box.make` and `Realm.autorun` of one copy accept a realm of the other.
+  One copy of each Pinna package is the supported install.
 
 ## Glitch-free by construction
 
@@ -102,7 +123,7 @@ watchers run after the write settles. An update that writes a value and then
 its old value back recomputes nothing.
 
 The cost of these guarantees together is speed. Every read is tracked, every
-write to a `schemaBox` or a `BoxField` is checked against its schema, and Pinna does
+write to a `Box.schema` or a `Model.boxField` is checked against its schema, and Pinna does
 not trade either away. Its budget for 1.0, measured on Hermes, is the public layer within 2×
 of alien-signals and the graph core within 1.6×. The measurements are in
 [performance.md](https://github.com/frondruntime/pinna/blob/main/docs/performance.md).
@@ -131,7 +152,7 @@ Hermes, and a workload outside that list is not covered by it.
 Effect runs the programs; Pinna holds the state they read and write. Pinna
 started on Effect, and its models are still Effect Schema classes: one class
 decodes server data, checks every write to its fields, and encodes back. The
-realm is an Effect service, and `watchScoped`, `changes`, and `fromStream`
+realm is an Effect service, and `Program.watchScoped`, `Program.changes`, and `Program.fromStream`
 turn watches, streams, and changes into programs that stop with their scope.
 
 State itself stays synchronous. A read returns a value, not a program, and an
@@ -142,9 +163,9 @@ The graph was later extracted from the Effect layer. `pinna-core` imports
 nothing at runtime, and `@frondruntime/pinna` has the same calls on boxes
 that take no schema, with no Effect.
 
-The cost sits in `pinna-effect`. A `SchemaModel` decodes only through
-`decode`, which provides the realm as a service: about 1.2 µs more per
-instance than a decode without one. And `SchemaModel` reads two internals of
+The cost sits in `pinna-effect`. A `Model.Schema` decodes only through
+`Model.decode`, which provides the realm as a service: about 1.2 µs more per
+instance than a decode without one. And `Model.Schema` reads two internals of
 Effect's `Schema.Class`, as of `effect` 4.1.0, and throws if either is gone.
 
 ## Why not Effect's Atom
@@ -190,4 +211,4 @@ with the package, in
 
 - [Start](./index.md): a realm, a box, a computed value, and an update.
 - [Coming from MobX](./mobx.md): the Pinna call for each MobX one.
-- [Errors and debugging](../guides/errors.md): what throws, and `inspect`.
+- [Errors and debugging](../guides/errors.md): what throws, and `Source.inspect`.

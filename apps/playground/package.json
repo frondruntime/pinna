@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bunx vite",
     "build": "bunx vite build",
-    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "test": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test --preload ../../packages/pinna-react/test/setup.ts ./src"
   },
   "dependencies": {
     "@frondruntime/pinna": "workspace:*",

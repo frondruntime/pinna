@@ -1,4 +1,4 @@
-import type { Box, Options, Realm } from "@frondruntime/pinna";
+import type { Box, Realm, ValueOptions } from "@frondruntime/pinna";
 import { makeBox } from "@frondruntime/pinna/internal";
 import type { Schema } from "effect";
 import { checkOf, equalsOf } from "./schema.ts";
@@ -12,6 +12,6 @@ export const schemaBox = <S extends Schema.Top>(
   realm: Realm,
   schema: S,
   initial: S["Type"],
-  options?: Options<S["Type"]>,
+  options?: ValueOptions<S["Type"]>,
 ): Box<S["Type"]> =>
   makeBox(realm, checkOf(schema), options?.equals ?? equalsOf(schema), initial, options?.name);

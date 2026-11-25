@@ -1,27 +1,18 @@
 // The site's docs print the regions of this file (docs/public/state/collections.md), so
-// `bun run typecheck` compiles what the page shows. The `CollectionField` is `models.ts`.
-import {
-  box,
-  collection,
-  computed,
-  computedFunction,
-  createRealm,
-  onRowChange,
-  update,
-  watch,
-} from "@frondruntime/pinna";
+// `bun run typecheck` compiles what the page shows. The `Model.collectionField` is `models.ts`.
+import { Box, Collection, Computed, Realm } from "@frondruntime/pinna";
 import { useValue } from "@frondruntime/pinna-react";
 import { memo } from "react";
 
 // #region collection
-const realm = createRealm();
+const realm = Realm.make();
 
 interface Order {
   readonly id: string;
   readonly total: number;
 }
 
-const $orders = collection(realm, {
+const $orders = Collection.make(realm, {
   keyOf: (order: Order) => order.id,
   // A refetch builds new objects; an order with the same total is kept.
   equals: (previous, next) => previous.total === next.total,
@@ -30,14 +21,14 @@ const $orders = collection(realm, {
 
 // #region write
 const addOrder = (order: Order) => {
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     // Replaces the order under its id, or adds it last.
     write.upsert($orders, order, { at: "end" });
   });
 };
 
 const removeOrder = (id: string) => {
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     write.remove($orders, id); // a missing id changes nothing
   });
 };
@@ -45,7 +36,7 @@ const removeOrder = (id: string) => {
 
 // #region row
 // Reruns only when the order under "7" changes, is added, or is removed.
-const stopRow = watch(
+const stopRow = Realm.watch(
   realm,
   (read) => read($orders.row("7"))?.total,
   (total) => {
@@ -58,7 +49,7 @@ const stopRow = watch(
 // Takes 10% off each order under `ids`. A recipe tracks nothing, so
 // `read.row` makes no box for the orders it looks up.
 const discountOrders = (ids: ReadonlyArray<string>) => {
-  update(realm, (read, write) => {
+  Realm.update(realm, (read, write) => {
     for (const id of ids) {
       const order = read.row($orders, id);
       if (order !== undefined) {
@@ -71,10 +62,10 @@ const discountOrders = (ids: ReadonlyArray<string>) => {
 
 // #region read
 // Recomputes when an order is added, removed, or moved.
-const $count = computed(realm, (read) => read($orders.keys).length);
+const $count = Computed.make(realm, (read) => read($orders.keys).length);
 
 // Recomputes when any order or the order of the keys changes.
-const $sum = computed(realm, (read) =>
+const $sum = Computed.make(realm, (read) =>
   read($orders.rows).reduce((sum, order) => sum + order.total, 0),
 );
 // #endregion
@@ -105,7 +96,7 @@ const OrderRow = memo(function OrderRow({ id }: { readonly id: string }) {
 
 // #region replaceAll
 const receiveOrders = (orders: ReadonlyArray<Order>) => {
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     // The rows become `orders`, in their order. An order that `equals` finds
     // unchanged is kept: what read its row does not rerun.
     write.replaceAll($orders, orders);
@@ -115,15 +106,15 @@ const receiveOrders = (orders: ReadonlyArray<Order>) => {
 // #endregion
 
 // #region selection
-const $selected = box<string | undefined>(realm, undefined);
+const $selected = Box.make<string | undefined>(realm, undefined);
 
 // A flag per id. A row reads its own flag, so a new selection rerenders the
 // row that lost it and the row that gained it. The flag of an id is dropped
 // once no mounted row reads it.
-const isSelected = computedFunction(realm, (read, id: string) => read($selected) === id);
+const isSelected = Computed.fn(realm, (read, id: string) => read($selected) === id);
 
 const select = (id: string) => {
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     write($selected, id);
   });
 };
@@ -146,9 +137,9 @@ const SelectableRow = memo(function SelectableRow({ id }: { readonly id: string 
 // changed, instead of a reduce over every order. It takes effect and rolls back
 // with the write that changed the row. The listener first hears each order
 // already held, as added, so the sum starts from them.
-const $runningSum = box(realm, 0);
+const $runningSum = Box.make(realm, 0);
 
-const stopRunningSum = onRowChange($orders, (change, read, write) => {
+const stopRunningSum = Collection.onRowChange($orders, (change, read, write) => {
   const added = (change.after?.total ?? 0) - (change.before?.total ?? 0);
   write($runningSum, read($runningSum) + added);
 });

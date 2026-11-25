@@ -1,26 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import {
-  applyStage,
-  box,
-  collection,
-  computed,
-  dropStage,
-  inspect,
-  inspectStage,
-  openStage,
+  Atom,
+  Box,
+  Collection,
+  Computed,
+  Realm,
+  Source,
+  Stage,
   StageConflictError,
-  stageRead,
-  stageStatus,
-  stageUpdate,
-  untracked,
-  update,
 } from "../src/index.ts";
 import { record, testRealm } from "../src/testing/index.ts";
 
 /**
- * `{ conflicts: "fail" }`: `applyStage` refuses when something the stage
- * read changed in the realm since, and lands nothing. What the stage wrote
- * without reading is the last writer's (`docs/api.md`, ruling 53).
+ * `{ conflicts: "fail" }`: `Stage.apply` refuses when something the stage
+ * read or wrote changed in the realm since, and lands nothing (`docs/api.md`,
+ * ruling 53, amended by ruling 68: a write without a read conflicts too).
  */
 
 const conflictOf = (run: () => void): StageConflictError => {
@@ -38,138 +32,141 @@ const conflictOf = (run: () => void): StageConflictError => {
 describe("a stage that fails on conflicts", () => {
   test("two observed versions conflict even after the first version is restored", () => {
     using realm = testRealm();
-    const value = box(realm, 0);
-    const stage = openStage(realm, { conflicts: "fail" });
+    const value = Box.make(realm, 0);
+    const stage = Stage.make(realm, { conflicts: "fail" });
     try {
-      stageRead(stage, (read) => read(value));
+      Stage.read(stage, (read) => read(value));
       expect(() =>
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write(value, 1);
-          stageRead(stage, (read) => read(value));
+          Stage.read(stage, (read) => read(value));
           throw new Error("rollback");
         }),
       ).toThrow("rollback");
-      expect(() => applyStage(stage)).toThrow(StageConflictError);
+      expect(() => Stage.apply(stage)).toThrow(StageConflictError);
     } finally {
-      dropStage(stage);
+      Stage.drop(stage);
     }
   });
 
   test("failed child replay restores a parent's first version after observing another", () => {
     using realm = testRealm();
-    const value = box(realm, 0);
-    const parent = openStage(realm, { conflicts: "fail" });
-    const child = openStage(parent);
+    const value = Box.make(realm, 0);
+    const parent = Stage.make(realm, { conflicts: "fail" });
+    const child = Stage.make(parent);
     let fail = false;
-    stageRead(parent, (read) => read(value));
-    stageUpdate(child, (read) => {
+    Stage.read(parent, (read) => read(value));
+    Stage.update(child, (read) => {
       read(value);
       if (fail) throw new Error("child replay");
     });
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write(value, 1);
         fail = true;
-        expect(() => applyStage(child)).toThrow("child replay");
+        expect(() => Stage.apply(child)).toThrow("child replay");
         throw new Error("rollback");
       }),
     ).toThrow("rollback");
-    applyStage(parent);
-    expect(stageStatus(parent)).toBe("applied");
+    Stage.apply(parent);
+    expect(Stage.status(parent)).toBe("applied");
   });
 
   for (const child of [false, true]) {
     test(`a restored version cannot erase a first read (${child ? "child" : "root"})`, () => {
       using realm = testRealm();
-      const source = box(realm, 0, { name: "source" });
-      const result = box(realm, -1);
-      const root = openStage(realm, { conflicts: "fail" });
-      const stage = child ? openStage(root) : root;
+      const source = Box.make(realm, 0, { name: "source" });
+      const result = Box.make(realm, -1);
+      const root = Stage.make(realm, { conflicts: "fail" });
+      const stage = child ? Stage.make(root) : root;
       try {
         expect(() =>
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write(source, 1);
-            stageUpdate(stage, (read, stagedWrite) => stagedWrite(result, read(source)));
+            Stage.update(stage, (read, stagedWrite) => stagedWrite(result, read(source)));
             throw new Error("rollback");
           }),
         ).toThrow("rollback");
-        if (child) applyStage(stage);
-        expect(stageRead(root, (read) => read(source))).toBe(0);
-        const conflict = conflictOf(() => applyStage(root));
+        if (child) Stage.apply(stage);
+        expect(Stage.read(root, (read) => read(source))).toBe(0);
+        const conflict = conflictOf(() => Stage.apply(root));
         expect(conflict.changed).toEqual(["source"]);
         expect(conflict.observables).toEqual([source]);
-        expect(stageStatus(root)).toBe("dropped");
-        expect(untracked(realm, (read) => read(result))).toBe(-1);
+        expect(Stage.status(root)).toBe("dropped");
+        expect(Realm.untracked(realm, (read) => read(result))).toBe(-1);
       } finally {
-        dropStage(root);
+        Stage.drop(root);
       }
     });
   }
 
   test("copied-row provenance cannot erase a read of a rolled-back version", () => {
     using realm = testRealm();
-    const rows = collection<number, number>(realm, { keyOf: (value) => value, name: "rows" });
-    const stage = openStage(realm, { conflicts: "fail" });
+    const rows = Collection.make<number, number>(realm, { keyOf: (value) => value, name: "rows" });
+    const stage = Stage.make(realm, { conflicts: "fail" });
     try {
       expect(() =>
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write.upsert(rows, 1);
-          expect(stageRead(stage, (read) => read(rows.rows))).toEqual([1]);
+          expect(Stage.read(stage, (read) => read(rows.rows))).toEqual([1]);
           throw new Error("rollback");
         }),
       ).toThrow("rollback");
-      stageUpdate(stage, (_read, write) => write.upsert(rows, 2));
-      expect(stageRead(stage, (read) => read(rows.rows))).toEqual([2]);
-      expect(conflictOf(() => applyStage(stage)).changed).toEqual(["rows"]);
-      expect(untracked(realm, (read) => read(rows.rows))).toEqual([]);
+      Stage.update(stage, (_read, write) => write.upsert(rows, 2));
+      expect(Stage.read(stage, (read) => read(rows.rows))).toEqual([2]);
+      expect(conflictOf(() => Stage.apply(stage)).changed).toEqual(["rows"]);
+      expect(Realm.untracked(realm, (read) => read(rows.rows))).toEqual([]);
     } finally {
-      dropStage(stage);
+      Stage.drop(stage);
     }
   });
 
   test("modify reads its realm base before a decision on the drafted result", () => {
     using realm = testRealm();
-    const list = box<ReadonlyArray<string>>(realm, ["a"], { name: "list" });
-    const stage = openStage(realm, { conflicts: "fail" });
+    const list = Box.make<ReadonlyArray<string>>(realm, ["a"], { name: "list" });
+    const stage = Stage.make(realm, { conflicts: "fail" });
     try {
-      stageUpdate(stage, (_read, write) =>
+      Stage.update(stage, (_read, write) =>
         write.modify(list, (draft) => {
           draft.push("staged");
         }),
       );
-      expect(stageRead(stage, (read) => read(list).length)).toBe(2);
-      update(realm, (_read, write) =>
+      expect(Stage.read(stage, (read) => read(list).length)).toBe(2);
+      Realm.update(realm, (_read, write) =>
         write.modify(list, (draft) => {
           draft.push("other");
         }),
       );
-      expect(conflictOf(() => applyStage(stage)).changed).toEqual(["list"]);
-      expect(untracked(realm, (read) => read(list))).toEqual(["a", "other"]);
+      expect(conflictOf(() => Stage.apply(stage)).changed).toEqual(["list"]);
+      expect(Realm.untracked(realm, (read) => read(list))).toEqual(["a", "other"]);
     } finally {
-      dropStage(stage);
+      Stage.drop(stage);
     }
   });
 
   for (const child of [false, true]) {
     test(`modify of an overlay value records no realm read (${child ? "child" : "root"})`, () => {
       using realm = testRealm();
-      const list = box<ReadonlyArray<string>>(realm, ["a"]);
-      const root = openStage(realm, { conflicts: "fail" });
-      const stage = child ? openStage(root) : root;
+      const list = Box.make<ReadonlyArray<string>>(realm, ["a"]);
+      const root = Stage.make(realm, { conflicts: "fail" });
+      const stage = child ? Stage.make(root) : root;
       try {
-        stageUpdate(root, (_read, write) => write(list, ["own"]));
-        stageUpdate(stage, (_read, write) =>
+        Stage.update(root, (_read, write) => write(list, ["own"]));
+        Stage.update(stage, (_read, write) =>
           write.modify(list, (draft) => {
             draft.push("staged");
           }),
         );
-        expect(inspectStage(stage).read).toEqual([]);
-        update(realm, (_read, write) => write(list, ["other"]));
-        if (child) applyStage(stage);
-        applyStage(root);
-        expect(untracked(realm, (read) => read(list))).toEqual(["own", "staged"]);
+        // The child read the root's value, not the realm's: it records nothing.
+        expect(Stage.inspect(stage).read).toEqual(child ? [] : ["<anonymous>"]);
+        // The root wrote the box without reading it; under "fail" that write is checked.
+        expect(Stage.inspect(root).read).toEqual(["<anonymous>"]);
+        Realm.update(realm, (_read, write) => write(list, ["other"]));
+        if (child) Stage.apply(stage);
+        expect(() => Stage.apply(root)).toThrow(StageConflictError);
+        expect(Realm.untracked(realm, (read) => read(list))).toEqual(["other"]);
       } finally {
-        dropStage(root);
+        Stage.drop(root);
       }
     });
   }
@@ -179,35 +176,35 @@ describe("a stage that fails on conflicts", () => {
       for (const changedBeforeRead of [false, true]) {
         test(`copied collection provenance: ${location}, ${access}, realm changes ${changedBeforeRead ? "before" : "after"} read`, () => {
           using realm = testRealm();
-          const $rows = collection<string, { id: string; value: number }>(realm, {
+          const $rows = Collection.make<string, { id: string; value: number }>(realm, {
             keyOf: (row) => row.id,
             name: "rows",
           });
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write.replaceAll($rows, [
               { id: "a", value: 1 },
               { id: "b", value: 2 },
             ]);
           });
-          const root = openStage(realm, { conflicts: "fail" });
-          const stage = location === "root" ? root : openStage(root);
+          const root = Stage.make(realm, { conflicts: "fail" });
+          const stage = location === "root" ? root : Stage.make(root);
           try {
-            stageUpdate(location === "ancestor" ? root : stage, (_read, write) => {
+            Stage.update(location === "ancestor" ? root : stage, (_read, write) => {
               write.upsert($rows, { id: "a", value: 3 });
             });
             const changeRealm = () =>
-              update(realm, (_read, write) => {
+              Realm.update(realm, (_read, write) => {
                 write.upsert($rows, { id: "b", value: 20 });
                 write.upsert($rows, { id: "z", value: 30 });
               });
             if (changedBeforeRead) changeRealm();
             if (location === "ancestor") {
               // This copy inherits the ancestor's versions, even after the realm moved.
-              stageUpdate(stage, (_read, write) => {
+              Stage.update(stage, (_read, write) => {
                 write.upsert($rows, { id: "c", value: 4 });
               });
             }
-            stageRead(stage, (read) => {
+            Stage.read(stage, (read) => {
               if (access === "read.row") expect(read.row($rows, "b")?.value).toBe(2);
               if (access === "row") expect(read($rows.row("b"))?.value).toBe(2);
               if (access === "rows")
@@ -215,10 +212,10 @@ describe("a stage that fails on conflicts", () => {
               if (access === "keys") expect(read($rows.keys)).not.toContain("z");
             });
             if (!changedBeforeRead) changeRealm();
-            if (stage !== root) applyStage(stage);
-            expect(conflictOf(() => applyStage(root)).changed).toEqual(["rows"]);
+            if (stage !== root) Stage.apply(stage);
+            expect(conflictOf(() => Stage.apply(root)).changed).toEqual(["rows"]);
           } finally {
-            dropStage(root);
+            Stage.drop(root);
           }
         });
       }
@@ -226,255 +223,366 @@ describe("a stage that fails on conflicts", () => {
   }
 
   for (const child of [false, true]) {
-    test(`a copied collection's blind writes and written row reads do not conflict (${child ? "child" : "root"})`, () => {
+    test(`a copied collection's blind writes conflict, and written row reads record nothing more (${child ? "child" : "root"})`, () => {
       using realm = testRealm();
-      const $rows = collection<string, { id: string; value: number }>(realm, {
+      const $rows = Collection.make<string, { id: string; value: number }>(realm, {
         keyOf: (row) => row.id,
       });
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.replaceAll($rows, [
           { id: "a", value: 1 },
           { id: "b", value: 2 },
         ]);
       });
-      const root = openStage(realm, { conflicts: "fail" });
-      const stage = child ? openStage(root) : root;
+      const root = Stage.make(realm, { conflicts: "fail" });
+      const stage = child ? Stage.make(root) : root;
       try {
-        stageUpdate(root, (_read, write) => {
+        Stage.update(root, (_read, write) => {
           write.upsert($rows, { id: "a", value: 3 });
         });
-        stageUpdate(stage, (_read, write) => {
+        Stage.update(stage, (_read, write) => {
           write.remove($rows, "b");
         });
-        expect(stageRead(stage, (read) => read.row($rows, "a")?.value)).toBe(3);
-        expect(stageRead(stage, (read) => read($rows.row("b")))).toBeUndefined();
-        expect(inspectStage(stage).read).toEqual([]);
-        expect(inspectStage(root).read).toEqual([]);
-        update(realm, (_read, write) => {
+        expect(Stage.read(stage, (read) => read.row($rows, "a")?.value)).toBe(3);
+        expect(Stage.read(stage, (read) => read($rows.row("b")))).toBeUndefined();
+        expect(Stage.inspect(stage).read).toEqual(["a collection"]);
+        expect(Stage.inspect(root).read).toEqual(["a collection"]);
+        Realm.update(realm, (_read, write) => {
           write.upsert($rows, { id: "a", value: 10 });
           write.upsert($rows, { id: "b", value: 20 });
         });
-        if (child) applyStage(stage);
-        applyStage(root);
-        expect(untracked(realm, (read) => read($rows.rows))).toEqual([{ id: "a", value: 3 }]);
+        if (child) Stage.apply(stage);
+        expect(() => Stage.apply(root)).toThrow(StageConflictError);
+        expect(Realm.untracked(realm, (read) => read($rows.rows))).toEqual([
+          { id: "a", value: 10 },
+          { id: "b", value: 20 },
+        ]);
       } finally {
-        dropStage(root);
+        Stage.drop(root);
       }
     });
   }
 
   test("replaceAll clears copied provenance and a failed recipe restores it", () => {
     using realm = testRealm();
-    const $rows = collection<number, number>(realm, { keyOf: (row) => row, name: "rows" });
-    update(realm, (_read, write) => {
+    const $rows = Collection.make<number, number>(realm, { keyOf: (row) => row, name: "rows" });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll($rows, [1, 2]);
     });
-    const stage = openStage(realm, { conflicts: "fail" });
+    const stage = Stage.make(realm, { conflicts: "fail" });
     try {
-      stageUpdate(stage, (_read, write) => {
+      Stage.update(stage, (_read, write) => {
         write.upsert($rows, 3);
       });
       expect(() =>
-        stageUpdate(stage, (_read, write) => {
+        Stage.update(stage, (_read, write) => {
           write.replaceAll($rows, [4]);
           throw new Error("refused");
         }),
       ).toThrow("refused");
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.remove($rows, 2);
       });
-      expect(stageRead(stage, (read) => read.row($rows, 2))).toBe(2);
-      expect(conflictOf(() => applyStage(stage)).changed).toEqual(["rows"]);
+      expect(Stage.read(stage, (read) => read.row($rows, 2))).toBe(2);
+      expect(conflictOf(() => Stage.apply(stage)).changed).toEqual(["rows"]);
     } finally {
-      dropStage(stage);
+      Stage.drop(stage);
     }
-    const blind = openStage(realm, { conflicts: "fail" });
+    const blind = Stage.make(realm, { conflicts: "fail" });
     try {
-      stageUpdate(blind, (_read, write) => {
+      Stage.update(blind, (_read, write) => {
         write.upsert($rows, 3);
         write.replaceAll($rows, [4]);
       });
-      stageRead(blind, (read) => [read($rows.keys), read($rows.rows), read.row($rows, 1)]);
-      expect(inspectStage(blind).read).toEqual([]);
-      update(realm, (_read, write) => {
+      Stage.read(blind, (read) => [read($rows.keys), read($rows.rows), read.row($rows, 1)]);
+      // The writes recorded the collection; the reads of its replaced rows add nothing.
+      expect(Stage.inspect(blind).read).toEqual(["rows"]);
+      Realm.update(realm, (_read, write) => {
         write.upsert($rows, 5);
       });
-      applyStage(blind);
+      expect(conflictOf(() => Stage.apply(blind)).changed).toEqual(["rows"]);
     } finally {
-      dropStage(blind);
+      Stage.drop(blind);
     }
   });
 
   test("a box it read that changed since: applyStage throws, nothing lands, the stage is dropped", () => {
     using realm = testRealm();
-    const $price = box(realm, 10, { name: "price" });
-    const $total = box(realm, 0, { name: "total" });
+    const $price = Box.make(realm, 10, { name: "price" });
+    const $total = Box.make(realm, 0, { name: "total" });
     using totals = record(realm, (read) => read($total));
-    const stage = openStage(realm, { name: "checkout", conflicts: "fail" });
-    stageUpdate(stage, (read, write) => {
+    const stage = Stage.make(realm, { name: "checkout", conflicts: "fail" });
+    Stage.update(stage, (read, write) => {
       write($total, read($price) * 2);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($price, 11);
     });
-    const conflict = conflictOf(() => applyStage(stage));
+    const conflict = conflictOf(() => Stage.apply(stage));
     expect(conflict.message).toBe(
-      'pinna: applyStage finds that price changed since the stage "checkout" read it; nothing lands',
+      'pinna: price changed since the stage "checkout" read it; nothing lands',
     );
     expect(conflict.stage).toBe("checkout");
     expect(conflict.changed).toEqual(["price"]);
     expect(conflict.observables).toEqual([$price]);
-    expect(stageStatus(stage)).toBe("dropped");
+    expect(Stage.status(stage)).toBe("dropped");
     expect(totals.values).toEqual([]);
   });
 
-  test("a box it wrote without reading is the last writer's", () => {
+  test("a box it wrote without reading conflicts, as one it read does", () => {
     using realm = testRealm();
-    const $status = box(realm, "idle");
-    const stage = openStage(realm, { conflicts: "fail" });
-    stageUpdate(stage, (_read, write) => {
+    const $status = Box.make(realm, "idle", { name: "status" });
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (_read, write) => {
       write($status, "saved");
     });
-    update(realm, (_read, write) => {
+    expect(Stage.inspect(stage).read).toEqual(["status"]);
+    Realm.update(realm, (_read, write) => {
       write($status, "busy");
     });
-    applyStage(stage);
-    expect(untracked(realm, (read) => read($status))).toBe("saved");
+    expect(conflictOf(() => Stage.apply(stage)).changed).toEqual(["status"]);
+    expect(Realm.untracked(realm, (read) => read($status))).toBe("busy");
   });
 
-  test("a box read after the stage wrote it reads the stage, so it is not checked", () => {
+  test('under "replay", a box it wrote without reading is the last writer\'s', () => {
     using realm = testRealm();
-    const $count = box(realm, 0);
-    const stage = openStage(realm, { conflicts: "fail" });
-    stageUpdate(stage, (_read, write) => {
+    const $status = Box.make(realm, "idle");
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => {
+      write($status, "saved");
+    });
+    Realm.update(realm, (_read, write) => {
+      write($status, "busy");
+    });
+    Stage.apply(stage);
+    expect(Realm.untracked(realm, (read) => read($status))).toBe("saved");
+  });
+
+  test("a collection it wrote without reading conflicts on a base write to it", () => {
+    using realm = testRealm();
+    const $rows = Collection.make<string, string>(realm, { keyOf: (row) => row, name: "rows" });
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (_read, write) => {
+      write.upsert($rows, "a");
+    });
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, "b");
+    });
+    expect(conflictOf(() => Stage.apply(stage)).changed).toEqual(["rows"]);
+    const replay = Stage.make(realm);
+    Stage.update(replay, (_read, write) => {
+      write.upsert($rows, "a");
+    });
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, "c");
+    });
+    Stage.apply(replay);
+    expect(Realm.untracked(realm, (read) => read($rows.keys))).toEqual(["a", "c", "b"]);
+  });
+
+  test("a box read after the stage wrote it reads the stage; the write is what is checked", () => {
+    using realm = testRealm();
+    const $count = Box.make(realm, 0);
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (_read, write) => {
       write($count, 5);
     });
-    stageRead(stage, (read) => read($count));
-    update(realm, (_read, write) => {
+    Stage.read(stage, (read) => read($count));
+    expect(Stage.inspect(stage).read).toEqual(["<anonymous>"]);
+    Realm.update(realm, (_read, write) => {
       write($count, 1);
     });
-    applyStage(stage);
-    expect(untracked(realm, (read) => read($count))).toBe(5);
+    expect(() => Stage.apply(stage)).toThrow(StageConflictError);
+    expect(Realm.untracked(realm, (read) => read($count))).toBe(1);
   });
 
   test("a read through a computed value checks the boxes underneath", () => {
     using realm = testRealm();
-    const $rate = box(realm, 2, { name: "rate" });
-    const $converted = computed(realm, (read) => read($rate) * 100);
-    const $amount = box(realm, 0);
-    const stage = openStage(realm, { conflicts: "fail" });
-    stageUpdate(stage, (read, write) => {
+    const $rate = Box.make(realm, 2, { name: "rate" });
+    const $converted = Computed.make(realm, (read) => read($rate) * 100);
+    const $amount = Box.make(realm, 0);
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (read, write) => {
       write($amount, read($converted));
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($rate, 3);
     });
-    expect(conflictOf(() => applyStage(stage)).changed).toEqual(["rate"]);
+    expect(conflictOf(() => Stage.apply(stage)).changed).toEqual(["rate"]);
   });
 
   test("a read of a collection's rows checks the collection", () => {
     using realm = testRealm();
-    const $rows = collection<string, string>(realm, { keyOf: (row) => row });
-    const $count = box(realm, 0);
-    const stage = openStage(realm, { conflicts: "fail" });
-    stageUpdate(stage, (read, write) => {
+    const $rows = Collection.make<string, string>(realm, { keyOf: (row) => row });
+    const $count = Box.make(realm, 0);
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (read, write) => {
       write($count, read($rows.keys).length);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert($rows, "a");
     });
-    const conflict = conflictOf(() => applyStage(stage));
+    const conflict = conflictOf(() => Stage.apply(stage));
     expect(conflict.changed).toEqual(["a collection"]);
     expect(conflict.observables).toEqual([$rows]);
   });
 
+  test("an atom it read that changed since conflicts", () => {
+    using realm = testRealm();
+    const $outside = Atom.make(realm);
+    const $count = Box.make(realm, 0);
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (read, write) => {
+      read($outside);
+      write($count, 1);
+    });
+    Realm.update(realm, (_read, write) => write.changed($outside));
+    const conflict = conflictOf(() => Stage.apply(stage));
+    expect(conflict.changed).toEqual(["<anonymous>"]);
+    expect(conflict.observables).toEqual([$outside]);
+    expect(Realm.untracked(realm, (read) => read($count))).toBe(0);
+  });
+
+  test("an atom read beneath a computed value names the computed value", () => {
+    using realm = testRealm();
+    const $outside = Atom.make(realm);
+    let held = 1;
+    const $held = Computed.make(
+      realm,
+      (read) => {
+        read($outside);
+        return held;
+      },
+      { name: "held" },
+    );
+    const $copy = Box.make(realm, 0);
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (read, write) => write($copy, read($held)));
+    expect(Stage.inspect(stage).read).toEqual(["held", "<anonymous>"]);
+    Realm.update(realm, (_read, write) => {
+      held = 2;
+      write.changed($outside);
+    });
+    const conflict = conflictOf(() => Stage.apply(stage));
+    expect(conflict.changed).toEqual(["held"]);
+    expect(conflict.observables).toEqual([$held]);
+  });
+
+  test("an atom it read and nothing changed applies", () => {
+    using realm = testRealm();
+    const $outside = Atom.make(realm);
+    const $count = Box.make(realm, 0);
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (read, write) => {
+      read($outside);
+      write($count, 1);
+    });
+    Stage.apply(stage);
+    expect(Realm.untracked(realm, (read) => read($count))).toBe(1);
+  });
+
+  test("an atom a child read is checked when its root applies", () => {
+    using realm = testRealm();
+    const $outside = Atom.make(realm);
+    const $out = Box.make(realm, 0);
+    const root = Stage.make(realm, { conflicts: "fail" });
+    const child = Stage.make(root);
+    Stage.update(child, (read, write) => {
+      read($outside);
+      write($out, 1);
+    });
+    Stage.apply(child);
+    Realm.update(realm, (_read, write) => write.changed($outside));
+    expect(() => Stage.apply(root)).toThrow(StageConflictError);
+  });
+
   test("a child's reads are checked when its root applies", () => {
     using realm = testRealm();
-    const $flag = box(realm, false, { name: "flag" });
-    const $out = box(realm, 0);
-    const root = openStage(realm, { conflicts: "fail" });
-    const child = openStage(root);
-    stageUpdate(child, (read, write) => {
+    const $flag = Box.make(realm, false, { name: "flag" });
+    const $out = Box.make(realm, 0);
+    const root = Stage.make(realm, { conflicts: "fail" });
+    const child = Stage.make(root);
+    Stage.update(child, (read, write) => {
       write($out, read($flag) ? 1 : 2);
     });
-    applyStage(child);
-    update(realm, (_read, write) => {
+    Stage.apply(child);
+    Realm.update(realm, (_read, write) => {
       write($flag, true);
     });
-    expect(conflictOf(() => applyStage(root)).changed).toEqual(["flag"]);
+    expect(conflictOf(() => Stage.apply(root)).changed).toEqual(["flag"]);
   });
 
   test("a named collection is named in the conflict, and in inspect", () => {
     using realm = testRealm();
-    const $orders = collection<string, string>(realm, { keyOf: (row) => row, name: "orders" });
-    const $count = box(realm, 0);
-    expect(inspect($orders.keys).name).toBe("orders.keys");
-    expect(inspect($orders.rows).name).toBe("orders.rows");
-    const stage = openStage(realm, { conflicts: "fail" });
-    stageUpdate(stage, (read, write) => {
+    const $orders = Collection.make<string, string>(realm, { keyOf: (row) => row, name: "orders" });
+    const $count = Box.make(realm, 0);
+    expect(Source.inspect($orders.keys).name).toBe("orders.keys");
+    expect(Source.inspect($orders.rows).name).toBe("orders.rows");
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.update(stage, (read, write) => {
       write($count, read($orders.rows).length);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert($orders, "a");
     });
-    expect(conflictOf(() => applyStage(stage)).changed).toEqual(["orders"]);
+    expect(conflictOf(() => Stage.apply(stage)).changed).toEqual(["orders"]);
   });
 
   test("a child keeps the version it read: a change before the child applies is caught", () => {
     using realm = testRealm();
-    const $flag = box(realm, false, { name: "flag" });
-    const $out = box(realm, 0);
-    const root = openStage(realm, { conflicts: "fail" });
-    const child = openStage(root);
+    const $flag = Box.make(realm, false, { name: "flag" });
+    const $out = Box.make(realm, 0);
+    const root = Stage.make(realm, { conflicts: "fail" });
+    const child = Stage.make(root);
     // The child decides on what it read, and its recipe reads the same box.
-    const flagged = stageRead(child, (read) => read($flag));
-    stageUpdate(child, (read, write) => {
+    const flagged = Stage.read(child, (read) => read($flag));
+    Stage.update(child, (read, write) => {
       write($out, read($flag) === flagged ? 1 : 2);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($flag, true);
     });
     // The replay into the root reads $flag at its new version; the child read the old one.
-    applyStage(child);
-    expect(conflictOf(() => applyStage(root)).changed).toEqual(["flag"]);
+    Stage.apply(child);
+    expect(conflictOf(() => Stage.apply(root)).changed).toEqual(["flag"]);
   });
 
   test("a conflicts value other than replay or fail throws", () => {
     using realm = testRealm();
     expect(() =>
-      openStage(realm, { conflicts: "fails" } as unknown as { conflicts: "fail" }),
+      Stage.make(realm, { conflicts: "fails" } as unknown as { conflicts: "fail" }),
     ).toThrow('pinna: conflicts is "replay" or "fail", not "fails"');
   });
 
   test("without the option, the replay lands over the new value", () => {
     using realm = testRealm();
-    const $price = box(realm, 10);
-    const $total = box(realm, 0);
-    const stage = openStage(realm);
-    stageUpdate(stage, (read, write) => {
+    const $price = Box.make(realm, 10);
+    const $total = Box.make(realm, 0);
+    const stage = Stage.make(realm);
+    Stage.update(stage, (read, write) => {
       write($total, read($price) * 2);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($price, 11);
     });
-    applyStage(stage);
-    expect(untracked(realm, (read) => read($total))).toBe(22);
+    Stage.apply(stage);
+    expect(Realm.untracked(realm, (read) => read($total))).toBe(22);
   });
 
   test("a conflict check inside an open update sees the update's own writes", () => {
     using realm = testRealm();
-    const $price = box(realm, 10, { name: "price" });
-    const stage = openStage(realm, { conflicts: "fail" });
-    stageRead(stage, (read) => read($price));
-    const $failed = box(realm, false);
-    update(realm, (_read, write) => {
+    const $price = Box.make(realm, 10, { name: "price" });
+    const stage = Stage.make(realm, { conflicts: "fail" });
+    Stage.read(stage, (read) => read($price));
+    const $failed = Box.make(realm, false);
+    Realm.update(realm, (_read, write) => {
       write($price, 12);
       try {
-        applyStage(stage);
+        Stage.apply(stage);
       } catch (error) {
         write($failed, error instanceof StageConflictError);
       }
     });
-    expect(untracked(realm, (read) => [read($price), read($failed)])).toEqual([12, true]);
+    expect(Realm.untracked(realm, (read) => [read($price), read($failed)])).toEqual([12, true]);
   });
 });

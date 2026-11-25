@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { realmOf } from "@frondruntime/pinna/internal";
 import {
   Context,
   Effect,
@@ -12,21 +11,17 @@ import {
   SchemaTransformation,
 } from "effect";
 import {
-  BoxField,
-  box,
-  CollectionField,
-  computed,
-  createRealm,
-  decode,
-  FromContext,
+  Box,
+  Computed,
+  DecodeError,
+  isPinnaError,
+  Model,
+  type PinnaUsageError,
+  Realm,
   RealmService,
-  SchemaModel,
-  schemaBox,
-  untracked,
-  update,
-  watch,
 } from "../src/index.ts";
 import { Portfolio, Position, PositionsResponse, positionsJson, Quote, runs } from "./model.ts";
+import { madeBy } from "./realms.ts";
 
 const thrownBy = (run: () => unknown): Error => {
   try {
@@ -45,16 +40,16 @@ beforeEach(() => {
 describe("SchemaModel", () => {
   for (const first of ["parent", "child"] as const) {
     test(`decode caches each subclass schema separately after ${first}-first lookup`, () => {
-      class Row extends SchemaModel<Row>("Row")({ $value: BoxField(Schema.Number) }) {}
+      class Row extends Model.Schema<Row>("Row")({ $value: Model.boxField(Schema.Number) }) {}
       class Child extends Row {
         child(): boolean {
           return true;
         }
       }
-      const parentRealm = createRealm();
-      const childRealm = createRealm();
-      const makeParent = () => decode(parentRealm, Row)({ value: 1 });
-      const makeChild = () => decode(childRealm, Child)({ value: 2 }) as Child;
+      const parentRealm = Realm.make();
+      const childRealm = Realm.make();
+      const makeParent = () => Model.decode(parentRealm, Row)({ value: 1 });
+      const makeChild = () => Model.decode(childRealm, Child)({ value: 2 }) as Child;
       let parent: Row;
       let child: Child;
       if (first === "parent") {
@@ -72,23 +67,25 @@ describe("SchemaModel", () => {
       expect(child.child()).toBe(true);
       expect(parent.realm).toBe(parentRealm);
       expect(child.realm).toBe(childRealm);
-      expect(parentRealm).toBe(realmOf(parent.$value));
-      expect(childRealm).toBe(realmOf(child.$value));
-      expect(untracked(parentRealm, (read) => read(parent.$value))).toBe(1);
-      expect(untracked(childRealm, (read) => read(child.$value))).toBe(2);
+      expect(madeBy(parent.$value, parentRealm)).toBe(true);
+      expect(madeBy(child.$value, childRealm)).toBe(true);
+      expect(Realm.untracked(parentRealm, (read) => read(parent.$value))).toBe(1);
+      expect(Realm.untracked(childRealm, (read) => read(child.$value))).toBe(2);
     });
   }
 
   test("a $ field decodes from its wire key into a box and encodes back", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const json = positionsJson(2);
-    const response = decode(realm, PositionsResponse)(json);
+    const response = Model.decode(realm, PositionsResponse)(json);
     const first = response.items[0];
     expect(
-      untracked(realm, (read) => (first === undefined ? undefined : read(first.$quote))),
+      Realm.untracked(realm, (read) => (first === undefined ? undefined : read(first.$quote))),
     ).toBeInstanceOf(Quote);
     expect(
-      untracked(realm, (read) => (first === undefined ? undefined : read(first.$quote).price)),
+      Realm.untracked(realm, (read) =>
+        first === undefined ? undefined : read(first.$quote).price,
+      ),
     ).toBe(10);
     expect(Schema.encodeSync(PositionsResponse)(response)).toEqual(json);
   });
@@ -103,41 +100,67 @@ describe("SchemaModel", () => {
     // @ts-expect-error The wire key of $quote is quote.
     const boxKey: typeof Position.Encoded = { ...encoded, $quote: encoded.quote };
     // @ts-expect-error The realm is never on the wire.
-    const realmKey: typeof Position.Encoded = { ...encoded, realm: createRealm() };
-    const realm = createRealm();
-    const position = decode(realm, Position)(encoded);
+    const realmKey: typeof Position.Encoded = { ...encoded, realm: Realm.make() };
+    const realm = Realm.make();
+    const position = Model.decode(realm, Position)(encoded);
     expect(Schema.encodeSync(Position)(position)).toEqual(encoded);
     expect([boxKey, realmKey]).toHaveLength(2);
   });
 
   test("a $ field that is not a box, or a box without $, is rejected", () => {
-    expect(() => SchemaModel("Bad")({ $count: Schema.Number })).toThrow(
+    expect(() => Model.Schema("Bad")({ $count: Schema.Number })).toThrow(
       "Bad.$count is named as a box",
     );
-    expect(() => SchemaModel("Bad")({ count: BoxField(Schema.Number) })).toThrow(
+    expect(() => Model.Schema("Bad")({ count: Model.boxField(Schema.Number) })).toThrow(
       "Bad.count holds a box; name it $count",
     );
   });
 
   test("a field named realm is rejected", () => {
-    expect(() => SchemaModel("Bad")({ realm: Schema.String })).toThrow(
+    expect(() => Model.Schema("Bad")({ realm: Schema.String })).toThrow(
       'Bad.realm reads "realm", the realm the instance belongs to',
     );
-    expect(() => SchemaModel("Bad")({ $realm: BoxField(Schema.Number) })).toThrow(
+    expect(() => Model.Schema("Bad")({ $realm: Model.boxField(Schema.Number) })).toThrow(
       'Bad.$realm reads "realm", the realm the instance belongs to',
+    );
+  });
+
+  test("the naming errors are usage errors with codes", () => {
+    const codeOf = (run: () => unknown): unknown => {
+      try {
+        run();
+      } catch (error) {
+        expect(isPinnaError(error)).toBe(true);
+        return (error as PinnaUsageError).code;
+      }
+      return undefined;
+    };
+    expect(codeOf(() => Model.Schema("Bad")({ realm: Schema.String }))).toBe(
+      "pinna-effect/field-named-realm",
+    );
+    expect(
+      codeOf(() =>
+        Model.Schema("Bad")({ $count: Model.boxField(Schema.Number), count: Schema.String }),
+      ),
+    ).toBe("pinna-effect/wire-key-twice");
+    expect(codeOf(() => Model.Schema("Bad")({ $count: Schema.Number }))).toBe(
+      "pinna-effect/box-field-undeclared",
+    );
+    expect(codeOf(() => Model.Schema("Bad")({ count: Model.boxField(Schema.Number) }))).toBe(
+      "pinna-effect/box-field-unprefixed",
     );
   });
 
   test("two fields that read the same wire key are rejected", () => {
     expect(() =>
-      SchemaModel("Bad")({ $count: BoxField(Schema.Number), count: Schema.String }),
+      Model.Schema("Bad")({ $count: Model.boxField(Schema.Number), count: Schema.String }),
     ).toThrow('Bad.$count and Bad.count both read "count"; rename one');
   });
 
   test("an instance is not frozen when it enters a box", () => {
-    const portfolio = new Portfolio(createRealm());
+    const portfolio = new Portfolio(Realm.make());
     portfolio.load(positionsJson(1));
-    const response = untracked(portfolio.realm, (read) => read(portfolio.$response));
+    const response = Realm.untracked(portfolio.realm, (read) => read(portfolio.$response));
     expect(Object.isFrozen(response)).toBe(false);
     expect(Object.isFrozen(response.items)).toBe(false);
   });
@@ -145,35 +168,35 @@ describe("SchemaModel", () => {
 
 describe("the realm of a decoded instance", () => {
   test("every nested instance and box belongs to the realm that decoded it", () => {
-    const realm = createRealm();
-    const response = decode(realm, PositionsResponse)(positionsJson(2));
+    const realm = Realm.make();
+    const response = Model.decode(realm, PositionsResponse)(positionsJson(2));
     expect(response.realm).toBe(realm);
     expect(response.items.map((position) => position.realm)).toEqual([realm, realm]);
     const first = response.items[0];
-    expect(first === undefined ? undefined : realmOf(first.$quote)).toBe(realm as never);
+    expect(first !== undefined && madeBy(first.$quote, realm)).toBe(true);
   });
 
   test("a decode of thousands of rows finishes in one call and keeps the realm", () => {
-    const realm = createRealm();
-    const response = decode(realm, PositionsResponse)(positionsJson(5000));
+    const realm = Realm.make();
+    const response = Model.decode(realm, PositionsResponse)(positionsJson(5000));
     expect(response.items).toHaveLength(5000);
     expect(response.items.every((position) => position.realm === realm)).toBe(true);
     const last = response.items[4999];
-    expect(last === undefined ? undefined : realmOf(last.$quote)).toBe(realm as never);
+    expect(last !== undefined && madeBy(last.$quote, realm)).toBe(true);
   });
 
   test("a computed field made from this.realm tracks the decoded boxes", () => {
-    const realm = createRealm();
-    const response = decode(realm, PositionsResponse)(positionsJson(2));
+    const realm = Realm.make();
+    const response = Model.decode(realm, PositionsResponse)(positionsJson(2));
     const totals: Array<number> = [];
-    watch(
+    Realm.watch(
       realm,
       (read) => read(response.$total),
       (total) => {
         totals.push(total);
       },
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       const second = response.items[1];
       if (second !== undefined) {
         write(second.$quote, Quote.make({ price: 20, at: "t1" }));
@@ -183,19 +206,19 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("the same JSON decoded into two realms gives two sets of instances", () => {
-    const first = createRealm();
-    const second = createRealm();
+    const first = Realm.make();
+    const second = Realm.make();
     const json = positionsJson(1);
-    const a = decode(first, PositionsResponse)(json);
-    const b = decode(second, PositionsResponse)(json);
+    const a = Model.decode(first, PositionsResponse)(json);
+    const b = Model.decode(second, PositionsResponse)(json);
     expect(a.items[0]?.realm).toBe(first);
     expect(b.items[0]?.realm).toBe(second);
     expect(a.items[0]?.$quote).not.toBe(b.items[0]?.$quote as never);
   });
 
   test("encoding leaves the realm out", () => {
-    const realm = createRealm();
-    const position = decode(realm, Position)(positionsJson(1).items[0]);
+    const realm = Realm.make();
+    const position = Model.decode(realm, Position)(positionsJson(1).items[0]);
     expect(Object.keys(Schema.encodeSync(Position)(position))).toEqual([
       "id",
       "ticker",
@@ -205,9 +228,9 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("a realm key on the wire is rejected", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const row = { ...positionsJson(1).items[0], realm: "not a realm" };
-    expect(() => decode(realm, Position)(row)).toThrow("the realm is never on the wire");
+    expect(() => Model.decode(realm, Position)(row)).toThrow("the realm is never on the wire");
   });
 
   test("a decode that does not go through a realm fails", () => {
@@ -216,18 +239,18 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("make takes each $ field's value under its wire key and the realm, and builds the box", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const quote = Quote.make({ price: 10, at: "t0" });
     const position = Position.make({ id: "m", ticker: "M", amount: 2, quote, realm });
     expect(position.realm).toBe(realm);
-    expect(realmOf(position.$quote)).toBe(realm as never);
-    expect(untracked(realm, (read) => read(position.$value))).toBe(20);
+    expect(madeBy(position.$quote, realm)).toBe(true);
+    expect(Realm.untracked(realm, (read) => read(position.$value))).toBe(20);
     // @ts-expect-error make needs the realm.
     expect(() => Position.make({ id: "m", ticker: "M", amount: 2, quote })).toThrow();
   });
 
   test("make reports a value that fails its schema at the wire key", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const failure = thrownBy(() =>
       // @ts-expect-error quote takes a Quote.
       Position.make({ id: "m", ticker: "M", amount: 2, quote: 10, realm }),
@@ -238,8 +261,8 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("make rejects a box under the $ key", () => {
-    const realm = createRealm();
-    const $quote = schemaBox(realm, Quote, Quote.make({ price: 10, at: "t0" }));
+    const realm = Realm.make();
+    const $quote = Box.schema(realm, Quote, Quote.make({ price: 10, at: "t0" }));
     const quote = Quote.make({ price: 10, at: "t0" });
     expect(() =>
       // @ts-expect-error $quote is not an input of make.
@@ -248,7 +271,7 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("make from a spread instance throws instead of sharing its box", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const quote = Quote.make({ price: 10, at: "t0" });
     const position = Position.make({ id: "m", ticker: "M", amount: 2, quote, realm });
     // @ts-expect-error a spread instance carries $quote, not quote.
@@ -264,7 +287,7 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("make builds a plain value into the field's class", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const position = Position.make({
       id: "m",
       ticker: "M",
@@ -272,12 +295,12 @@ describe("the realm of a decoded instance", () => {
       quote: { price: 10, at: "t0" },
       realm,
     });
-    expect(untracked(realm, (read) => read(position.$quote))).toBeInstanceOf(Quote);
+    expect(Realm.untracked(realm, (read) => read(position.$quote))).toBeInstanceOf(Quote);
   });
 
   test("make of a model with no nested model takes what encode gives, plus the realm", () => {
-    const realm = createRealm();
-    const position = decode(realm, Position)(positionsJson(1).items[0]);
+    const realm = Realm.make();
+    const position = Model.decode(realm, Position)(positionsJson(1).items[0]);
     const wire = Schema.encodeSync(Position)(position);
     const made = Position.make({ ...wire, realm });
     expect(Schema.encodeSync(Position)(made)).toEqual(wire);
@@ -285,17 +308,17 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("make of a model with a nested model takes instances, so the wire goes through decode", () => {
-    const realm = createRealm();
-    const response = decode(realm, PositionsResponse)(positionsJson(1));
+    const realm = Realm.make();
+    const response = Model.decode(realm, PositionsResponse)(positionsJson(1));
     const wire = Schema.encodeSync(PositionsResponse)(response);
     // @ts-expect-error items takes Position instances, not their wire values.
     expect(() => PositionsResponse.make({ ...wire, realm })).toThrow("Schema validation failed");
-    const decoded = decode(realm, PositionsResponse)(wire);
+    const decoded = Model.decode(realm, PositionsResponse)(wire);
     expect(Schema.encodeSync(PositionsResponse)(decoded)).toEqual(wire);
   });
 
   test("another schema's make keeps the instance it is given", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const quote = Quote.make({ price: 10, at: "t0" });
     const position = Position.make({ id: "m", ticker: "M", amount: 2, quote, realm });
     const Holder = Schema.Struct({ position: Position });
@@ -303,16 +326,16 @@ describe("the realm of a decoded instance", () => {
   });
 
   test("another schema's make throws for a plain object in place of an instance", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const quote = Quote.make({ price: 10, at: "t0" });
     const owner = Position.make({ id: "m", ticker: "M", amount: 2, quote, realm });
     const Holder = Schema.Struct({ position: Position });
     const base = { id: "m", ticker: "M", amount: 2, realm };
     const boxes = {
       "another instance's box": owner.$quote,
-      "a box of another realm": schemaBox(createRealm(), Quote, quote),
-      "a box that checks nothing": box(realm, 42),
-      "a box of another schema": schemaBox(realm, Schema.String, "x"),
+      "a box of another realm": Box.schema(Realm.make(), Quote, quote),
+      "a box that checks nothing": Box.make(realm, 42),
+      "a box of another schema": Box.schema(realm, Schema.String, "x"),
     };
     const messageOf = (position: unknown): string => {
       const failure = thrownBy(() => Holder.make({ position: position as Position }));
@@ -327,11 +350,25 @@ describe("the realm of a decoded instance", () => {
     expect(messageOf({ ...base, quote })).toBe(takesAnInstance);
   });
 
-  test("a decode that fails throws the schema error", () => {
-    const realm = createRealm();
-    expect(() => decode(realm, PositionsResponse)({ items: [{ id: 1 }] })).toThrow(
-      Schema.SchemaError,
-    );
+  test("a decode that fails throws DecodeError, holding the schema error", () => {
+    const realm = Realm.make();
+    let caught: unknown;
+    try {
+      Model.decode(realm, PositionsResponse)({ items: [{ id: 1 }] });
+    } catch (error) {
+      caught = error;
+    }
+    expect(isPinnaError(caught, "DecodeError")).toBe(true);
+    const decodeError = caught as DecodeError;
+    expect(decodeError._tag).toBe("DecodeError");
+    expect(decodeError.name).toBe("DecodeError");
+    expect(Schema.isSchemaError(decodeError.cause)).toBe(true);
+    expect(decodeError.issue).toBe((decodeError.cause as Schema.SchemaError).issue);
+    expect(decodeError.message.startsWith("pinna: decode rejects the input: ")).toBe(true);
+    expect(JSON.parse(JSON.stringify(decodeError))).toMatchObject({
+      _tag: "DecodeError",
+      name: "DecodeError",
+    });
   });
 });
 
@@ -344,15 +381,15 @@ describe("decoding with a context", () => {
 
   class Clock extends Context.Service<Clock, { readonly now: () => number }>()("test/Clock") {}
 
-  class Person extends SchemaModel<Person>("Person")({
-    $name: BoxField(Schema.String),
-    greeting: FromContext(GreetingService),
+  class Person extends Model.Schema<Person>("Person")({
+    $name: Model.boxField(Schema.String),
+    greeting: Model.context(GreetingService),
   }) {
-    readonly $greeting = computed(this.realm, (read) => this.greeting.greet(read(this.$name)));
+    readonly $greeting = Computed.make(this.realm, (read) => this.greeting.greet(read(this.$name)));
   }
 
-  class Team extends SchemaModel<Team>("Team")({
-    $members: BoxField(Schema.Array(Person)),
+  class Team extends Model.Schema<Team>("Team")({
+    $members: Model.boxField(Schema.Array(Person)),
   }) {}
 
   const english: Greeting = { greet: (name) => `Hello, ${name}` };
@@ -361,42 +398,48 @@ describe("decoding with a context", () => {
   const inFrench = Context.make(GreetingService, french);
 
   test("a context field holds the caller's own value and stays off the wire", () => {
-    const realm = createRealm();
-    const person = decode(realm, Person, inEnglish)({ name: "Ada" });
+    const realm = Realm.make();
+    const person = Model.decode(realm, Person, inEnglish)({ name: "Ada" });
     expect(person.greeting).toBe(english);
-    expect(untracked(realm, (read) => read(person.$greeting))).toBe("Hello, Ada");
+    expect(Realm.untracked(realm, (read) => read(person.$greeting))).toBe("Hello, Ada");
     expect(Schema.encodeSync(Person)(person)).toEqual({ name: "Ada" });
   });
 
   test("the context reaches every nested instance", () => {
-    const realm = createRealm();
-    const team = decode(realm, Team, inEnglish)({ members: [{ name: "Ada" }, { name: "Grace" }] });
-    const greetings = untracked(realm, (read) =>
+    const realm = Realm.make();
+    const team = Model.decode(
+      realm,
+      Team,
+      inEnglish,
+    )({ members: [{ name: "Ada" }, { name: "Grace" }] });
+    const greetings = Realm.untracked(realm, (read) =>
       read(team.$members).map((member) => read(member.$greeting)),
     );
     expect(greetings).toEqual(["Hello, Ada", "Hello, Grace"]);
   });
 
   test("a decode without the context, or with one that lacks the tag, does not compile", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     // @ts-expect-error Team needs GreetingService, through Person.
-    expect(() => decode(realm, Team)({ members: [{ name: "Ada" }] })).toThrow("test/Greeting");
+    expect(() => Model.decode(realm, Team)({ members: [{ name: "Ada" }] })).toThrow(
+      "test/Greeting",
+    );
     expect(() =>
       // @ts-expect-error the context holds a Clock, not a GreetingService.
-      decode(realm, Person, Context.make(Clock, { now: () => 0 }))({ name: "Ada" }),
+      Model.decode(realm, Person, Context.make(Clock, { now: () => 0 }))({ name: "Ada" }),
     ).toThrow("test/Greeting");
   });
 
   test("a context may hold more services than the schema needs", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const wide = inEnglish.pipe(Context.add(Clock, { now: () => 0 }));
-    expect(decode(realm, Person, wide)({ name: "Ada" }).greeting).toBe(english);
+    expect(Model.decode(realm, Person, wide)({ name: "Ada" }).greeting).toBe(english);
   });
 
   test("a schema with no context field takes no context", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     // @ts-expect-error PositionsResponse needs no service.
-    expect(() => decode(realm, PositionsResponse, inEnglish)).not.toThrow();
+    expect(() => Model.decode(realm, PositionsResponse, inEnglish)).not.toThrow();
   });
 
   test("a schema that reads any Effect service takes it in the context", () => {
@@ -405,7 +448,7 @@ describe("decoding with a context", () => {
         Schema.withDecodingDefaultTypeKey(Effect.map(Clock, (clock) => clock.now())),
       ),
     });
-    const stamped = decode(createRealm(), Stamped, Context.make(Clock, { now: () => 7 }))({});
+    const stamped = Model.decode(Realm.make(), Stamped, Context.make(Clock, { now: () => 7 }))({});
     expect(stamped.at).toBe(7);
   });
 
@@ -421,38 +464,42 @@ describe("decoding with a context", () => {
         ),
       ),
     });
-    expect(decode(createRealm(), Greeted, inFrench)({ name: "Ada" }).name).toBe("Bonjour, Ada");
-  });
-
-  test("a context field on the wire is rejected", () => {
-    const realm = createRealm();
-    expect(() => decode(realm, Person, inEnglish)({ name: "Ada", greeting: english })).toThrow(
-      Schema.SchemaError,
+    expect(Model.decode(Realm.make(), Greeted, inFrench)({ name: "Ada" }).name).toBe(
+      "Bonjour, Ada",
     );
   });
 
+  test("a context field on the wire is rejected", () => {
+    const realm = Realm.make();
+    expect(() =>
+      Model.decode(realm, Person, inEnglish)({ name: "Ada", greeting: english }),
+    ).toThrow(DecodeError);
+  });
+
   test("a context field decodes only with its service", () => {
-    const Greeted = Schema.Struct({ greeting: FromContext(GreetingService) });
+    const Greeted = Schema.Struct({ greeting: Model.context(GreetingService) });
     // @ts-expect-error Greeted needs GreetingService, which decodeUnknownSync cannot take.
     expect(() => Schema.decodeUnknownSync(Greeted)({})).toThrow();
   });
 
   test("a decode inside a decode has its own context, and the outer one comes back", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const Pair = Schema.Struct({
       inner: Schema.String.pipe(
         Schema.decodeTo(
           Schema.String,
           SchemaTransformation.transform({
             decode: (name) =>
-              untracked(realm, (read) => read(decode(realm, Person, inFrench)({ name }).$greeting)),
+              Realm.untracked(realm, (read) =>
+                read(Model.decode(realm, Person, inFrench)({ name }).$greeting),
+              ),
             encode: (greeting) => greeting,
           }),
         ),
       ),
-      greeting: FromContext(GreetingService),
+      greeting: Model.context(GreetingService),
     });
-    const pair = decode(realm, Pair, inEnglish)({ inner: "Ada" });
+    const pair = Model.decode(realm, Pair, inEnglish)({ inner: "Ada" });
     expect(pair.inner).toBe("Bonjour, Ada");
     expect(pair.greeting).toBe(english);
   });
@@ -465,31 +512,32 @@ describe("an Effect decode with a context", () => {
 
   class GreetingService extends Context.Service<GreetingService, Greeting>()("test/Greeting") {}
 
-  class Person extends SchemaModel<Person>("Person")({
-    $name: BoxField(Schema.String),
-    greeting: FromContext(GreetingService),
+  class Person extends Model.Schema<Person>("Person")({
+    $name: Model.boxField(Schema.String),
+    greeting: Model.context(GreetingService),
   }) {
-    readonly $greeting = computed(this.realm, (read) => this.greeting.greet(read(this.$name)));
+    readonly $greeting = Computed.make(this.realm, (read) => this.greeting.greet(read(this.$name)));
   }
 
-  class Team extends SchemaModel<Team>("Team")({
-    $members: BoxField(Schema.Array(Person)),
+  class Team extends Model.Schema<Team>("Team")({
+    $members: Model.boxField(Schema.Array(Person)),
   }) {}
 
   const english: Greeting = { greet: (name) => `Hello, ${name}` };
   const french: Greeting = { greet: (name) => `Bonjour, ${name}` };
 
-  const greetingOf = (person: Person) => untracked(person.realm, (read) => read(person.$greeting));
+  const greetingOf = (person: Person) =>
+    Realm.untracked(person.realm, (read) => read(person.$greeting));
 
   test("Effect.provideService gives every nested instance the service", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const team = await Effect.runPromise(
       Schema.decodeUnknownEffect(Team)({ members: [{ name: "Ada" }, { name: "Grace" }] }).pipe(
         Effect.provideService(GreetingService, english),
         Effect.provideService(RealmService, realm),
       ),
     );
-    const members = untracked(realm, (read) => read(team.$members));
+    const members = Realm.untracked(realm, (read) => read(team.$members));
     expect(members.map(greetingOf)).toEqual(["Hello, Ada", "Hello, Grace"]);
   });
 
@@ -497,7 +545,7 @@ describe("an Effect decode with a context", () => {
     const person = await Effect.runPromise(
       Schema.decodeUnknownEffect(Person)({ name: "Ada" }).pipe(
         Effect.provide(Layer.succeed(GreetingService, french)),
-        Effect.provideService(RealmService, createRealm()),
+        Effect.provideService(RealmService, Realm.make()),
       ),
     );
     expect(greetingOf(person)).toBe("Bonjour, Ada");
@@ -505,7 +553,7 @@ describe("an Effect decode with a context", () => {
 
   test("a missing service stays a requirement, and the decode dies", async () => {
     const missing = Schema.decodeUnknownEffect(Person)({ name: "Ada" }).pipe(
-      Effect.provideService(RealmService, createRealm()),
+      Effect.provideService(RealmService, Realm.make()),
     );
     // @ts-expect-error nothing provides GreetingService.
     const exit = await Effect.runPromiseExit(missing);
@@ -514,19 +562,21 @@ describe("an Effect decode with a context", () => {
   });
 
   test("a decode inside an Effect decode reads its own context, and the provided one comes back", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const Pair = Schema.Struct({
       inner: Schema.String.pipe(
         Schema.decodeTo(
           Schema.String,
           SchemaTransformation.transform({
             decode: (name) =>
-              greetingOf(decode(realm, Person, Context.make(GreetingService, french))({ name })),
+              greetingOf(
+                Model.decode(realm, Person, Context.make(GreetingService, french))({ name }),
+              ),
             encode: (greeting) => greeting,
           }),
         ),
       ),
-      greeting: FromContext(GreetingService),
+      greeting: Model.context(GreetingService),
     });
     const pair = await Effect.runPromise(
       Schema.decodeUnknownEffect(Pair)({ inner: "Ada" }).pipe(
@@ -538,7 +588,7 @@ describe("an Effect decode with a context", () => {
   });
 
   test("an Effect decode inside a decode reads the service it provides, over the decode's", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const Pair = Schema.Struct({
       inner: Schema.String.pipe(
         Schema.decodeTo(
@@ -555,9 +605,13 @@ describe("an Effect decode with a context", () => {
           ),
         ),
       ),
-      greeting: FromContext(GreetingService),
+      greeting: Model.context(GreetingService),
     });
-    const pair = decode(realm, Pair, Context.make(GreetingService, english))({ inner: "Ada" });
+    const pair = Model.decode(
+      realm,
+      Pair,
+      Context.make(GreetingService, english),
+    )({ inner: "Ada" });
     expect(pair.inner).toBe("Bonjour, Ada");
     expect(pair.greeting).toBe(english);
   });
@@ -565,13 +619,13 @@ describe("an Effect decode with a context", () => {
 
 describe("the event table", () => {
   const setup = () => {
-    const portfolio = new Portfolio(createRealm());
+    const portfolio = new Portfolio(Realm.make());
     const { realm } = portfolio;
     portfolio.load(positionsJson(3));
-    const rows = untracked(realm, (read) => read(portfolio.$response).items);
+    const rows = Realm.untracked(realm, (read) => read(portfolio.$response).items);
     const rowValues = rows.map((position) => {
       const seen: Array<number> = [];
-      const stop = watch(
+      const stop = Realm.watch(
         realm,
         (read) => read(position.$value),
         (value) => {
@@ -581,7 +635,7 @@ describe("the event table", () => {
       return { seen, stop };
     });
     const totals: Array<string> = [];
-    const stopTotal = watch(
+    const stopTotal = Realm.watch(
       realm,
       (read) => read(portfolio.$totalLabel),
       (value) => {
@@ -612,7 +666,7 @@ describe("the event table", () => {
   test("closing a position keeps the other instances", () => {
     const { portfolio, realm, rows, totals } = setup();
     portfolio.close("p1");
-    const after = untracked(realm, (read) => read(portfolio.$response).items);
+    const after = Realm.untracked(realm, (read) => read(portfolio.$response).items);
     expect(after).toEqual([rows[0], rows[2]].filter((row) => row !== undefined));
     expect(after[0]).toBe(rows[0] as never);
     expect(totals).toEqual(["40 USD"]);
@@ -621,7 +675,7 @@ describe("the event table", () => {
 
   test("a currency change recomputes only the label", () => {
     const { portfolio, realm, totals } = setup();
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write(portfolio.$currency, "EUR");
     });
     expect(totals).toEqual(["60 EUR"]);
@@ -650,34 +704,35 @@ describe("SchemaModel decode", () => {
     const wire = { id: "a", size: 1, points: [{ x: 1 }, { x: 2 }] };
     Schema.decodeUnknownSync(Schema.Struct(fields))(wire);
     expect(checks).toBe(3);
-    class Plain extends SchemaModel<Plain>("Plain")(fields) {}
-    class Boxed extends SchemaModel<Boxed>("Boxed")({
+    class Plain extends Model.Schema<Plain>("Plain")(fields) {}
+    class Boxed extends Model.Schema<Boxed>("Boxed")({
       id: Schema.String,
-      $size: BoxField(Counted),
+      $size: Model.boxField(Counted),
       points: Schema.Array(Point),
     }) {}
-    const realm = createRealm();
+    const realm = Realm.make();
     checks = 0;
-    decode(realm, Plain)(wire);
+    Model.decode(realm, Plain)(wire);
     expect(checks).toBe(3);
     checks = 0;
-    decode(realm, Boxed)(wire);
+    Model.decode(realm, Boxed)(wire);
     expect(checks).toBe(3);
   });
 
   test("reports a failed field at its wire key", () => {
-    class Row extends SchemaModel<Row>("Row")({
+    class Row extends Model.Schema<Row>("Row")({
       id: Schema.String,
       note: Schema.optionalKey(Schema.String),
-      $price: BoxField(Schema.Number.check(Schema.isGreaterThan(0))),
+      $price: Model.boxField(Schema.Number.check(Schema.isGreaterThan(0))),
     }) {}
-    const realm = createRealm();
+    const realm = Realm.make();
     const messageOf = (input: unknown): string => {
       try {
-        decode(realm, Row)(input);
+        Model.decode(realm, Row)(input);
         return "decoded";
       } catch (error) {
-        return (error as Error).message;
+        expect(isPinnaError(error, "DecodeError")).toBe(true);
+        return ((error as DecodeError).cause as Error).message;
       }
     };
     expect(messageOf({ id: "a", price: 1 })).toBe("decoded");
@@ -692,35 +747,36 @@ describe("SchemaModel decode", () => {
   });
 
   test("encodes only the fields, under their wire keys", () => {
-    class Row extends SchemaModel<Row>("Row")({
+    class Row extends Model.Schema<Row>("Row")({
       id: Schema.String,
       note: Schema.optionalKey(Schema.String),
-      $price: BoxField(Schema.Number),
+      $price: Model.boxField(Schema.Number),
     }) {
       readonly label = `row ${this.id}`;
     }
-    const realm = createRealm();
-    const row = decode(realm, Row)({ id: "a", price: 2 });
+    const realm = Realm.make();
+    const row = Model.decode(realm, Row)({ id: "a", price: 2 });
     expect(row.label).toBe("row a");
     expect(Schema.encodeSync(Row)(row)).toEqual({ id: "a", price: 2 });
     expect(Object.keys(Schema.encodeSync(Row)(row))).toEqual(["id", "price"]);
-    const noted = decode(realm, Row)({ id: "b", note: "n", price: 3 });
+    const noted = Model.decode(realm, Row)({ id: "b", note: "n", price: 3 });
     expect(Schema.encodeSync(Row)(noted)).toEqual({ id: "b", note: "n", price: 3 });
   });
 
   test("puts boxes and collections in the decoding realm, and encodes their values", () => {
-    class Item extends SchemaModel<Item>("Item")({ id: Schema.String, price: Schema.Number }) {}
-    class Basket extends SchemaModel<Basket>("Basket")({
-      $size: BoxField(Schema.Number.check(Schema.isGreaterThan(0))),
-      $items: CollectionField(Item, { keyOf: (item) => item.id }),
+    class Item extends Model.Schema<Item>("Item")({ id: Schema.String, price: Schema.Number }) {}
+    class Basket extends Model.Schema<Basket>("Basket")({
+      $size: Model.boxField(Schema.Number.check(Schema.isGreaterThan(0))),
+      $items: Model.collectionField(Item, { keyOf: (item) => item.id }),
     }) {}
-    const realm = createRealm();
+    const realm = Realm.make();
     const messageOf = (input: unknown): string => {
       try {
-        decode(realm, Basket)(input);
+        Model.decode(realm, Basket)(input);
         return "decoded";
       } catch (error) {
-        return (error as Error).message;
+        expect(isPinnaError(error, "DecodeError")).toBe(true);
+        return ((error as DecodeError).cause as Error).message;
       }
     };
     expect(messageOf({ size: 0, items: [] })).toBe(
@@ -740,12 +796,12 @@ describe("SchemaModel decode", () => {
     );
 
     const wire = { size: 2, items: [{ id: "a", price: 1 }] };
-    const basket = decode(realm, Basket)(wire);
-    expect(realmOf(basket.$size)).toBe(realm as never);
-    expect(untracked(realm, (read) => read(basket.$size))).toBe(2);
-    expect(untracked(realm, (read) => read(basket.$items.row("a")))?.price).toBe(1);
+    const basket = Model.decode(realm, Basket)(wire);
+    expect(madeBy(basket.$size, realm)).toBe(true);
+    expect(Realm.untracked(realm, (read) => read(basket.$size))).toBe(2);
+    expect(Realm.untracked(realm, (read) => read(basket.$items.row("a")))?.price).toBe(1);
     expect(Schema.encodeSync(Basket)(basket)).toEqual(wire);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write(basket.$size, 3);
       write.upsert(basket.$items, Item.make({ id: "b", price: 4, realm }));
     });
@@ -759,19 +815,66 @@ describe("SchemaModel decode", () => {
   });
 
   test("fails to decode or encode a box field in any schema but a SchemaModel", () => {
-    const realm = createRealm();
-    const Holder = Schema.Struct({ $size: BoxField(Schema.Number) });
-    expect(() => decode(realm, Holder)({ $size: 5 })).toThrow(
-      "pinna: BoxField is a SchemaModel field; declare it in SchemaModel(...)",
+    const realm = Realm.make();
+    const Holder = Schema.Struct({ $size: Model.boxField(Schema.Number) });
+    expect(() => Model.decode(realm, Holder)({ $size: 5 })).toThrow(
+      "pinna: Model.boxField is a Model.Schema field; declare it in Model.Schema(...)",
     );
     // The field's make type is its wire value; only a SchemaModel turns that into a box.
-    const held = Holder.make({ $size: box(realm, 5) as never });
+    const held = Holder.make({ $size: Box.make(realm, 5) as never });
     expect(() => Schema.encodeSync(Holder)(held)).toThrow(
-      "pinna: BoxField is a SchemaModel field; declare it in SchemaModel(...)",
+      "pinna: Model.boxField is a Model.Schema field; declare it in Model.Schema(...)",
     );
-    const Rows = Schema.Array(CollectionField(Schema.String, { keyOf: (value) => value }));
-    expect(() => decode(realm, Rows)([["a"]])).toThrow(
-      "pinna: CollectionField is a SchemaModel field; declare it in SchemaModel(...)",
+    const Rows = Schema.Array(Model.collectionField(Schema.String, { keyOf: (value) => value }));
+    expect(() => Model.decode(realm, Rows)([["a"]])).toThrow(
+      "pinna: Model.collectionField is a Model.Schema field; declare it in Model.Schema(...)",
     );
   });
+});
+
+describe("prototype-named fields", () => {
+  const names = ["constructor", "toString", "hasOwnProperty", "valueOf", "__proto__"] as const;
+
+  for (const name of names) {
+    const key = `$${name}`;
+    test(`a box field ${key} decodes to an own box that reads its input`, () => {
+      const realm = Realm.make();
+      const Row = Model.Schema("Row")({ [key]: Model.boxField(Schema.Number) } as never);
+      const made = Model.decode(realm, Row as never)({ [name]: 7 } as never) as Record<
+        string,
+        unknown
+      >;
+      expect(Object.hasOwn(made, key)).toBe(true);
+      expect(Realm.untracked(realm, (read) => read(made[key] as Box<number>))).toBe(7);
+    });
+  }
+
+  test("a plain field __proto__ throws where the class is defined", () => {
+    const define = () => Model.Schema("Row")({ ["__proto__"]: Schema.Number } as never);
+    expect(define).toThrow(
+      "pinna: Row.__proto__ cannot hold a plain field, which would be lost on decode; rename the field or declare it $__proto__ as a box field",
+    );
+    let thrown: unknown;
+    try {
+      define();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isPinnaError(thrown)).toBe(true);
+    expect((thrown as PinnaUsageError).code).toBe("pinna-effect/reserved-field-name");
+  });
+
+  // A plain field named `__proto__` throws at the definition, above.
+  for (const name of names.filter((name) => name !== "__proto__")) {
+    test(`a plain field ${name} decodes to an own property that holds its input`, () => {
+      const realm = Realm.make();
+      const Row = Model.Schema("Row")({ [name]: Schema.Number } as never);
+      const made = Model.decode(realm, Row as never)({ [name]: 7 } as never) as Record<
+        string,
+        unknown
+      >;
+      expect(Object.hasOwn(made, name)).toBe(true);
+      expect(made[name]).toBe(7);
+    });
+  }
 });

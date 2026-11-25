@@ -1,27 +1,21 @@
 // The site's docs print the regions of this file (docs/public/effect/programs.md, "Stages"),
 // so `bun run typecheck` compiles what the page shows.
-import {
-  box,
-  createRealm,
-  StageConflict,
-  stageUpdate,
-  withStage,
-} from "@frondruntime/pinna-effect";
+import { Box, Realm, Stage } from "@frondruntime/pinna-effect";
 import { Effect } from "effect";
 
-const realm = createRealm();
+const realm = Realm.make();
 const send = (_amount: number): Effect.Effect<void, "refused"> => Effect.void;
 const describeTransfer = (note: string): Effect.Effect<string, "unavailable"> =>
   Effect.succeed(note);
 
 // #region withStage
-const $balance = box(realm, 100);
-const $status = box<"idle" | "sent">(realm, "idle");
+const $balance = Box.make(realm, 100);
+const $status = Box.make<"idle" | "sent">(realm, "idle");
 
 const transfer = (amount: number) =>
-  withStage(realm, (stage) =>
+  Stage.scoped(realm, (stage) =>
     Effect.gen(function* () {
-      stageUpdate(stage, (read, write) => {
+      Stage.update(stage, (read, write) => {
         write($balance, read($balance) - amount);
         write($status, "sent");
       });
@@ -32,20 +26,20 @@ const transfer = (amount: number) =>
 // #endregion
 
 // #region savepoint
-const $notes = box<ReadonlyArray<string>>(realm, []);
+const $notes = Box.make<ReadonlyArray<string>>(realm, []);
 
 const transferWithNote = (amount: number, note: string) =>
-  withStage(realm, (stage) =>
+  Stage.scoped(realm, (stage) =>
     Effect.gen(function* () {
-      stageUpdate(stage, (read, write) => {
+      Stage.update(stage, (read, write) => {
         write($balance, read($balance) - amount);
       });
       // A child stage: when the section fails, its writes never reach the outer
       // stage, and each retry starts from a fresh child.
-      yield* withStage(stage, (section) =>
+      yield* Stage.scoped(stage, (section) =>
         Effect.gen(function* () {
           const text = yield* describeTransfer(note);
-          stageUpdate(section, (_read, write) => {
+          Stage.update(section, (_read, write) => {
             write.modify($notes, (notes) => {
               notes.push(text);
             });
@@ -61,23 +55,64 @@ const transferWithNote = (amount: number, note: string) =>
 // #endregion
 
 // #region conflicts
-const $price = box(realm, 10);
-const $total = box(realm, 0);
+const $price = Box.make(realm, 10);
+const $total = Box.make(realm, 0);
 
-const checkout = withStage(
+const checkout = Stage.scoped(
   realm,
   (stage) =>
     Effect.sync(() => {
-      stageUpdate(stage, (read, write) => {
+      Stage.update(stage, (read, write) => {
         write($total, read($price) * 2);
       });
     }),
   { conflicts: "fail" },
 ).pipe(
   // The price changed after the stage read it: run the section again over the new one.
-  Effect.retry({ while: (error) => error instanceof StageConflict, times: 3 }),
+  Effect.retry({ while: (error) => error._tag === "StageConflictError", times: 3 }),
 );
 
 // #endregion
 
-export { checkout, transfer, transferWithNote };
+// #region visible
+const $title = Box.make(realm, "Untitled");
+const save = (_title: string): Effect.Effect<void, "refused"> => Effect.void;
+
+const rename = (title: string) =>
+  Stage.scoped(
+    realm,
+    (stage) =>
+      Effect.gen(function* () {
+        Stage.update(stage, (_read, write) => {
+          write($title, title);
+        });
+        // The new title shows while the save runs; a failure takes it off.
+        yield* save(title);
+      }),
+    { name: "rename", visible: true },
+  );
+// #endregion
+
+// #region guess
+const $count = Box.make(realm, 0);
+const increment = (): Effect.Effect<number, "refused"> => Effect.succeed(1);
+
+const like = Stage.scoped(
+  realm,
+  (stage) =>
+    Effect.gen(function* () {
+      const count = yield* increment();
+      Stage.update(stage, (_read, write) => {
+        write($count, count);
+      });
+    }),
+  {
+    name: "like",
+    // Shown while the request runs; the server's count replaces it in one update.
+    guess: (read, write) => write($count, read($count) + 1),
+  },
+);
+
+// #endregion
+
+export { $count, $title, checkout, like, realm, rename, transfer, transferWithNote };

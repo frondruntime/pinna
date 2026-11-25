@@ -7,21 +7,11 @@ import {
   computed as mobxComputed,
   runInAction,
 } from "mobx";
-import {
-  atom,
-  autorun,
-  computed,
-  createRealm,
-  isTracking,
-  onObserved,
-  type Read,
-  untracked,
-  update,
-} from "../../../src/index.ts";
+import { Atom, Computed, type Read, Realm, Source } from "../../../src/index.ts";
 
 /**
  * An application's `createAtom`, `IAtom`, and `_isComputingDerivation` uses,
- * beside `atom`, `onObserved`, and `isTracking`:
+ * beside `Atom.make`, `Source.onObserved`, and `Realm.isTracking`:
  *
  * - live demand: an atom whose first observer starts a stream and whose last
  *   observer stops it, and which outside a derivation tells its caller so;
@@ -60,21 +50,21 @@ describe("createAtom for live demand", () => {
   });
 
   test("Pinna: atom with an onObserved hook, and isTracking for the answer", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const hooks: Array<string> = [];
-    const $atom = atom(realm);
-    onObserved($atom, () => {
+    const $atom = Atom.make(realm);
+    Source.onObserved($atom, () => {
       hooks.push("observed");
       return () => hooks.push("unobserved");
     });
-    untracked(realm, (read) => read($atom));
-    const outside = isTracking(realm);
+    Realm.untracked(realm, (read) => read($atom));
+    const outside = Realm.isTracking(realm);
     let runs = 0;
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       read($atom);
       runs++;
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.changed($atom);
     });
     stop();
@@ -130,28 +120,28 @@ describe("_isComputingDerivation and a lifecycle atom", () => {
   });
 
   test("Pinna: isTracking", () => {
-    const realm = createRealm();
-    const lifecycle = atom(realm);
+    const realm = Realm.make();
+    const lifecycle = Atom.make(realm);
     const tracking: Array<boolean> = [];
     const touch = (read?: Read) => {
-      tracking.push(isTracking(realm));
-      if (read !== undefined && isTracking(realm)) {
+      tracking.push(Realm.isTracking(realm));
+      if (read !== undefined && Realm.isTracking(realm)) {
         read(lifecycle);
       }
     };
     touch();
     let computes = 0;
-    const derivation = computed(realm, (read) => {
+    const derivation = Computed.make(realm, (read) => {
       touch(read);
       computes++;
       return computes;
     });
     let runs = 0;
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       read(derivation);
       runs++;
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.changed(lifecycle);
     });
     stop();

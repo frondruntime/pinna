@@ -1,7 +1,8 @@
 # Pinna
 
 Pinna is reactive state for applications: granular reads, granular updates,
-cached derived values, and lifecycles driven by observation. A name that
+cached derived values, and lifecycles driven by observation. Pinna is not
+Pinia, Vue's store; it shares no API with it. A name that
 starts with `$` is an observable, a box, a computed value, an atom, or a
 collection, and everything else is plain data.
 
@@ -37,15 +38,15 @@ bun add @frondruntime/pinna @frondruntime/pinna-react
 
 ```tsx
 import { Schema } from "effect";
-import { computed, createRealm, schemaBox, update } from "@frondruntime/pinna-effect";
+import { Box, Computed, Realm } from "@frondruntime/pinna-effect";
 import { useValue } from "@frondruntime/pinna-react";
 
-const realm = createRealm();
-const $count = schemaBox(realm, Schema.Number, 0);
-const $double = computed(realm, (read) => read($count) * 2);
+const realm = Realm.make();
+const $count = Box.schema(realm, Schema.Number, 0);
+const $double = Computed.make(realm, (read) => read($count) * 2);
 
 const increment = () => {
-  update(realm, (read, write) => {
+  Realm.update(realm, (read, write) => {
     write($count, read($count) + 1);
   });
 };
@@ -57,30 +58,30 @@ function Counter() {
 ```
 
 A call that makes an observable, opens an update, or starts a watcher takes
-the realm first; a call about one observable, such as `useValue`, `observe`,
-or `inspect`, takes the observable. A box is written only inside `update`,
+the realm first; a call about one observable, such as `useValue`, `Source.observe`,
+or `Source.inspect`, takes the observable. A box is written only inside `Realm.update`,
 which hands out `write`. Without Effect, import from `@frondruntime/pinna`
-and drop the schema: `box(realm, 0)`. Asynchronous work whose writes must
-not show until it succeeds stages them: `openStage`, `stageUpdate`, then
-`applyStage` lands them in one update, or `dropStage` discards them; with
-Effect, `withStage` does both.
+and drop the schema: `Box.make(realm, 0)`. Asynchronous work whose writes must
+not show until it succeeds stages them: `Stage.make`, `Stage.update`, then
+`Stage.apply` lands them in one update, or `Stage.drop` discards them; with
+Effect, `Stage.scoped` does both.
 
 ## What it is for
 
 Domain state: models, forms, lists loaded from a server, prices streamed into
 existing rows, and totals derived from them. Every read is tracked, and a
-`schemaBox` or a `BoxField` checks every write against its schema. That costs
+`Box.schema` or a `Model.boxField` checks every write against its schema. That costs
 a little on each operation, and it buys correctness, not speed.
 
 Per-frame work fits when what changes each frame is domain state, such as a
 chart of streamed prices or a canvas that draws rows. Trusted data written
-that often takes a plain `box` or `Model`, which checks nothing;
+that often takes a plain `Box.make` or `Model`, which checks nothing;
 `docs/performance.md`, "Four stores tuned to one reactive shape", measures
 ticks of 50 updates over 10,000 rows on Hermes. A chart or canvas draws from
 its own `requestAnimationFrame` loop: a watch sets a flag, and the loop reads
-through `untracked` when the flag is set, so it draws at most once a frame.
+through `Realm.untracked` when the flag is set, so it draws at most once a frame.
 Per-entity simulation state, such as particles or physics bodies, stays in
-plain arrays and objects outside any box, and one `update` a frame writes
+plain arrays and objects outside any box, and one `Realm.update` a frame writes
 what the UI shows. A list that grows one item at a time adds many items in
 one update, or is a collection of rows by key: every write to a box reruns
 every reader of the box.
@@ -91,14 +92,14 @@ every reader of the box.
 | --- | --- |
 | `packages/pinna-core` | The graph, with no runtime dependencies. |
 | `packages/pinna` | Boxes, computed values, updates, and the keyed collection, with no Effect; `AGENTS.md` there ships with the package. |
-| `packages/pinna-effect` | Pinna on Effect Schema: `schemaBox`, `SchemaModel`, `decode`, and the Effect programs. |
+| `packages/pinna-effect` | Pinna on Effect Schema: `Box.schema`, `Model.Schema`, `Model.decode`, and the Effect programs. |
 | `packages/pinna-react` | The hooks and `RealmProvider`. |
 | `packages/pinna-bench` | Speed and conformance against alien-signals, MobX, and Legend State on Node and Hermes. Private. |
 | `apps/playground` | The demo app, and in `src/docs` the samples the site prints. |
 | `apps/site` | The documentation site, built from `docs/public`. |
 | `apps/desk` | A trading desk built on Pinna. |
 | `apps/rn-bench` | A React Native app that measures Pinna against other stores on iOS. |
-| `docs` | `public` the site's pages, `api.md` the decision record, `design.md` how it works, `performance.md` the measurements. |
+| `docs` | `public` the site's pages, `unpublished` (in the private repository only) the pages of the packages not on npm, `api.md` the decision record, `design.md` how it works, `performance.md` the measurements. |
 | `scripts/release.ts` | The release command line: build, pack check, and publish. |
 
 ## Commands
@@ -142,5 +143,5 @@ release-please and publishes nothing.
 
 ## Status
 
-Pinna 0.0.1 is a release before 1.0: any release before 1.0 may change the
+Pinna 0.2.0 is a release before 1.0: any release before 1.0 may change the
 API, and none promises compatibility with the one before.

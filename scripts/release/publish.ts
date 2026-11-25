@@ -16,9 +16,9 @@ import { Console, Effect, FileSystem, Path, Schema, Stdio } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { packAndSmoke, readJson } from "./pack.ts";
 import {
-  type PublishedPackage,
   packageDirectory,
-  publishedPackages,
+  type ReleasePackage,
+  releasePackages,
   scope,
   workspaceRoot,
 } from "./packages.ts";
@@ -74,22 +74,29 @@ const signIn = (root: string, dryRun: boolean): Effect.Effect<void, ReleaseError
 const readManifests = (
   root: string,
 ): Effect.Effect<
-  ReadonlyArray<readonly [PublishedPackage, PackageManifest]>,
+  ReadonlyArray<readonly [ReleasePackage, PackageManifest]>,
   ReleaseError,
   FileSystem.FileSystem | Path.Path
 > =>
-  Effect.forEach(publishedPackages, (published) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const directory = yield* packageDirectory(root, published);
-      const manifest = yield* readJson(
-        `manifest of ${published.name}`,
-        PackageManifest,
-        path.join(directory, "package.json"),
-      );
-      return [published, manifest] as const;
-    }),
+  Effect.forEach(
+    releasePackages.filter((released) => released.publishes),
+    (published) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const directory = yield* packageDirectory(root, published);
+        const manifest = yield* readJson(
+          `manifest of ${published.name}`,
+          PackageManifest,
+          path.join(directory, "package.json"),
+        );
+        return [published, manifest] as const;
+      }),
   );
+
+/** The packages packed for a release candidate and never sent to npm. */
+const unpublishedNames = new Set(
+  releasePackages.filter((released) => !released.publishes).map((released) => released.name),
+);
 
 /**
  * The packages are released together at one version, and each names the
@@ -97,7 +104,7 @@ const readManifests = (
  * it was tested with.
  */
 const checkManifests = (
-  manifests: ReadonlyArray<readonly [PublishedPackage, PackageManifest]>,
+  manifests: ReadonlyArray<readonly [ReleasePackage, PackageManifest]>,
 ): Effect.Effect<string, ReleaseError> => {
   const [first] = manifests;
   const version = first?.[1].version ?? "";
@@ -109,6 +116,10 @@ const checkManifests = (
       manifest.version === version
         ? []
         : [`${manifest.name} is at ${manifest.version}, ${first?.[1].name} at ${version}`],
+      // npm would install a published package without the private one it names.
+      ranges
+        .filter(([name]) => unpublishedNames.has(name))
+        .map(([name]) => `${manifest.name} names ${name}, which is not published`),
       ranges
         .filter(([, range]) => range.startsWith("workspace:"))
         .map(([name]) => `${manifest.name} names ${name} with a workspace: range`),
@@ -144,6 +155,14 @@ const isPublished = (
     return yield* new ReleaseError({ step, message: result.stderr.trim() });
   });
 
+/**
+ * The dist-tag a version goes out under. A prerelease (`0.2.0-rc.2`) goes to
+ * `next`, so `npm install @frondruntime/pinna` keeps resolving the last
+ * release; only a release moves `latest`.
+ */
+export const distTagOf = (version: string): "latest" | "next" =>
+  version.includes("-") ? "next" : "latest";
+
 /** The published files come from `packages`, so a change there must be committed first. */
 const checkCleanPackages = (
   root: string,
@@ -177,7 +196,7 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
     yield* section("registry");
     const manifests = yield* readManifests(root);
     const version = yield* checkManifests(manifests);
-    const pending: Array<PublishedPackage> = [];
+    const pending: Array<ReleasePackage> = [];
     for (const [published] of manifests) {
       if (yield* isPublished(root, published.name, version)) {
         yield* Console.log(`${published.name}@${version} is already published; skipped`);
@@ -191,8 +210,9 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
         message: `every package is already published at ${version}`,
       });
     }
+    const distTag = distTagOf(version);
     yield* Console.log(
-      `to publish at ${version}: ${pending.map((published) => published.name).join(", ")}`,
+      `to publish at ${version} under the ${distTag} tag: ${pending.map((published) => published.name).join(", ")}`,
     );
     yield* checkCleanPackages(root, dryRun);
 
@@ -226,7 +246,15 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
           yield* attachedOrFail(
             `publish ${published.name}`,
             "npm",
-            ["publish", tarball, "--access", "public", ...(dryRun ? ["--dry-run"] : [])],
+            [
+              "publish",
+              tarball,
+              "--access",
+              "public",
+              "--tag",
+              distTag,
+              ...(dryRun ? ["--dry-run"] : []),
+            ],
             root,
           );
         }
@@ -236,6 +264,6 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
     yield* Console.log(
       dryRun
         ? `\ndry run done; nothing was published`
-        : `\npublished ${pending.map((published) => `${published.name}@${version}`).join(", ")}`,
+        : `\npublished ${pending.map((published) => `${published.name}@${version}`).join(", ")} under the ${distTag} tag`,
     );
   });

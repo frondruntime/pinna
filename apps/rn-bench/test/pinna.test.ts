@@ -1,10 +1,10 @@
 /**
- * What the Pinna store notifies, observed with Pinna's own `watch` over what
+ * What the Pinna store notifies, observed with Pinna's own `Realm.watch` over what
  * a row's components read: the row of its key, then that row's three tick
  * boxes (src/pinna/variant.tsx, `RowById` and `InstrumentRow`).
  */
 import { expect, test } from "bun:test";
-import { watch } from "@frondruntime/pinna";
+import { Realm } from "@frondruntime/pinna";
 import { rowTexts } from "../src/data/format.ts";
 import { type PlainRow, type PlainTick, toPlainRows, toPlainTicks } from "../src/data/plain.ts";
 import {
@@ -29,7 +29,7 @@ const touchedBy = (write: (store: ReturnType<typeof makePinnaStore>["store"]) =>
   store.load(plainRows(rows));
   const touched = new Set<string>();
   const stops = rows.map((row) =>
-    watch(
+    Realm.watch(
       market.realm,
       (read) => {
         const instrument = read(market.$rows.row(row.id));
@@ -80,7 +80,7 @@ test("a tick leaves the list's keys alone", () => {
   const { market, store } = makePinnaStore();
   store.load(plainRows(rows));
   let notified = 0;
-  const stop = watch(
+  const stop = Realm.watch(
     market.realm,
     (read) => read(market.$rows.keys),
     () => {

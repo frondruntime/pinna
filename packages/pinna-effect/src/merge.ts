@@ -1,16 +1,16 @@
 /**
- * Merging a refetched `SchemaModel` instance into the one held under its
+ * Merging a refetched `Model.Schema` instance into the one held under its
  * key: the held instance stays, and each of its boxes takes the refetched
- * value. `CollectionField` and `reconcileSchema` merge; a `schemaBox` and a
+ * value. `Model.collectionField` and `Collection.reconcile` merge; a `Box.schema` and a
  * caller's `equals` do not.
  */
-import { type Read, update, type Write } from "@frondruntime/pinna";
-import type { ObservableRealm } from "@frondruntime/pinna/internal";
+import type { Read, Write } from "@frondruntime/pinna";
+import { type ObservableRealm, writeNow } from "@frondruntime/pinna/internal";
 
 /** The writes a merge makes, or none when every box already holds its refetched value. */
 export type MergeWrites = (() => void) | undefined;
 
-/** The method a `SchemaModel` instance plans a merge with; see `planMerge`. */
+/** The method a `Model.Schema` instance plans a merge with; see `planMerge`. */
 export const mergeKey: unique symbol = Symbol("pinna/merge");
 
 interface Mergeable {
@@ -22,7 +22,7 @@ const isMergeable = (value: unknown): value is Mergeable =>
   typeof value === "object" && value !== null && mergeKey in value;
 
 /**
- * `false` when `fresh` replaces `held`: `held` is no `SchemaModel` instance,
+ * `false` when `fresh` replaces `held`: `held` is no `Model.Schema` instance,
  * `fresh` is another class's or another realm's, or their plain fields
  * differ (or the class's own `[Equal.symbol]` says they differ). Otherwise
  * `held` stays, and the answer is the writes that bring its boxes to
@@ -43,22 +43,9 @@ export const planMerge = (
  * session puts it back on a throw; in the open update; or in one of its own.
  */
 export const writeIn = (realm: ObservableRealm, write: () => void): void => {
-  const place = realm.stagedPlace;
-  if (place !== undefined) {
-    place.undoOnThrow(write);
-    return;
-  }
-  if (realm.updateDepth > 0) {
-    // A throw part way puts back every write of the merge, even when the
-    // caller catches the error.
-    realm.undoOnThrow(write);
-    return;
-  }
-  update(realm, () => {
-    write();
-  });
+  writeNow(realm, write);
 };
 
-/** The realm of a `SchemaModel` instance, for `reconcileSchema`'s writes. */
+/** The realm of a `Model.Schema` instance, for `Collection.reconcile`'s writes. */
 export const realmOfMergeable = (held: unknown): ObservableRealm | undefined =>
   isMergeable(held) ? held.realm : undefined;

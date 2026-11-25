@@ -1,6 +1,6 @@
 /**
  * What a write notifies in the Legend State store, observed with Legend's own
- * `observe` over what the row components read: a row's rest and its three
+ * `Source.observe` over what the row components read: a row's rest and its three
  * tick fields, which its cells read, and the list of ids, which the list
  * reads and which mounts a new row or unmounts a gone one. A row is notified
  * when either runs again for it.

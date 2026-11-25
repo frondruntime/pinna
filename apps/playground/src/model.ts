@@ -1,22 +1,15 @@
-import {
-  BoxField,
-  computed,
-  type Realm,
-  SchemaModel,
-  schemaBox,
-  update,
-} from "@frondruntime/pinna-effect";
+import { Box, Computed, Model, Realm } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 
 export type Filter = "all" | "open" | "done";
 
-export class Todo extends SchemaModel<Todo>("Todo")({
+export class Todo extends Model.Schema<Todo>("Todo")({
   id: Schema.String,
   title: Schema.String,
-  $done: BoxField(Schema.Boolean),
+  $done: Model.boxField(Schema.Boolean),
 }) {
   toggle(): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       write(this.$done, !read(this.$done));
     });
   }
@@ -25,13 +18,13 @@ export class Todo extends SchemaModel<Todo>("Todo")({
 const newTodo = (realm: Realm, id: string, title: string, done: boolean): Todo =>
   Todo.make({ id, title, done, realm });
 
-export class Todos extends SchemaModel<Todos>("Todos")({
-  $items: BoxField(Schema.Array(Todo)),
-  $starred: BoxField(Schema.Array(Schema.String)),
+export class Todos extends Model.Schema<Todos>("Todos")({
+  $items: Model.boxField(Schema.Array(Todo)),
+  $starred: Model.boxField(Schema.Array(Schema.String)),
 }) {
-  readonly $filter = schemaBox(this.realm, Schema.Literals(["all", "open", "done"]), "all");
+  readonly $filter = Box.schema(this.realm, Schema.Literals(["all", "open", "done"]), "all");
 
-  readonly $visible = computed(this.realm, (read) => {
+  readonly $visible = Computed.make(this.realm, (read) => {
     const filter = read(this.$filter);
     const items = read(this.$items);
     return filter === "all"
@@ -39,13 +32,13 @@ export class Todos extends SchemaModel<Todos>("Todos")({
       : items.filter((todo) => read(todo.$done) === (filter === "done"));
   });
 
-  readonly $remaining = computed(
+  readonly $remaining = Computed.make(
     this.realm,
     (read) => read(this.$items).filter((todo) => !read(todo.$done)).length,
   );
 
   add(title: string): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write.modify(this.$items, (items) => {
         items.push(newTodo(this.realm, crypto.randomUUID(), title, false));
       });
@@ -53,7 +46,7 @@ export class Todos extends SchemaModel<Todos>("Todos")({
   }
 
   toggleAll(): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const items = read(this.$items);
       const done = items.some((todo) => !read(todo.$done));
       for (const todo of items) {
@@ -63,7 +56,7 @@ export class Todos extends SchemaModel<Todos>("Todos")({
   }
 
   clearDone(): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       write(
         this.$items,
         read(this.$items).filter((todo) => !read(todo.$done)),
@@ -72,7 +65,7 @@ export class Todos extends SchemaModel<Todos>("Todos")({
   }
 
   toggleStar(id: string): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write.modify(this.$starred, (starred) => {
         const index = starred.indexOf(id);
         if (index === -1) {
@@ -85,7 +78,7 @@ export class Todos extends SchemaModel<Todos>("Todos")({
   }
 
   setFilter(filter: Filter): void {
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write(this.$filter, filter);
     });
   }

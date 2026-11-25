@@ -10,7 +10,7 @@
  */
 import { Console, Effect, FileSystem, Path } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
-import { type PublishedPackage, packageDirectory, workspaceRoot } from "./packages.ts";
+import { packageDirectory, type ReleasePackage, workspaceRoot } from "./packages.ts";
 import { output, ReleaseError } from "./process.ts";
 
 /**
@@ -19,7 +19,7 @@ import { output, ReleaseError } from "./process.ts";
  * command-line equivalent for every option here, so it runs in this process.
  */
 const buildJavaScript = (
-  published: PublishedPackage,
+  published: ReleasePackage,
   directory: string,
 ): Effect.Effect<void, ReleaseError, Path.Path> =>
   Effect.gen(function* () {
@@ -28,7 +28,9 @@ const buildJavaScript = (
     const result = yield* Effect.tryPromise({
       try: () =>
         Bun.build({
-          entrypoints: published.entries.map((entry) => path.join(directory, "src", `${entry}.ts`)),
+          entrypoints: published.entries.map((entry) =>
+            path.join(directory, "src", `${entry}${published.extension}`),
+          ),
           format: "esm",
           outdir: path.join(directory, "dist"),
           packages: "external",
@@ -47,7 +49,7 @@ const buildJavaScript = (
   });
 
 const emitDeclarations = (
-  published: PublishedPackage,
+  published: ReleasePackage,
   directory: string,
 ): Effect.Effect<void, ReleaseError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.asVoid(
@@ -61,7 +63,7 @@ const emitDeclarations = (
 
 /** Builds the packages in the order given, each package's two halves at once. */
 export const buildPackages = (
-  packages: ReadonlyArray<PublishedPackage>,
+  packages: ReadonlyArray<ReleasePackage>,
 ): Effect.Effect<
   void,
   ReleaseError,

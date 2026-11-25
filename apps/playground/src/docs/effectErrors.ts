@@ -1,6 +1,6 @@
 // The site's docs print the regions of this file (docs/public/guides/errors.md), so
 // `bun run typecheck` compiles what the page shows.
-import { createRealm, decode, schemaBox, update } from "@frondruntime/pinna-effect";
+import { Box, isPinnaError, Model, Realm } from "@frondruntime/pinna-effect";
 import { Schema, SchemaIssue } from "effect";
 
 // #region message
@@ -15,25 +15,28 @@ const Signup = Schema.Struct({ email: Schema.String, password: Password });
 // #region issues
 const toStandard = SchemaIssue.makeFormatterStandardSchemaV1();
 
-// Each refused field's path and message. `decode` throws the SchemaError; a
-// write a box refuses throws an Error whose `cause` is the SchemaError.
-// Anything else is not a schema's refusal, and is thrown again.
+// Each refused field's path and message. `Model.decode` throws a DecodeError and a
+// write a box refuses a ValueRejectedError; each holds the SchemaError as its
+// `cause`. Anything else is not a schema's refusal, and is thrown again.
 const issuesOf = (error: unknown) => {
-  const schemaError = error instanceof Error && !Schema.isSchemaError(error) ? error.cause : error;
-  if (!Schema.isSchemaError(schemaError)) {
+  const refused =
+    isPinnaError(error, "DecodeError") || isPinnaError(error, "ValueRejectedError")
+      ? error.cause
+      : undefined;
+  if (!Schema.isSchemaError(refused)) {
     throw error;
   }
-  return toStandard(schemaError.issue).issues;
+  return toStandard(refused.issue).issues;
 };
 // #endregion
 
 // #region read
-const realm = createRealm();
-const $signup = schemaBox(realm, Signup, { email: "", password: "correct horse" });
+const realm = Realm.make();
+const $signup = Box.schema(realm, Signup, { email: "", password: "correct horse" });
 
 const submit = (input: unknown) => {
   try {
-    return { signup: decode(realm, Signup)(input), issues: [] };
+    return { signup: Model.decode(realm, Signup)(input), issues: [] };
   } catch (error) {
     // [{ path: ["password"], message: "Use at least 8 characters" }]
     return { signup: undefined, issues: issuesOf(error) };
@@ -42,7 +45,7 @@ const submit = (input: unknown) => {
 
 const editPassword = (password: string) => {
   try {
-    update(realm, (read, write) => {
+    Realm.update(realm, (read, write) => {
       write($signup, { ...read($signup), password });
     });
     return [];

@@ -5,27 +5,19 @@
  *
  * Bare Pinna holds the same plain objects MobX does, its boxes checked by
  * `Schema.Unknown`, so it compares the reactive core with MobX's. Schema
- * Pinna holds `SchemaModel` instances and checks every write; it is compared
+ * Pinna holds `Model.Schema` instances and checks every write; it is compared
  * with bare Pinna, so what the schema costs shows on its own.
  */
 
 import { Schema } from "effect";
 import { makeAutoObservable, observable, reaction, runInAction } from "mobx";
 import {
-  type Box,
-  BoxField,
-  CollectionField,
-  type Computed,
-  computed,
-  createRealm,
+  Box,
+  Computed,
   type Draft,
-  decode,
+  Model as PinnaModelModule,
   type Read,
-  SchemaModel,
-  schemaBox,
-  untracked,
-  update,
-  watch,
+  Realm,
 } from "../src/index.ts";
 
 export const rows = 10_000;
@@ -56,14 +48,14 @@ interface Keyed {
 export interface Subject {
   readonly build: () => Model;
   readonly decode: (json: unknown) => Model;
-  /** A keyed collection of `rows` rows, from the same JSON `decode` takes. */
+  /** A keyed collection of `rows` rows, from the same JSON `Model.decode` takes. */
   readonly keyed: (json: TodosJson) => Keyed;
   readonly watch: <Value>(select: (read: Read) => Value) => () => void;
 }
 
 // Pinna
 
-const realm = createRealm();
+const realm = Realm.make();
 
 /** What the Pinna model needs of a row, with or without a schema. */
 interface Row {
@@ -71,22 +63,22 @@ interface Row {
   readonly $label: Computed<string>;
 }
 
-class Todo extends SchemaModel<Todo>("Todo")({
+class Todo extends PinnaModelModule.Schema<Todo>("Todo")({
   id: Schema.String,
   title: Schema.String,
-  $done: BoxField(Schema.Boolean),
+  $done: PinnaModelModule.boxField(Schema.Boolean),
 }) {
-  readonly $label = computed(this.realm, (read) =>
+  readonly $label = Computed.make(this.realm, (read) =>
     read(this.$done) ? `✓ ${this.title}` : this.title,
   );
 }
 
-class Todos extends SchemaModel<Todos>("Todos")({ items: Schema.Array(Todo) }) {}
+class Todos extends PinnaModelModule.Schema<Todos>("Todos")({ items: Schema.Array(Todo) }) {}
 
 const newTodo = (id: string, title: string): Todo => Todo.make({ id, title, done: false, realm });
 
 class PinnaModel<Item extends Row> implements Model {
-  readonly $remaining = computed(
+  readonly $remaining = Computed.make(
     realm,
     (read) => read(this.$items).filter((todo) => !read(todo.$done)).length,
   );
@@ -104,7 +96,7 @@ class PinnaModel<Item extends Row> implements Model {
   };
 
   toggle(index: number): void {
-    update(realm, (read, write) => {
+    Realm.update(realm, (read, write) => {
       const todo = read(this.$items)[index];
       if (todo !== undefined) {
         write(todo.$done, !read(todo.$done));
@@ -113,7 +105,7 @@ class PinnaModel<Item extends Row> implements Model {
   }
 
   add(title: string): void {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify(this.$items, (items) => {
         items.push(this.newRow(title));
       });
@@ -121,7 +113,7 @@ class PinnaModel<Item extends Row> implements Model {
   }
 
   addMany(titles: ReadonlyArray<string>): void {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify(this.$items, (items) => {
         for (const title of titles) {
           items.push(this.newRow(title));
@@ -131,7 +123,7 @@ class PinnaModel<Item extends Row> implements Model {
   }
 
   toggleAll(): void {
-    update(realm, (read, write) => {
+    Realm.update(realm, (read, write) => {
       const items = read(this.$items);
       const done = items.some((todo) => !read(todo.$done));
       for (const todo of items) {
@@ -141,22 +133,22 @@ class PinnaModel<Item extends Row> implements Model {
   }
 }
 
-const decodeTodos = decode(realm, Todos);
+const decodeTodos = PinnaModelModule.decode(realm, Todos);
 
 const schemaModel = (items: ReadonlyArray<Todo>): PinnaModel<Todo> =>
-  new PinnaModel(schemaBox(realm, Schema.Array(Todo), items), (title) => newTodo(title, title));
+  new PinnaModel(Box.schema(realm, Schema.Array(Todo), items), (title) => newTodo(title, title));
 
-class Entry extends SchemaModel<Entry>("Entry")({
+class Entry extends PinnaModelModule.Schema<Entry>("Entry")({
   id: Schema.String,
   title: Schema.String,
   done: Schema.Boolean,
 }) {}
 
-class Entries extends SchemaModel<Entries>("Entries")({
-  $items: CollectionField(Entry, { keyOf: (entry) => entry.id }),
+class Entries extends PinnaModelModule.Schema<Entries>("Entries")({
+  $items: PinnaModelModule.collectionField(Entry, { keyOf: (entry) => entry.id }),
 }) {}
 
-const decodeEntries = decode(realm, Entries);
+const decodeEntries = PinnaModelModule.decode(realm, Entries);
 
 const pinnaSchema: Subject = {
   build: () =>
@@ -169,13 +161,13 @@ const pinnaSchema: Subject = {
     return {
       title: (read, key) => read($items.row(key))?.title,
       rename: (key, title) => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write.upsert($items, Entry.make({ id: key, title, done: false, realm }));
         });
       },
     };
   },
-  watch: (select) => watch(realm, select, () => {}),
+  watch: (select) => Realm.watch(realm, select, () => {}),
 };
 
 // Bare Pinna: plain objects, every box checked by Schema.Unknown
@@ -186,7 +178,7 @@ interface BareTodo extends Row {
 }
 
 const bareBox = <Value>(initial: Value): Box<Value> =>
-  schemaBox(realm, Schema.Unknown, initial) as Box<Value>;
+  Box.schema(realm, Schema.Unknown, initial) as Box<Value>;
 
 const bareTodo = (id: string, title: string, done: boolean): BareTodo => {
   const $done = bareBox(done);
@@ -194,18 +186,20 @@ const bareTodo = (id: string, title: string, done: boolean): BareTodo => {
     id,
     title,
     $done,
-    $label: computed(realm, (read) => (read($done) ? `✓ ${title}` : title)),
+    $label: Computed.make(realm, (read) => (read($done) ? `✓ ${title}` : title)),
   };
 };
 
 const bareModel = (items: ReadonlyArray<BareTodo>): PinnaModel<BareTodo> =>
   new PinnaModel(bareBox(items), (title) => bareTodo(title, title, false));
 
-class BareEntries extends SchemaModel<BareEntries>("BareEntries")({
-  $items: CollectionField(Schema.Unknown, { keyOf: (entry) => (entry as TodoJson).id }),
+class BareEntries extends PinnaModelModule.Schema<BareEntries>("BareEntries")({
+  $items: PinnaModelModule.collectionField(Schema.Unknown, {
+    keyOf: (entry) => (entry as TodoJson).id,
+  }),
 }) {}
 
-const decodeBareEntries = decode(realm, BareEntries);
+const decodeBareEntries = PinnaModelModule.decode(realm, BareEntries);
 
 const pinnaBare: Subject = {
   build: () =>
@@ -223,13 +217,13 @@ const pinnaBare: Subject = {
     return {
       title: (read, key) => (read($items.row(key)) as TodoJson | undefined)?.title,
       rename: (key, title) => {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write.upsert($items, { id: key, title, done: false });
         });
       },
     };
   },
-  watch: (select) => watch(realm, select, () => {}),
+  watch: (select) => Realm.watch(realm, select, () => {}),
 };
 
 // MobX
@@ -298,7 +292,7 @@ interface TodosJson {
 }
 
 /** MobX models read their own fields, so the read a MobX watch hands them is never called. */
-const unusedRead: Read = untracked(realm, (read) => read);
+const unusedRead: Read = Realm.untracked(realm, (read) => read);
 
 const mobx: Subject = {
   build: () =>

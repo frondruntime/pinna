@@ -6,7 +6,7 @@ atoms, watchers, and reactions.
 its hooks. An application imports `@frondruntime/pinna`; this package is for
 code that builds on the graph itself.
 
-0.0.1 is a pre-1.0 release: any version may change the API.
+0.2.0 is a pre-1.0 release: any version may change the API.
 
 ## Install
 

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { untracked } from "@frondruntime/pinna";
+import { Realm } from "@frondruntime/pinna";
 import { testRealm } from "@frondruntime/pinna/testing";
-import { observeScoped, RealmService } from "@frondruntime/pinna-effect";
+import { RealmService, Source } from "@frondruntime/pinna-effect";
 import { Effect, Exit, Fiber, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { makeDesk } from "../src/client/desk.ts";
@@ -22,13 +22,13 @@ async function runMarket(seed: number, ticks: number) {
     const desk = (yield* makeDesk(memory.transport)).tile("EURUSD");
     const snapshot = () => ({
       pair: desk.pair,
-      prices: untracked(realm, (read) => read(desk.$prices)),
+      prices: Realm.untracked(realm, (read) => read(desk.$prices)),
       trades: [],
-      execution: untracked(realm, (read) => read(desk.$execution)),
+      execution: Realm.untracked(realm, (read) => read(desk.$execution)),
     });
     expect(foldLog(log)).toEqual(snapshot());
     expect(exchange.subscriptionCount()).toBe(0);
-    yield* observeScoped(desk.$display);
+    yield* Source.observeScoped(desk.$display);
     yield* TestClock.adjust(0);
     expect(exchange.subscriptionCount()).toBe(1);
     for (let tick = 1; tick <= ticks; tick++) {
@@ -37,7 +37,9 @@ async function runMarket(seed: number, ticks: number) {
       expect(log.filter((entry) => entry.kind === "price")).toHaveLength(tick);
       const expected = foldLog(log);
       expect(expected).toEqual(snapshot());
-      expect(oracleDisplay(expected)).toEqual(untracked(realm, (read) => read(desk.$display)));
+      expect(oracleDisplay(expected)).toEqual(
+        Realm.untracked(realm, (read) => read(desk.$display)),
+      );
     }
   }).pipe(
     Effect.provideService(RealmService, realm),

@@ -5,20 +5,20 @@
  * Followed:
  * - packages/pinna/AGENTS.md, "The rules": rule 1, a `$` name is
  *   observable and every other field is plain, readonly data; rule 3, every
- *   write goes through the `write` an `update` hands out; rule 4, trusted
- *   data that is written often takes a plain `box`, which checks nothing.
+ *   write goes through the `write` a `Realm.update` hands out; rule 4, trusted
+ *   data that is written often takes a plain `Box.make`, which checks nothing.
  * - docs/public/state/collections.md: a collection holds a box for each key
  *   a reader reads, made on its first read, and one for the order of the
  *   keys, so a write to one row reruns that row's readers only;
- *   `collection(realm, { keyOf })` outside a schema model; many new rows go
+ *   `Collection.make(realm, { keyOf })` outside a schema model; many new rows go
  *   in through one `write.replaceAll`. A tick and `shown` read through
  *   `read.row`, which where nothing tracks makes no box for the keys they
  *   look up.
  * - docs/public/state/updates.md: an event handler, and a test, read through
- *   `untracked`.
- * - docs/public/start/index.md: `createRealm`; a named realm names itself in
+ *   `Realm.untracked`.
+ * - docs/public/start/index.md: `Realm.make`; a named realm names itself in
  *   errors.
- * - packages/pinna/src/observable.ts, `Options.equals`: a box that keeps
+ * - packages/pinna/src/box.ts, `ValueOptions.equals`: a box that keeps
  *   its value and notifies nobody when `equals` holds.
  *
  * Rows and the market are plain objects, not `Model` subclasses, as the
@@ -32,22 +32,12 @@
  * every other field of a row, held as the plain value it was given, since
  * nothing writes it; a merge that finds one changed makes a new row.
  *
- * `reconcile` is not used: it keeps a previous item where `equals` holds on
+ * `Collection.reconcile` is not used: it keeps a previous item where `equals` holds on
  * two items of one type, so a merge would first build a new row with three
  * boxes for every incoming row, and a kept row would still need its boxes
  * written. The merge below compares the plain row with the held one instead.
  */
-import {
-  type Box,
-  box,
-  type Collection,
-  collection,
-  createRealm,
-  type Realm,
-  untracked,
-  update,
-  type Write,
-} from "@frondruntime/pinna";
+import { Box, Collection, Realm, type Write } from "@frondruntime/pinna";
 import type Big from "big.js";
 import {
   type DetailsTexts,
@@ -90,9 +80,9 @@ const instrumentOf = (realm: Realm, row: PlainRow): Instrument => ({
   network: row.network,
   limits: row.limits,
   history: row.history,
-  $price: box(realm, row.price, bigOptions),
-  $diff24: box(realm, row.diff24, bigOptions),
-  $updatedAt: box(realm, row.updatedAt, dateOptions),
+  $price: Box.make(realm, row.price, bigOptions),
+  $diff24: Box.make(realm, row.diff24, bigOptions),
+  $updatedAt: Box.make(realm, row.updatedAt, dateOptions),
 });
 
 /** Writes the tick fields; a box whose value is equal notifies nobody. */
@@ -146,12 +136,12 @@ export interface Market {
 }
 
 const makeMarket = (realm: Realm): Market => {
-  const $rows = collection(realm, { keyOf: (row: Instrument) => row.id });
-  const $selected = box<string | undefined>(realm, undefined, { name: "Market.selected" });
+  const $rows = Collection.make(realm, { keyOf: (row: Instrument) => row.id });
+  const $selected = Box.make<string | undefined>(realm, undefined, { name: "Market.selected" });
   const fresh = (row: PlainRow): Instrument => instrumentOf(realm, row);
 
   const replace = (rows: ReadonlyArray<PlainRow>): void => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll($rows, rows.map(fresh));
     });
   };
@@ -162,7 +152,7 @@ const makeMarket = (realm: Realm): Market => {
     $selected,
     replace,
     tick: (ticks) => {
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         for (const tick of ticks) {
           const instrument = read.row($rows, tick.id);
           if (instrument !== undefined) {
@@ -172,7 +162,7 @@ const makeMarket = (realm: Realm): Market => {
       });
     },
     merge: (rows) => {
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         const held = new Map(read($rows.rows).map((row) => [row.id, row]));
         const merged = rows.map((next) => {
           const current = held.get(next.id);
@@ -186,13 +176,13 @@ const makeMarket = (realm: Realm): Market => {
       });
     },
     insert: (rows) => {
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write.replaceAll($rows, [...rows.map(fresh), ...read($rows.rows)]);
       });
     },
     remove: (ids) => {
       const gone = new Set(ids);
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write.replaceAll(
           $rows,
           read($rows.rows).filter((row) => !gone.has(row.id)),
@@ -200,21 +190,21 @@ const makeMarket = (realm: Realm): Market => {
       });
     },
     insertEach: (rows) => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         for (let index = rows.length - 1; index >= 0; index--) {
           write.upsert($rows, fresh(rows[index] as PlainRow));
         }
       });
     },
     removeEach: (ids) => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         for (const id of ids) {
           write.remove($rows, id);
         }
       });
     },
     select: (id) => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($selected, id);
       });
     },
@@ -222,12 +212,12 @@ const makeMarket = (realm: Realm): Market => {
 };
 
 export const makePinnaStore = () => {
-  const market = makeMarket(createRealm({ name: "market" }));
+  const market = makeMarket(Realm.make({ name: "market" }));
   const { realm, $rows } = market;
 
   /** What the row components read, read once outside React. */
   const shown = (id: string): DetailsValues | undefined =>
-    untracked(realm, (read) => {
+    Realm.untracked(realm, (read) => {
       const instrument = read.row($rows, id);
       return instrument === undefined
         ? undefined
@@ -248,8 +238,8 @@ export const makePinnaStore = () => {
     insertEach: (rows) => market.insertEach(rows),
     removeEach: (ids) => market.removeEach(ids),
     select: (id) => market.select(id),
-    size: () => untracked(realm, (read) => read($rows.keys).length),
-    idAt: (index) => untracked(realm, (read) => read($rows.keys)[index] as string),
+    size: () => Realm.untracked(realm, (read) => read($rows.keys).length),
+    idAt: (index) => Realm.untracked(realm, (read) => read($rows.keys)[index] as string),
     shownRow: (id): RowTexts | undefined => {
       const values: RowValues | undefined = shown(id);
       return values === undefined ? undefined : rowTexts(values);

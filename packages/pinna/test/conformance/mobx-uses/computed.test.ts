@@ -1,17 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { autorun as mobxAutorun, computed as mobxComputed, observable, runInAction } from "mobx";
-import {
-  autorun,
-  box,
-  computed,
-  createRealm,
-  observe,
-  untracked,
-  update,
-} from "../../../src/index.ts";
+import { Box, Computed, Realm, Source } from "../../../src/index.ts";
 
 /**
- * An application's `computed` uses, beside Pinna's `computed`: a value
+ * An application's `Computed.make` uses, beside Pinna's `Computed.make`: a value
  * recomputed once per batch, and one kept cached with no reader.
  */
 
@@ -44,23 +36,23 @@ describe("computed", () => {
   });
 
   test("Pinna: computed", () => {
-    const realm = createRealm();
-    const $a = box(realm, 1);
-    const $b = box(realm, 2);
+    const realm = Realm.make();
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 2);
     let computes = 0;
-    const sum = computed(realm, (read) => {
+    const sum = Computed.make(realm, (read) => {
       computes++;
       return read($a) + read($b);
     });
     const seen: Array<number> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(read(sum));
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($a, 10);
       write($b, 20);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($a, 20);
       write($b, 10);
     });
@@ -93,19 +85,19 @@ describe("computed({ keepAlive })", () => {
   });
 
   test("Pinna: observe holds the computed value cached until released", () => {
-    const realm = createRealm();
-    const $count = box(realm, 1);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 1);
     let computes = 0;
-    const double = computed(realm, (read) => {
+    const double = Computed.make(realm, (read) => {
       computes++;
       return read($count) * 2;
     });
-    const release = observe(double);
-    const values = untracked(realm, (read) => [read(double), read(double)]);
-    update(realm, (_read, write) => {
+    const release = Source.observe(double);
+    const values = Realm.untracked(realm, (read) => [read(double), read(double)]);
+    Realm.update(realm, (_read, write) => {
       write($count, 2);
     });
-    values.push(untracked(realm, (read) => read(double)));
+    values.push(Realm.untracked(realm, (read) => read(double)));
     release();
     expect({ values, computes }).toEqual(trace);
   });

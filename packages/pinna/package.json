@@ -64,12 +64,16 @@
     "prepack": "bun run build",
     "test": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test ./test",
     "typecheck": "bunx tsc -p tsconfig.json --noEmit",
-    "fuzz": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test/fuzz/cli.ts",
+    "fuzz": "BUN_JSC_useConcurrentJIT=0 bun --conditions=source test/internal/fuzz-cli.ts",
     "bench": "bun --conditions=source bench/diamond.ts",
+    "bench:changes": "bun --conditions=source bench/change-stream.ts",
     "bench:graph": "bun --conditions=source bench/graph.ts",
+    "bench:memory": "bun --conditions=source bench/memory.ts --check",
+    "bench:rows": "bun --conditions=source bench/rows.ts",
     "bench:hermes-graph": "bun --conditions=source bench/hermes-graph.ts",
     "bench:hermes-reaction": "bun --conditions=source bench/hermes-reaction.ts",
-    "bench:hermes-hooks": "bun --conditions=source bench/hermes-hooks.ts"
+    "bench:hermes-hooks": "bun --conditions=source bench/hermes-hooks.ts",
+    "bench:hermes-changes": "bun --conditions=source bench/hermes-changes.ts"
   },
   "dependencies": {
     "@frondruntime/pinna-core": "0.1.0"

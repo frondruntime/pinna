@@ -5,52 +5,47 @@
  */
 
 import { Schema } from "effect";
-import {
-  BoxField,
-  CollectionField,
-  computed,
-  type Read,
-  SchemaModel,
-  type Write,
-} from "../../src/index.ts";
+import { Computed, Model, type Read, type Write } from "../../src/index.ts";
 
-export class Market extends SchemaModel<Market>("Market")({
+export class Market extends Model.Schema<Market>("Market")({
   id: Schema.String,
   base: Schema.String,
   quote: Schema.String,
   decimals: Schema.Number,
-  $price: BoxField(Schema.Number),
-  $open: BoxField(Schema.Number),
-  $volume: BoxField(Schema.Number),
-  $bid: BoxField(Schema.Number),
-  $ask: BoxField(Schema.Number),
-  $favorite: BoxField(Schema.Boolean),
+  $price: Model.boxField(Schema.Number),
+  $open: Model.boxField(Schema.Number),
+  $volume: Model.boxField(Schema.Number),
+  $bid: Model.boxField(Schema.Number),
+  $ask: Model.boxField(Schema.Number),
+  $favorite: Model.boxField(Schema.Boolean),
 }) {
-  readonly $change = computed(this.realm, (read) => {
+  readonly $change = Computed.make(this.realm, (read) => {
     const open = read(this.$open);
     return open === 0 ? 0 : (read(this.$price) - open) / open;
   });
-  readonly $priceText = computed(this.realm, (read) => read(this.$price).toFixed(this.decimals));
-  readonly $changeText = computed(this.realm, (read) => {
+  readonly $priceText = Computed.make(this.realm, (read) =>
+    read(this.$price).toFixed(this.decimals),
+  );
+  readonly $changeText = Computed.make(this.realm, (read) => {
     const change = read(this.$change) * 100;
     return `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
   });
-  readonly $spread = computed(this.realm, (read) => read(this.$ask) - read(this.$bid));
+  readonly $spread = Computed.make(this.realm, (read) => read(this.$ask) - read(this.$bid));
 }
 
-export class Markets extends SchemaModel<Markets>("Markets")({
-  $items: CollectionField(Market, { keyOf: (market) => market.id }),
+export class Markets extends Model.Schema<Markets>("Markets")({
+  $items: Model.collectionField(Market, { keyOf: (market) => market.id }),
 }) {}
 
-export class Position extends SchemaModel<Position>("Position")({
+export class Position extends Model.Schema<Position>("Position")({
   id: Schema.String,
   market: Schema.String,
-  $amount: BoxField(Schema.Number),
+  $amount: Model.boxField(Schema.Number),
   entry: Schema.Number,
 }) {}
 
-export class Portfolio extends SchemaModel<Portfolio>("Portfolio")({
-  $positions: CollectionField(Position, { keyOf: (position) => position.id }),
+export class Portfolio extends Model.Schema<Portfolio>("Portfolio")({
+  $positions: Model.collectionField(Position, { keyOf: (position) => position.id }),
 }) {}
 
 /** A chart candle: plain data, the way a chart series holds it. */
@@ -65,33 +60,33 @@ export const Candle = Schema.Struct({
 export type Candle = typeof Candle.Type;
 
 /** A chart series as one box of candles. */
-export class Series extends SchemaModel<Series>("Series")({
+export class Series extends Model.Schema<Series>("Series")({
   market: Schema.String,
-  $candles: BoxField(Schema.Array(Candle)),
+  $candles: Model.boxField(Schema.Array(Candle)),
 }) {}
 
 /** A chart candle as a row with boxes, for a series kept as a collection. */
-export class CandleRow extends SchemaModel<CandleRow>("CandleRow")({
+export class CandleRow extends Model.Schema<CandleRow>("CandleRow")({
   time: Schema.Number,
   open: Schema.Number,
-  $high: BoxField(Schema.Number),
-  $low: BoxField(Schema.Number),
-  $close: BoxField(Schema.Number),
-  $volume: BoxField(Schema.Number),
+  $high: Model.boxField(Schema.Number),
+  $low: Model.boxField(Schema.Number),
+  $close: Model.boxField(Schema.Number),
+  $volume: Model.boxField(Schema.Number),
 }) {}
 
-export class RowSeries extends SchemaModel<RowSeries>("RowSeries")({
+export class RowSeries extends Model.Schema<RowSeries>("RowSeries")({
   market: Schema.String,
-  $candles: CollectionField(CandleRow, { keyOf: (candle) => candle.time }),
+  $candles: Model.collectionField(CandleRow, { keyOf: (candle) => candle.time }),
 }) {}
 
-export class Balance extends SchemaModel<Balance>("Balance")({
+export class Balance extends Model.Schema<Balance>("Balance")({
   token: Schema.String,
-  $amount: BoxField(Schema.Number),
+  $amount: Model.boxField(Schema.Number),
 }) {}
 
-export class Balances extends SchemaModel<Balances>("Balances")({
-  $items: CollectionField(Balance, { keyOf: (balance) => balance.token }),
+export class Balances extends Model.Schema<Balances>("Balances")({
+  $items: Model.collectionField(Balance, { keyOf: (balance) => balance.token }),
 }) {}
 
 export const candleAt = (time: number, price: number, random: () => number): Candle => {

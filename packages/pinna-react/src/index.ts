@@ -24,8 +24,14 @@
  * value changed.
  */
 import type { Computed, Read, Realm } from "@frondruntime/pinna";
-import { ObservableRealm, peek, realmOf, realmsOf } from "@frondruntime/pinna/internal";
-import { type Graph, Reaction } from "@frondruntime/pinna-core";
+import {
+  ObservableRealm,
+  peek,
+  graphOf as realmGraph,
+  realmOf,
+  realmsOf,
+} from "@frondruntime/pinna/internal";
+import { type Graph, PinnaUsageError, Reaction } from "@frondruntime/pinna-core";
 import {
   createContext,
   createElement,
@@ -53,17 +59,23 @@ export function RealmProvider({
 export function useRealm(): Realm {
   const realm = useContext(RealmContext);
   if (realm === null) {
-    throw new Error("pinna: useRealm and useSelect need a RealmProvider above the component");
+    throw new PinnaUsageError(
+      "pinna-react/no-provider",
+      "pinna: useRealm and useSelect need a RealmProvider above the component",
+    );
   }
   return realm;
 }
 
-/** The graph of a realm `createRealm` made. */
+/** The graph of a realm `Realm.make` made. */
 const graphOf = (realm: Realm): Graph => {
   if (!(realm instanceof ObservableRealm)) {
-    throw new Error("pinna: expected a realm made by createRealm()");
+    throw new PinnaUsageError(
+      "pinna-react/not-a-realm",
+      "pinna: expected a realm made by Realm.make()",
+    );
   }
-  return realm.core;
+  return realmGraph(realm);
 };
 
 const unset: unique symbol = Symbol("unset");
@@ -228,12 +240,13 @@ class SourceStore<Result> {
     for (const observable of observables) {
       const theirs = realmOf(observable);
       if (theirs !== realm) {
-        throw new Error(
+        throw new PinnaUsageError(
+          "pinna-react/mixed-realms",
           `pinna: useValues takes observables of one realm${realmsOf(theirs, realm)}`,
         );
       }
     }
-    this.reaction = new Reaction(realm.core, () => this.follow(), "useValue");
+    this.reaction = new Reaction(realmGraph(realm), () => this.follow(), "useValue");
   }
 
   /** Reads again, tracked, so the reaction stays linked to what changed, and tells React. */

@@ -1,27 +1,27 @@
 // The site's landing page prints the regions of this file (apps/site/src/pages/index.astro), so
 // `bun run typecheck` compiles what the page shows. The React section prints its one region.
-import { box, collection, createRealm, Model, type Realm, update } from "@frondruntime/pinna";
+import { Box, Collection, Model, Realm } from "@frondruntime/pinna";
 import { RealmProvider, useValue } from "@frondruntime/pinna-react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Todo } from "./todo.tsx";
 
 // The model the React sample renders.
-class TodoList extends Model {
-  readonly $todos = collection(this.realm, { keyOf: (todo: Todo) => todo.id });
-  readonly $finished = box(this.realm, 0);
+class TodoList extends Model.Class {
+  readonly $todos = Collection.make(this.realm, { keyOf: (todo: Todo) => todo.id });
+  readonly $finished = Box.make(this.realm, 0);
 
   finish(todo: Todo): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       write(todo.$done, true);
       write(this.$finished, read(this.$finished) + 1);
     });
   }
 }
 
-const realm = createRealm();
+const realm = Realm.make();
 const list = new TodoList(realm);
-update(realm, (_read, write) => {
+Realm.update(realm, (_read, write) => {
   write.replaceAll(list.$todos, [new Todo(realm, "1", "Write the docs")]);
 });
 

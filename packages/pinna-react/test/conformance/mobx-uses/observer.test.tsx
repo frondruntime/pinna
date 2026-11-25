@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createRealm, schemaBox, update } from "@frondruntime/pinna-effect";
+import { Box, Realm } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 import { observable, Reaction, runInAction } from "mobx";
 import { act, type ReactNode, useEffect, useReducer, useRef } from "react";
@@ -85,10 +85,10 @@ describe("observer", () => {
   });
 
   test("Pinna: useValue in the realm RealmProvider gives", () => {
-    const realm = createRealm();
-    const $pair = schemaBox(realm, Schema.String, "EUR/USD");
-    const $rate = schemaBox(realm, Schema.Number, 1.1);
-    const $volume = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $pair = Box.schema(realm, Schema.String, "EUR/USD");
+    const $rate = Box.schema(realm, Schema.Number, 1.1);
+    const $volume = Box.schema(realm, Schema.Number, 0);
     let renders = 0;
     const Quote = () => {
       renders++;
@@ -103,7 +103,7 @@ describe("observer", () => {
     const texts = [view.textContent];
     const counts = [renders];
     act(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($pair, "EUR/GBP");
         write($rate, 0.9);
       });
@@ -111,7 +111,7 @@ describe("observer", () => {
     texts.push(view.textContent);
     counts.push(renders);
     act(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($volume, 5);
       });
     });

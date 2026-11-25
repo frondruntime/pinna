@@ -6,7 +6,7 @@
  *
  * The alien-signals adapter is written from the `ReactiveFramework` interface
  * and the library's own API: the package ships no adapter, and its README
- * documents only the interface. It uses `signal`, `computed`, `effect`,
+ * documents only the interface. It uses `signal`, `Computed.make`, `effect`,
  * `startBatch`/`endBatch`, and `setActiveSub`, the way
  * `packages/pinna-bench/src/libraries/alien.ts` does. alien-signals' effect
  * ignores the value its function returns, so the adapter runs a returned
@@ -29,15 +29,7 @@ import {
   transaction,
 } from "mobx";
 import type { ReactiveFramework } from "reactive-framework-test-suite";
-import {
-  autorun,
-  box,
-  computed,
-  createRealm,
-  type Realm,
-  untracked,
-  update,
-} from "../../../src/index.ts";
+import { Box, Computed, Realm } from "../../../src/index.ts";
 import { keptRead } from "../../kept.ts";
 
 /**
@@ -46,31 +38,31 @@ import { keptRead } from "../../kept.ts";
  * what it observes, not on what was reported.
  */
 const makePinna = (): ReactiveFramework => {
-  let realm: Realm = createRealm({ onError: () => {} });
+  let realm: Realm = Realm.make({ onError: () => {} });
   let depth = 0;
   // The suite reads through `read()` with no verb in hand, so each observable
   // keeps a read of its realm (test/kept.ts says why that works).
   return {
     name: "pinna",
     signal: (initial) => {
-      const $box = box(realm, initial as unknown);
+      const $box = Box.make(realm, initial as unknown);
       const read = keptRead(realm);
       return {
         read: () => read($box) as typeof initial,
         write: (value) =>
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($box, value);
           }),
       };
     },
     computed: (compute) => {
-      const value = computed(realm, compute);
+      const value = Computed.make(realm, compute);
       const read = keptRead(realm);
       return { read: () => read(value) };
     },
     // A function the effect returns is the autorun's cleanup.
     effect: (effect) =>
-      autorun(realm, () => {
+      Realm.autorun(realm, () => {
         const cleanup = effect();
         return typeof cleanup === "function" ? cleanup : undefined;
       }),
@@ -81,20 +73,20 @@ const makePinna = (): ReactiveFramework => {
     // starts a fresh realm, so the case's observables stay in one realm.
     run: (body) => {
       if (depth === 0) {
-        realm = createRealm({ onError: () => {} });
+        realm = Realm.make({ onError: () => {} });
       }
       depth++;
       try {
-        untracked(realm, body);
+        Realm.untracked(realm, body);
       } finally {
         depth--;
       }
     },
     batch: (write) =>
-      update(realm, () => {
+      Realm.update(realm, () => {
         write();
       }),
-    untracked: (read) => untracked(realm, read),
+    untracked: (read) => Realm.untracked(realm, read),
   };
 };
 

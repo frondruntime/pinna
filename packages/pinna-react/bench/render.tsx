@@ -18,7 +18,10 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 GlobalRegistrator.register();
 
-const { createRealm, schemaBox, update } = await import("@frondruntime/pinna-effect");
+const {
+  Realm: { make: createRealm, update },
+  Box: { schema: schemaBox },
+} = await import("@frondruntime/pinna-effect");
 const { Schema } = await import("effect");
 const mobx = await import("mobx");
 const React = await import("react");

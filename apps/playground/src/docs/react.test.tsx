@@ -2,7 +2,7 @@
 // Backs the claims docs/public/react/hooks.md makes about the samples in
 // `react.tsx`. It renders, so this file runs under a DOM.
 import { afterEach, expect, test } from "bun:test";
-import { computed, observe, untracked, update } from "@frondruntime/pinna";
+import { Computed, Realm, Source } from "@frondruntime/pinna";
 import { held } from "@frondruntime/pinna/testing";
 import { act, Profiler, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -40,7 +40,7 @@ test("a change of status rerenders the status line, not the list beside it", () 
   try {
     const shown = mount(<Panel />);
     expect(listRenders).toBe(1);
-    act(() => update(realm, (_read, write) => write($saving, true)));
+    act(() => Realm.update(realm, (_read, write) => write($saving, true)));
     expect(shown.textContent).toContain("Saving…");
     expect(listRenders).toBe(1);
   } finally {
@@ -61,18 +61,18 @@ test("a display projection with equals keeps its object when only an unshown fie
     </Profiler>,
   );
   expect(renders).toBe(1);
-  const before = untracked(realm, (read) => read($quoteCard));
+  const before = Realm.untracked(realm, (read) => read($quoteCard));
   act(() =>
-    update(realm, (_read, write) =>
+    Realm.update(realm, (_read, write) =>
       write.modify($quote, (quote) => {
         quote.receivedAt += 1;
       }),
     ),
   );
-  expect(untracked(realm, (read) => read($quoteCard))).toBe(before);
+  expect(Realm.untracked(realm, (read) => read($quoteCard))).toBe(before);
   expect(renders).toBe(1);
   act(() =>
-    update(realm, (_read, write) =>
+    Realm.update(realm, (_read, write) =>
       write.modify($quote, (quote) => {
         quote.price = 11;
       }),
@@ -83,16 +83,16 @@ test("a display projection with equals keeps its object when only an unshown fie
 });
 
 test("without equals, the same projection would be a new object on every tick", () => {
-  const plain = computed(realm, (read) => {
+  const plain = Computed.make(realm, (read) => {
     const quote = read($quote);
     return { symbol: quote.symbol, price: quote.price.toFixed(2) };
   });
-  using _ = held(observe(plain));
-  const before = untracked(realm, (read) => read(plain));
-  update(realm, (_read, write) =>
+  using _ = held(Source.observe(plain));
+  const before = Realm.untracked(realm, (read) => read(plain));
+  Realm.update(realm, (_read, write) =>
     write.modify($quote, (quote) => {
       quote.receivedAt += 1;
     }),
   );
-  expect(untracked(realm, (read) => read(plain))).not.toBe(before);
+  expect(Realm.untracked(realm, (read) => read(plain))).not.toBe(before);
 });

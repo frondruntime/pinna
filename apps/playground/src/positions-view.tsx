@@ -1,5 +1,4 @@
-import type { Box, Realm } from "@frondruntime/pinna-effect";
-import { decode, schemaBox, untracked, update } from "@frondruntime/pinna-effect";
+import { Box, Model, Realm } from "@frondruntime/pinna-effect";
 import { useSelect, useValue } from "@frondruntime/pinna-react";
 import { BigDecimal, Context, Schema } from "effect";
 import { memo, useEffect, useRef, useState } from "react";
@@ -132,8 +131,10 @@ export const PositionsExample = ({ realm }: { readonly realm: Realm }) => {
   // The host builds the context once; the list and every update decode with it.
   const [dates] = useState(() => new DateFormatting(realm));
   const [context] = useState(() => Context.make(Dates, dates));
-  const [positions] = useState(() => decode(realm, Positions, context)(positionsJson));
-  const [$rates] = useState(() => schemaBox(realm, Rates, decode(realm, Rates)(ratesJson(101))));
+  const [positions] = useState(() => Model.decode(realm, Positions, context)(positionsJson));
+  const [$rates] = useState(() =>
+    Box.schema(realm, Rates, Model.decode(realm, Rates)(ratesJson(101))),
+  );
   const [live, setLive] = useState(true);
   const next = useRef(1);
   const [encoded, setEncoded] = useState<string>();
@@ -144,12 +145,12 @@ export const PositionsExample = ({ realm }: { readonly realm: Realm }) => {
       return;
     }
     const timer = setInterval(() => {
-      const price = untracked(realm, (read) => read($rates)["BTC"]?.["USDT"]?.price ?? 101);
-      const rates = decode(
+      const price = Realm.untracked(realm, (read) => read($rates)["BTC"]?.["USDT"]?.price ?? 101);
+      const rates = Model.decode(
         realm,
         Rates,
       )(ratesJson(Math.round((price + Math.random() - 0.5) * 100) / 100));
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($rates, rates);
       });
     }, 500);
@@ -158,7 +159,7 @@ export const PositionsExample = ({ realm }: { readonly realm: Realm }) => {
 
   /** What a host does with one message of the update stream. */
   const apply = (message: unknown): void => {
-    const update = decode(realm, PositionUpdate, context)(message);
+    const update = Model.decode(realm, PositionUpdate, context)(message);
     if (update.type === "upsert") {
       positions.upsert(update.position);
     } else {
@@ -166,7 +167,7 @@ export const PositionsExample = ({ realm }: { readonly realm: Realm }) => {
     }
   };
 
-  const first = () => untracked(realm, (read) => read(positions.$items.keys)[0]);
+  const first = () => Realm.untracked(realm, (read) => read(positions.$items.keys)[0]);
 
   return (
     <section>

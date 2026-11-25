@@ -33,25 +33,48 @@ const topLevel: Place = { read: undefined, write: undefined };
 /**
  * Runs one program against one implementation and returns its trace: every
  * value a watch or autorun received, every value a read returned, every
- * error thrown or reported, every compute run, every `onObserved` call, and
+ * error thrown or reported, every compute run, every `Source.onObserved` call, and
  * the end state. Entries are strings, so a trace compares by equality.
  */
-export const execute = (program: Program, api: Api): Array<string> => {
+export const execute = (program: Program, api: Api, check?: Check): Array<string> => {
   const trace: Array<string> = [];
   const log = (entry: string): void => {
     trace.push(entry);
   };
   try {
-    run(program, api, log);
+    run(program, api, log, check);
   } catch (error) {
     log(`crash ${describeError(error)}`);
   }
   return trace;
 };
 
-const run = (program: Program, api: Api, log: (entry: string) => void): void => {
-  const { atom, autorun, box, collection, computed, createRealm, inspect } = api;
-  const { observe, onObserved, untracked, update, watch } = api;
+/**
+ * Checks the graph at rest, after each top-level operation and teardown:
+ * handed the program's boxes, computed values, and atoms. The graph checker
+ * of `pinna-core` (`graphCheck` in `test/internal/graph-check.ts`); only this checkout's API is
+ * checked, since a reference's nodes are another copy's.
+ */
+export type Check = (observables: ReadonlyArray<Box<number> | Computed<number> | Atom>) => void;
+
+const run = (
+  program: Program,
+  api: Api,
+  log: (entry: string) => void,
+  check: Check | undefined,
+): void => {
+  const {
+    Atom: { make: atom },
+    Realm: { autorun, make: createRealm },
+    Box: { make: box },
+    Collection: { make: collection },
+    Computed: { make: computed },
+    Source: { inspect },
+  } = api;
+  const {
+    Source: { observe, onObserved },
+    Realm: { untracked, update, watch },
+  } = api;
   const realm: Realm = createRealm({ onError: (error) => log(`onError ${describeError(error)}`) });
 
   const handles: Array<Handle> = [];
@@ -391,6 +414,16 @@ const run = (program: Program, api: Api, log: (entry: string) => void): void => 
     }
   };
 
+  const observables = (): ReadonlyArray<Box<number> | Computed<number> | Atom> => {
+    const found: Array<Box<number> | Computed<number> | Atom> = [];
+    for (const each of handles) {
+      if (each.kind === "box") found.push(each.box);
+      else if (each.kind === "computed") found.push(each.computed);
+      else if (each.kind === "atom") found.push(each.atom);
+    }
+    return found;
+  };
+
   for (const [index, operation] of program.operations.entries()) {
     log(`-- operation ${index}`);
     try {
@@ -398,6 +431,7 @@ const run = (program: Program, api: Api, log: (entry: string) => void): void => 
     } catch (error) {
       log(`operation ${index} (${operation.kind}) threw ${describeError(error)}`);
     }
+    check?.(observables());
   }
 
   snapshot("end");
@@ -411,5 +445,6 @@ const run = (program: Program, api: Api, log: (entry: string) => void): void => 
       stops[slot] = undefined;
     }
   }
+  check?.(observables());
   snapshot("stopped");
 };

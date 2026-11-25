@@ -1,53 +1,43 @@
 import { describe, expect, test } from "bun:test";
 import * as Plain from "@frondruntime/pinna";
-import { equalKey, hashKey, schemaKey } from "@frondruntime/pinna/internal";
 import { record } from "@frondruntime/pinna/testing";
 import { Equal, Hash, HashSet, Schema, SchemaIssue } from "effect";
 import {
-  atom,
-  autorun,
-  type Box,
-  BoxField,
-  CollectionField,
-  computed,
-  createRealm,
-  decode,
+  Atom,
+  Box,
+  Collection,
+  Computed,
   type Equals,
+  Model,
+  Realm,
   type ReconcileOptions,
-  reconcile,
-  reconcileSchema,
-  SchemaModel,
-  schemaBox,
-  untracked,
-  update,
 } from "../src/index.ts";
-import { equalsOf } from "../src/schema.ts";
 import { expectRealmAtRest } from "./rest.ts";
 
-const realm = createRealm();
+const realm = Realm.make();
 
 const Row = Schema.Struct({ id: Schema.String, price: Schema.Number });
 type Row = typeof Row.Type;
 
 const write = <Value>($box: Box<Value>, value: Value): void => {
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     write($box, value);
   });
 };
 
-class Quote extends SchemaModel<Quote>("Quote")({
+class Quote extends Model.Schema<Quote>("Quote")({
   id: Schema.String,
   tags: Schema.Array(Schema.String),
 }) {}
 
-class Position extends SchemaModel<Position>("Position")({
+class Position extends Model.Schema<Position>("Position")({
   id: Schema.String,
-  $size: BoxField(Schema.Number),
+  $size: Model.boxField(Schema.Number),
 }) {}
 
 describe("default equality", () => {
   test("a box notifies nobody when the new value equals the old one under its schema", () => {
-    const $rows = schemaBox(realm, Schema.Array(Row), [{ id: "a", price: 1 }]);
+    const $rows = Box.schema(realm, Schema.Array(Row), [{ id: "a", price: 1 }]);
     using watched = record(realm, (read) => read($rows));
     write($rows, [{ id: "a", price: 1 }]);
     expect(watched.values.length).toBe(0);
@@ -57,13 +47,13 @@ describe("default equality", () => {
 
   test("an equal write keeps the value the box had", () => {
     const first = [{ id: "a", price: 1 }];
-    const $rows = schemaBox(realm, Schema.Array(Row), first);
+    const $rows = Box.schema(realm, Schema.Array(Row), first);
     write($rows, [{ id: "a", price: 1 }]);
-    expect(untracked(realm, (read) => read($rows))).toBe(first);
+    expect(Realm.untracked(realm, (read) => read($rows))).toBe(first);
   });
 
   test("equals: Object.is opts back into identity", () => {
-    const $rows = schemaBox(realm, Schema.Array(Row), [], { equals: Object.is });
+    const $rows = Box.schema(realm, Schema.Array(Row), [], { equals: Object.is });
     using watched = record(realm, (read) => read($rows));
     write($rows, []);
     expect(watched.values.length).toBe(1);
@@ -72,7 +62,7 @@ describe("default equality", () => {
   test("an Equals of the caller's own decides, such as by id alone", () => {
     const sameId: Equals<ReadonlyArray<Row>> = (left, right) =>
       left.length === right.length && left.every((row, index) => row.id === right[index]?.id);
-    const $rows = schemaBox(realm, Schema.Array(Row), [{ id: "a", price: 1 }], { equals: sameId });
+    const $rows = Box.schema(realm, Schema.Array(Row), [{ id: "a", price: 1 }], { equals: sameId });
     using watched = record(realm, (read) => read($rows));
     write($rows, [{ id: "a", price: 2 }]);
     expect(watched.values.length).toBe(0);
@@ -81,10 +71,10 @@ describe("default equality", () => {
   });
 
   test("a BoxField compares with its schema too", () => {
-    class Basket extends SchemaModel<Basket>("Basket")({
-      $items: BoxField(Schema.Array(Schema.String)),
+    class Basket extends Model.Schema<Basket>("Basket")({
+      $items: Model.boxField(Schema.Array(Schema.String)),
     }) {}
-    const basket = decode(realm, Basket)({ items: ["apple"] });
+    const basket = Model.decode(realm, Basket)({ items: ["apple"] });
     using watched = record(realm, (read) => read(basket.$items));
     write(basket.$items, ["apple"]);
     expect(watched.values.length).toBe(0);
@@ -93,8 +83,8 @@ describe("default equality", () => {
   });
 
   test("SchemaModel instances compare their plain fields by value", () => {
-    const decodeQuote = decode(realm, Quote);
-    const $quote = schemaBox(realm, Quote, decodeQuote({ id: "a", tags: ["x"] }));
+    const decodeQuote = Model.decode(realm, Quote);
+    const $quote = Box.schema(realm, Quote, decodeQuote({ id: "a", tags: ["x"] }));
     using watched = record(realm, (read) => read($quote));
     write($quote, decodeQuote({ id: "a", tags: ["x"] }));
     expect(watched.values.length).toBe(0);
@@ -103,9 +93,9 @@ describe("default equality", () => {
   });
 
   test("SchemaModel instances compare their boxes by identity, not by contents", () => {
-    const decodePosition = decode(realm, Position);
+    const decodePosition = Model.decode(realm, Position);
     const first = decodePosition({ id: "a", size: 1 });
-    const $position = schemaBox(realm, Position, first);
+    const $position = Box.schema(realm, Position, first);
     using watched = record(realm, (read) => read($position));
     write($position, Position.make({ id: "a", size: 1, realm }));
     expect(watched.values.length).toBe(1);
@@ -114,16 +104,16 @@ describe("default equality", () => {
   });
 
   test("SchemaModel instances from different realms are not equal", () => {
-    const other = createRealm();
-    const $quote = schemaBox(realm, Quote, decode(realm, Quote)({ id: "a", tags: [] }));
+    const other = Realm.make();
+    const $quote = Box.schema(realm, Quote, Model.decode(realm, Quote)({ id: "a", tags: [] }));
     using watched = record(realm, (read) => read($quote));
-    write($quote, decode(other, Quote)({ id: "a", tags: [] }));
+    write($quote, Model.decode(other, Quote)({ id: "a", tags: [] }));
     expect(watched.values.length).toBe(1);
   });
 
   test("a computed value still compares with Object.is", () => {
-    const $count = schemaBox(realm, Schema.Number, 1);
-    const $pair = computed(realm, (read) => [read($count) > 0]);
+    const $count = Box.schema(realm, Schema.Number, 1);
+    const $pair = Computed.make(realm, (read) => [read($count) > 0]);
     using watched = record(realm, (read) => read($pair));
     write($count, 2);
     expect(watched.values.length).toBe(1);
@@ -137,7 +127,7 @@ describe("reconcile", () => {
   test("keeps the previous instance for an unchanged key", () => {
     const a = { id: "a", price: 1 };
     const b = { id: "b", price: 2 };
-    const next = reconcile(
+    const next = Collection.reconcile(
       [a, b],
       [
         { id: "a", price: 1 },
@@ -156,14 +146,14 @@ describe("reconcile", () => {
     expect(missing.keyOf({ id: "a", price: 1 })).toBe("a");
     const options: ReconcileOptions<Row, string> = { keyOf, equals };
     const previous = [{ id: "a", price: 1 }];
-    expect(reconcile(previous, [{ id: "a", price: 1 }], options)).toBe(previous);
+    expect(Collection.reconcile(previous, [{ id: "a", price: 1 }], options)).toBe(previous);
   });
 
   test("follows the next order, adds new keys, and drops missing ones", () => {
     const a = { id: "a", price: 1 };
     const b = { id: "b", price: 2 };
     const c = { id: "c", price: 3 };
-    const next = reconcile(
+    const next = Collection.reconcile(
       [a, b],
       [
         { id: "c", price: 3 },
@@ -180,7 +170,7 @@ describe("reconcile", () => {
       { id: "a", price: 1 },
       { id: "b", price: 2 },
     ];
-    const next = reconcile(
+    const next = Collection.reconcile(
       previous,
       [
         { id: "a", price: 1 },
@@ -193,7 +183,7 @@ describe("reconcile", () => {
 
   test("throws on a key the next array repeats", () => {
     expect(() =>
-      reconcile(
+      Collection.reconcile(
         [],
         [
           { id: "a", price: 1 },
@@ -206,17 +196,17 @@ describe("reconcile", () => {
   });
 
   test("a refetch written through reconcile notifies nobody and keeps row identity", () => {
-    const $rows = schemaBox(realm, Schema.Array(Row), [
+    const $rows = Box.schema(realm, Schema.Array(Row), [
       { id: "a", price: 1 },
       { id: "b", price: 2 },
     ]);
-    const first = untracked(realm, (read) => read($rows))[0];
+    const first = Realm.untracked(realm, (read) => read($rows))[0];
     using watched = record(realm, (read) => read($rows));
     const refetch = (rows: ReadonlyArray<Row>): void =>
       write(
         $rows,
-        reconcile(
-          untracked(realm, (read) => read($rows)),
+        Collection.reconcile(
+          Realm.untracked(realm, (read) => read($rows)),
           rows,
           { keyOf, equals },
         ),
@@ -231,16 +221,16 @@ describe("reconcile", () => {
       { id: "b", price: 5 },
     ]);
     expect(watched.values.length).toBe(1);
-    expect(untracked(realm, (read) => read($rows))[0]).toBe(first);
+    expect(Realm.untracked(realm, (read) => read($rows))[0]).toBe(first);
   });
 
   test("SchemaModel rows compare with their class's equivalence", () => {
-    const decodeQuotes = decode(realm, Schema.Array(Quote));
+    const decodeQuotes = Model.decode(realm, Schema.Array(Quote));
     const previous = decodeQuotes([
       { id: "a", tags: ["x"] },
       { id: "b", tags: ["y"] },
     ]);
-    const next = reconcile(
+    const next = Collection.reconcile(
       previous,
       decodeQuotes([
         { id: "a", tags: ["x"] },
@@ -256,16 +246,16 @@ describe("reconcile", () => {
     const row = (id: string, $size: Box<number>) => ({
       id,
       $size,
-      $double: computed(realm, (read) => read($size) * 2),
+      $double: Computed.make(realm, (read) => read($size) * 2),
     });
-    const $size = schemaBox(realm, Schema.Number, 1);
+    const $size = Box.schema(realm, Schema.Number, 1);
     const first = row("a", $size);
-    const kept = reconcile([first], [{ ...first }], {
+    const kept = Collection.reconcile([first], [{ ...first }], {
       keyOf: (item) => item.id,
       equals: Equal.equals,
     });
     expect(kept[0]).toBe(first);
-    const next = reconcile([first], [row("a", schemaBox(realm, Schema.Number, 1))], {
+    const next = Collection.reconcile([first], [row("a", Box.schema(realm, Schema.Number, 1))], {
       keyOf: (item) => item.id,
       equals: Equal.equals,
     });
@@ -273,9 +263,9 @@ describe("reconcile", () => {
   });
 
   test("a refetched SchemaModel row with a box is a new row: its box is a new box", () => {
-    const decodePositions = decode(realm, Schema.Array(Position));
+    const decodePositions = Model.decode(realm, Schema.Array(Position));
     const previous = decodePositions([{ id: "a", size: 1 }]);
-    const next = reconcile(previous, decodePositions([{ id: "a", size: 1 }]), {
+    const next = Collection.reconcile(previous, decodePositions([{ id: "a", size: 1 }]), {
       keyOf: (position) => position.id,
       equals: Schema.toEquivalence(Position),
     });
@@ -283,22 +273,28 @@ describe("reconcile", () => {
   });
 
   test("equals decides when a row is unchanged, such as by its boxes' contents", () => {
-    const decodePositions = decode(realm, Schema.Array(Position));
+    const decodePositions = Model.decode(realm, Schema.Array(Position));
     const previous = decodePositions([{ id: "a", size: 1 }]);
     let compared = 0;
     const equals = (old: Position, fresh: Position): boolean => {
       compared++;
       return (
         old.id === fresh.id &&
-        untracked(realm, (read) => read(old.$size)) ===
-          untracked(realm, (read) => read(fresh.$size))
+        Realm.untracked(realm, (read) => read(old.$size)) ===
+          Realm.untracked(realm, (read) => read(fresh.$size))
       );
     };
     const keyOf = (position: Position): string => position.id;
-    const same = reconcile(previous, decodePositions([{ id: "a", size: 1 }]), { keyOf, equals });
+    const same = Collection.reconcile(previous, decodePositions([{ id: "a", size: 1 }]), {
+      keyOf,
+      equals,
+    });
     expect(same).toBe(previous);
     expect(compared).toBe(1);
-    const moved = reconcile(previous, decodePositions([{ id: "a", size: 2 }]), { keyOf, equals });
+    const moved = Collection.reconcile(previous, decodePositions([{ id: "a", size: 2 }]), {
+      keyOf,
+      equals,
+    });
     expect(moved[0]).not.toBe(previous[0]);
   });
 
@@ -309,7 +305,7 @@ describe("reconcile", () => {
       return true;
     };
     const a = { id: "a", price: 1 };
-    const next = reconcile([a], [a, { id: "b", price: 2 }], { keyOf, equals });
+    const next = Collection.reconcile([a], [a, { id: "b", price: 2 }], { keyOf, equals });
     expect(next[0]).toBe(a);
     expect(compared).toBe(0);
   });
@@ -321,7 +317,7 @@ describe("reconcileSchema", () => {
   test("compares a plain row structurally when equals is left out", () => {
     const a = { id: "a", price: 1 };
     const previous = [a, { id: "b", price: 2 }];
-    const next = reconcileSchema(
+    const next = Collection.reconcile(
       previous,
       [
         { id: "a", price: 1 },
@@ -331,16 +327,16 @@ describe("reconcileSchema", () => {
     );
     expect(next[0]).toBe(a);
     expect(next[1]).toEqual({ id: "b", price: 3 });
-    expect(reconcileSchema(next, [{ ...a }, { id: "b", price: 3 }], { keyOf })).toBe(next);
+    expect(Collection.reconcile(next, [{ ...a }, { id: "b", price: 3 }], { keyOf })).toBe(next);
   });
 
   test("compares a SchemaModel row with its class's schema", () => {
-    const decodeQuotes = decode(realm, Schema.Array(Quote));
+    const decodeQuotes = Model.decode(realm, Schema.Array(Quote));
     const previous = decodeQuotes([
       { id: "a", tags: ["x"] },
       { id: "b", tags: ["y"] },
     ]);
-    const next = reconcileSchema(
+    const next = Collection.reconcile(
       previous,
       decodeQuotes([
         { id: "a", tags: ["x"] },
@@ -353,9 +349,9 @@ describe("reconcileSchema", () => {
   });
 
   test("a refetched SchemaModel row with a box is merged: the held row and its box stay", () => {
-    const decodePositions = decode(realm, Schema.Array(Position));
+    const decodePositions = Model.decode(realm, Schema.Array(Position));
     const previous = decodePositions([{ id: "a", size: 1 }]);
-    const next = reconcileSchema(previous, decodePositions([{ id: "a", size: 1 }]), {
+    const next = Collection.reconcile(previous, decodePositions([{ id: "a", size: 1 }]), {
       keyOf: (position) => position.id,
     });
     expect(next).toBe(previous);
@@ -363,25 +359,24 @@ describe("reconcileSchema", () => {
 
   test("equals replaces the schema's comparison", () => {
     const previous = [{ id: "a", price: 1 }];
-    const next = reconcileSchema(previous, [{ id: "a", price: 2 }], {
+    const next = Collection.reconcile(previous, [{ id: "a", price: 2 }], {
       keyOf,
       equals: (old, fresh) => old.id === fresh.id,
     });
     expect(next).toBe(previous);
   });
 
-  test("reconcile stays pinna's own and takes equals", () => {
-    expect(reconcile).toBe(Plain.reconcile);
-    expect(reconcileSchema).not.toBe(Plain.reconcile);
+  test("Collection.reconcile here works out equals from the schema; pinna's takes it", () => {
+    expect(Collection.reconcile).not.toBe(Plain.Collection.reconcile);
   });
 });
 
 describe("primitive equality", () => {
   // An autorun, not a watch: a watch compares what it selects by itself.
   test("a number box counts 0 and -0, and NaN and NaN, as the same value", () => {
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const $count = Box.schema(realm, Schema.Number, 0);
     let runs = 0;
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       runs++;
       read($count);
     });
@@ -400,7 +395,7 @@ describe("primitive equality", () => {
     const Rounded = Schema.Number.pipe(
       Schema.overrideToEquivalence(() => (a: number, b: number) => Math.round(a) === Math.round(b)),
     );
-    const $price = schemaBox(realm, Rounded, 1);
+    const $price = Box.schema(realm, Rounded, 1);
     using watched = record(realm, (read) => read($price));
     write($price, 1.2);
     expect(watched.values.length).toBe(0);
@@ -409,11 +404,11 @@ describe("primitive equality", () => {
   });
 
   test("string, boolean, and literal boxes compare by value", () => {
-    const $name = schemaBox(realm, Schema.String, "a");
-    const $done = schemaBox(realm, Schema.Boolean, false);
-    const $side = schemaBox(realm, Schema.Literals(["buy", "sell"]), "buy");
+    const $name = Box.schema(realm, Schema.String, "a");
+    const $done = Box.schema(realm, Schema.Boolean, false);
+    const $side = Box.schema(realm, Schema.Literals(["buy", "sell"]), "buy");
     using watched = record(realm, (read) => [read($name), read($done), read($side)]);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($name, "b");
       write($name, "a");
       write($done, false);
@@ -427,24 +422,24 @@ describe("primitive equality", () => {
 
 describe("unknown boxes", () => {
   test("Schema.Unknown and Schema.Any accept every value", () => {
-    const $unknown = schemaBox(realm, Schema.Unknown, null);
-    const $any = schemaBox(realm, Schema.Any, null);
+    const $unknown = Box.schema(realm, Schema.Unknown, null);
+    const $any = Box.schema(realm, Schema.Any, null);
     for (const value of [undefined, 1, "a", { a: 1 }, [1], Number.NaN]) {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($unknown, value);
         write($any, value);
       });
-      expect(untracked(realm, (read) => read($unknown))).toBe(value);
+      expect(Realm.untracked(realm, (read) => read($unknown))).toBe(value);
     }
   });
 
   test("a refined Schema.Unknown still rejects what its check rejects", () => {
     const Text = Schema.Unknown.check(Schema.makeFilter((value) => typeof value === "string"));
-    expect(() => schemaBox(realm, Text, 1)).toThrow("the box rejects this value");
-    const $text = schemaBox(realm, Text, "a");
+    expect(() => Box.schema(realm, Text, 1)).toThrow("the box rejects this value");
+    const $text = Box.schema(realm, Text, "a");
     expect(() => write($text, 1)).toThrow("the box rejects this value");
     const Present = Schema.Any.check(Schema.makeFilter((value) => value !== undefined));
-    const $present = schemaBox(realm, Present, 1);
+    const $present = Box.schema(realm, Present, 1);
     expect(() => write($present, undefined)).toThrow("the box rejects this value");
     expectRealmAtRest(realm);
   });
@@ -462,10 +457,10 @@ describe("incremental checks", () => {
     ],
   ] as const) {
     test(`a rejected ${name} array element keeps its structured error path`, () => {
-      const $values = schemaBox(realm, Schema.Array(element), initial);
+      const $values = Box.schema(realm, Schema.Array(element), initial);
       let cause: unknown;
       try {
-        update(realm, (_read, write) => write($values, next as unknown as typeof initial));
+        Realm.update(realm, (_read, write) => write($values, next as unknown as typeof initial));
       } catch (error) {
         cause = (error as Error).cause;
       }
@@ -476,7 +471,7 @@ describe("incremental checks", () => {
       expect(SchemaIssue.makeFormatterStandardSchemaV1()(cause.issue).issues).toEqual([
         { path, message: "Expected number" },
       ]);
-      expect(untracked(realm, (read) => read($values))).toBe(initial);
+      expect(Realm.untracked(realm, (read) => read($values))).toBe(initial);
       expectRealmAtRest(realm);
     });
   }
@@ -494,9 +489,9 @@ describe("incremental checks", () => {
 
   test("a write checks only the elements that are not where they were", () => {
     const { schema, count } = counted();
-    const $numbers = schemaBox(realm, Schema.Array(schema), [1, 2, 3]);
+    const $numbers = Box.schema(realm, Schema.Array(schema), [1, 2, 3]);
     const before = count();
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($numbers, (numbers) => {
         numbers.push(4);
       });
@@ -506,11 +501,11 @@ describe("incremental checks", () => {
 
   test("a write that drops the first element and appends one checks one", () => {
     const { schema, count } = counted();
-    const $numbers = schemaBox(realm, Schema.Array(schema), [1, 2, 3, 4]);
+    const $numbers = Box.schema(realm, Schema.Array(schema), [1, 2, 3, 4]);
     const before = count();
-    write($numbers, [...untracked(realm, (read) => read($numbers)).slice(1), 5]);
+    write($numbers, [...Realm.untracked(realm, (read) => read($numbers)).slice(1), 5]);
     expect(count() - before).toBe(1);
-    expect(untracked(realm, (read) => read($numbers))).toEqual([2, 3, 4, 5]);
+    expect(Realm.untracked(realm, (read) => read($numbers))).toEqual([2, 3, 4, 5]);
   });
 
   test("a draft that shifts and pushes checks only the pushed element", () => {
@@ -521,41 +516,45 @@ describe("incremental checks", () => {
         return true;
       }),
     );
-    const $rows = schemaBox(realm, Schema.Array(Checked), [
+    const $rows = Box.schema(realm, Schema.Array(Checked), [
       { id: "a", price: 1 },
       { id: "b", price: 2 },
       { id: "c", price: 3 },
     ]);
     count = 0;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($rows, (rows) => {
         rows.shift();
         rows.push({ id: "d", price: 4 });
       });
     });
     expect(count).toBe(1);
-    expect(untracked(realm, (read) => read($rows)).map((row) => row.id)).toEqual(["b", "c", "d"]);
+    expect(Realm.untracked(realm, (read) => read($rows)).map((row) => row.id)).toEqual([
+      "b",
+      "c",
+      "d",
+    ]);
   });
 
   test("a write that drops several elements from the front checks only the new ones", () => {
     const { schema, count } = counted();
-    const $numbers = schemaBox(realm, Schema.Array(schema), [1, 2, 3, 4, 5, 6]);
+    const $numbers = Box.schema(realm, Schema.Array(schema), [1, 2, 3, 4, 5, 6]);
     const before = count();
-    write($numbers, [...untracked(realm, (read) => read($numbers)).slice(3), 7, 8]);
+    write($numbers, [...Realm.untracked(realm, (read) => read($numbers)).slice(3), 7, 8]);
     expect(count() - before).toBe(2);
   });
 
   test("a write that adds an element at the front checks one", () => {
     const { schema, count } = counted();
-    const $numbers = schemaBox(realm, Schema.Array(schema), [1, 2, 3]);
+    const $numbers = Box.schema(realm, Schema.Array(schema), [1, 2, 3]);
     const before = count();
-    write($numbers, [0, ...untracked(realm, (read) => read($numbers))]);
+    write($numbers, [0, ...Realm.untracked(realm, (read) => read($numbers))]);
     expect(count() - before).toBe(1);
   });
 
   test("a first element copied from later in the array checks no more than that element", () => {
     const { schema, count } = counted();
-    const $numbers = schemaBox(realm, Schema.Array(schema), [1, 2, 3, 4, 5]);
+    const $numbers = Box.schema(realm, Schema.Array(schema), [1, 2, 3, 4, 5]);
     const before = count();
     write($numbers, [3, 2, 3, 4, 5]);
     expect(count() - before).toBeLessThanOrEqual(1);
@@ -563,7 +562,7 @@ describe("incremental checks", () => {
 
   test("swapping the first two elements checks no more than the two", () => {
     const { schema, count } = counted();
-    const $numbers = schemaBox(realm, Schema.Array(schema), [1, 2, 3, 4, 5]);
+    const $numbers = Box.schema(realm, Schema.Array(schema), [1, 2, 3, 4, 5]);
     const before = count();
     write($numbers, [2, 1, 3, 4, 5]);
     expect(count() - before).toBeLessThanOrEqual(2);
@@ -571,31 +570,31 @@ describe("incremental checks", () => {
 
   test("an element replaced in a shifted array is still checked", () => {
     const { schema, count } = counted();
-    const $numbers = schemaBox(realm, Schema.Array(schema), [1, 2, 3, 4, 5]);
+    const $numbers = Box.schema(realm, Schema.Array(schema), [1, 2, 3, 4, 5]);
     const before = count();
     write($numbers, [2, 3, 30, 5, 6]);
     expect(count() - before).toBe(2);
   });
 
   test("a new element that does not fit a shifted array is rejected at its new index", () => {
-    const $rows = schemaBox(realm, Schema.Array(Row), [
+    const $rows = Box.schema(realm, Schema.Array(Row), [
       { id: "a", price: 1 },
       { id: "b", price: 2 },
       { id: "c", price: 3 },
     ]);
-    const [, b, c] = untracked(realm, (read) => read($rows));
+    const [, b, c] = Realm.untracked(realm, (read) => read($rows));
     expect(() =>
       write($rows, [b as Row, c as Row, { id: "d", price: "free" as unknown as number }]),
     ).toThrow("at [2]: ");
-    expect(untracked(realm, (read) => read($rows))).toHaveLength(3);
+    expect(Realm.untracked(realm, (read) => read($rows))).toHaveLength(3);
     expectRealmAtRest(realm);
   });
 
   test("a repeated element that misleads the shift does not let a bad element through", () => {
     const Positive = Schema.Number.check(Schema.isGreaterThan(0));
-    const $numbers = schemaBox(realm, Schema.Array(Positive), [9, 1, 2, 1, 3]);
+    const $numbers = Box.schema(realm, Schema.Array(Positive), [9, 1, 2, 1, 3]);
     expect(() => write($numbers, [1, 3, -1])).toThrow("at [2]: ");
-    expect(untracked(realm, (read) => read($numbers))).toEqual([9, 1, 2, 1, 3]);
+    expect(Realm.untracked(realm, (read) => read($numbers))).toEqual([9, 1, 2, 1, 3]);
     expectRealmAtRest(realm);
   });
 
@@ -607,12 +606,12 @@ describe("incremental checks", () => {
         return true;
       }),
     );
-    const $rows = schemaBox(realm, Schema.Array(Checked), [
+    const $rows = Box.schema(realm, Schema.Array(Checked), [
       { id: "a", price: 1 },
       { id: "b", price: 2 },
     ]);
     count = 0;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($rows, (rows) => {
         const row = rows[1];
         if (row !== undefined) {
@@ -631,8 +630,8 @@ describe("incremental checks", () => {
         return true;
       }),
     );
-    const $row = schemaBox(realm, Checked, { id: "a", price: 1 });
-    const held = untracked(realm, (read) => read($row));
+    const $row = Box.schema(realm, Checked, { id: "a", price: 1 });
+    const held = Realm.untracked(realm, (read) => read($row));
     using seen = record(realm, (read) => read($row));
     count = 0;
     write($row, held);
@@ -651,10 +650,10 @@ describe("incremental checks", () => {
         return true;
       }),
     );
-    class Book extends SchemaModel<Book>("Book")({
-      $rows: CollectionField(Checked, { keyOf: (row) => row.id }),
+    class Book extends Model.Schema<Book>("Book")({
+      $rows: Model.collectionField(Checked, { keyOf: (row) => row.id }),
     }) {}
-    const book = decode(
+    const book = Model.decode(
       realm,
       Book,
     )({
@@ -664,32 +663,34 @@ describe("incremental checks", () => {
         { id: "c", price: 3 },
       ],
     });
-    const [a, , c] = untracked(realm, (read) => read(book.$rows.rows));
+    const [a, , c] = Realm.untracked(realm, (read) => read(book.$rows.rows));
     count = 0;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(book.$rows, [a as Row, c as Row, { id: "d", price: 4 }]);
     });
     expect(count).toBe(1);
-    expect(untracked(realm, (read) => read(book.$rows.keys))).toEqual(["a", "c", "d"]);
+    expect(Realm.untracked(realm, (read) => read(book.$rows.keys))).toEqual(["a", "c", "d"]);
   });
 
   test("a new element that does not fit is still rejected", () => {
-    const $rows = schemaBox(realm, Schema.Array(Row), [{ id: "a", price: 1 }]);
+    const $rows = Box.schema(realm, Schema.Array(Row), [{ id: "a", price: 1 }]);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($rows, (rows) => {
           rows.push({ id: "b", price: "free" as unknown as number });
         });
       }),
     ).toThrow("the box rejects this value");
-    expect(untracked(realm, (read) => read($rows))).toHaveLength(1);
+    expect(Realm.untracked(realm, (read) => read($rows))).toHaveLength(1);
     expectRealmAtRest(realm);
   });
 
   test("a check on the array itself still runs on every write", () => {
-    const $tags = schemaBox(realm, Schema.Array(Schema.String).check(Schema.isMaxLength(2)), ["a"]);
+    const $tags = Box.schema(realm, Schema.Array(Schema.String).check(Schema.isMaxLength(2)), [
+      "a",
+    ]);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($tags, (tags) => {
           tags.push("b", "c");
         });
@@ -707,11 +708,11 @@ describe("incremental checks", () => {
       }
       return undefined;
     };
-    const $price = schemaBox(realm, Schema.Number, 1);
-    const $rows = schemaBox(realm, Schema.Array(Row), [{ id: "a", price: 1 }]);
+    const $price = Box.schema(realm, Schema.Number, 1);
+    const $rows = Box.schema(realm, Schema.Array(Row), [{ id: "a", price: 1 }]);
     const whole = thrown(() => write($price, "ten" as unknown as number));
     const element = thrown(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($rows, (rows) => {
           rows.push({ id: "b", price: "free" as unknown as number });
         });
@@ -727,7 +728,7 @@ describe("incremental checks", () => {
   });
 
   test("a value that is not an array is rejected by an array box", () => {
-    const $tags = schemaBox(realm, Schema.Array(Schema.String), ["a"]);
+    const $tags = Box.schema(realm, Schema.Array(Schema.String), ["a"]);
     expect(() => write($tags, "a" as unknown as ReadonlyArray<string>)).toThrow(
       "the box rejects this value",
     );
@@ -736,16 +737,17 @@ describe("incremental checks", () => {
 });
 
 describe("a SchemaModel with its own Equal", () => {
-  class Rate extends SchemaModel<Rate>("Rate")({
+  class Rate extends Model.Schema<Rate>("Rate")({
     pair: Schema.String,
-    $bid: BoxField(Schema.Number),
+    $bid: Model.boxField(Schema.Number),
     at: Schema.Number,
   }) {
     [Equal.symbol](that: unknown): boolean {
       return (
         that instanceof Rate &&
         this.pair === that.pair &&
-        untracked(realm, (read) => read(this.$bid)) === untracked(realm, (read) => read(that.$bid))
+        Realm.untracked(realm, (read) => read(this.$bid)) ===
+          Realm.untracked(realm, (read) => read(that.$bid))
       );
     }
 
@@ -754,16 +756,19 @@ describe("a SchemaModel with its own Equal", () => {
     }
   }
 
-  const decodeRates = decode(realm, Schema.Array(Rate));
+  const decodeRates = Model.decode(realm, Schema.Array(Rate));
   const keyOf = (rate: Rate): string => rate.pair;
   const equals = Schema.toEquivalence(Rate);
 
   test("reconcile with its class's equivalence compares it with its own Equal", () => {
     const previous = decodeRates([{ pair: "BTC", bid: 1, at: 1 }]);
     expect(
-      reconcile(previous, decodeRates([{ pair: "BTC", bid: 1, at: 2 }]), { keyOf, equals }),
+      Collection.reconcile(previous, decodeRates([{ pair: "BTC", bid: 1, at: 2 }]), {
+        keyOf,
+        equals,
+      }),
     ).toBe(previous);
-    const moved = reconcile(previous, decodeRates([{ pair: "BTC", bid: 2, at: 2 }]), {
+    const moved = Collection.reconcile(previous, decodeRates([{ pair: "BTC", bid: 2, at: 2 }]), {
       keyOf,
       equals,
     });
@@ -773,16 +778,16 @@ describe("a SchemaModel with its own Equal", () => {
   test("reconcileSchema compares it with its own Equal when equals is left out", () => {
     const previous = decodeRates([{ pair: "BTC", bid: 1, at: 1 }]);
     expect(
-      reconcileSchema(previous, decodeRates([{ pair: "BTC", bid: 1, at: 2 }]), { keyOf }),
+      Collection.reconcile(previous, decodeRates([{ pair: "BTC", bid: 1, at: 2 }]), { keyOf }),
     ).toBe(previous);
-    const moved = reconcileSchema(previous, decodeRates([{ pair: "BTC", bid: 2, at: 2 }]), {
+    const moved = Collection.reconcile(previous, decodeRates([{ pair: "BTC", bid: 2, at: 2 }]), {
       keyOf,
     });
     expect(moved[0]).not.toBe(previous[0]);
   });
 
   test("a box of an array of it notifies nobody when every row is equal under its Equal", () => {
-    const $rates = schemaBox(
+    const $rates = Box.schema(
       realm,
       Schema.Array(Rate),
       decodeRates([{ pair: "BTC", bid: 1, at: 1 }]),
@@ -797,7 +802,7 @@ describe("a SchemaModel with its own Equal", () => {
   test("its Equal runs on every comparison: a result is never cached", () => {
     const [first] = decodeRates([{ pair: "BTC", bid: 1, at: 1 }]);
     const [second] = decodeRates([{ pair: "BTC", bid: 1, at: 2 }]);
-    const $rate = schemaBox(realm, Rate, first as Rate);
+    const $rate = Box.schema(realm, Rate, first as Rate);
     using watched = record(realm, (read) => read($rate));
     write($rate, second as Rate);
     expect(watched.values.length).toBe(0);
@@ -807,10 +812,10 @@ describe("a SchemaModel with its own Equal", () => {
   });
 
   test("a SchemaModel without its own Equal still compares its fields", () => {
-    const previous = decode(realm, Schema.Array(Quote))([{ id: "a", tags: ["x"] }]);
-    const next = decode(realm, Schema.Array(Quote))([{ id: "a", tags: ["x"] }]);
+    const previous = Model.decode(realm, Schema.Array(Quote))([{ id: "a", tags: ["x"] }]);
+    const next = Model.decode(realm, Schema.Array(Quote))([{ id: "a", tags: ["x"] }]);
     expect(
-      reconcile(previous, next, {
+      Collection.reconcile(previous, next, {
         keyOf: (quote) => quote.id,
         equals: Schema.toEquivalence(Quote),
       }),
@@ -820,11 +825,11 @@ describe("a SchemaModel with its own Equal", () => {
 
 describe("SchemaModel brand", () => {
   test("a draft cannot write a SchemaModel instance's fields", () => {
-    const $quotes = schemaBox(realm, Schema.Array(Quote), [
+    const $quotes = Box.schema(realm, Schema.Array(Quote), [
       Quote.make({ id: "a", tags: [], realm }),
     ]);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($quotes, (quotes) => {
           const quote = quotes[0];
           if (quote !== undefined) {
@@ -839,98 +844,26 @@ describe("SchemaModel brand", () => {
 });
 
 describe("schema equality agrees with Effect's", () => {
-  class Point extends Schema.Class<Point>("Point")({
-    time: Schema.Date,
-    value: Schema.Number,
-  }) {}
-  const at = (time: number | string): Date => new Date(time);
-  const cases: ReadonlyArray<readonly [string, Schema.Top, unknown, unknown]> = [
-    ["fresh equal Dates", Schema.Date, at(1), at(1)],
-    ["different Dates", Schema.Date, at(1), at(2)],
-    ["two invalid Dates", Schema.Date, at("nope"), at("nope")],
-    ["an invalid and a valid Date", Schema.Date, at("nope"), at(1)],
-    ["DateFromString's type side", Schema.DateFromString, at(5), at(5)],
-    ["a Date and a non-Date", Schema.Date, at(1), 1],
-    ["arrays of equal Dates", Schema.Array(Schema.Date), [at(1), at(2)], [at(1), at(2)]],
-    ["arrays of different lengths", Schema.Array(Schema.Date), [at(1)], [at(1), at(2)]],
-    ["arrays of NaN", Schema.Array(Schema.Number), [Number.NaN], [Number.NaN]],
-    ["an array and a non-array", Schema.Array(Schema.Number), [1], { 0: 1, length: 1 }],
-    [
-      "equal structs",
-      Schema.Struct({ at: Schema.Date, n: Schema.Number }),
-      { at: at(1), n: 1 },
-      { at: at(1), n: 1 },
-    ],
-    [
-      "structs that differ in one field",
-      Schema.Struct({ at: Schema.Date, n: Schema.Number }),
-      { at: at(1), n: 1 },
-      { at: at(1), n: 2 },
-    ],
-    [
-      "an optional key present on one side only",
-      Schema.Struct({ n: Schema.optionalKey(Schema.Number) }),
-      { n: 1 },
-      {},
-    ],
-    [
-      "an optional key absent on both sides",
-      Schema.Struct({ n: Schema.optionalKey(Schema.Number) }),
-      {},
-      {},
-    ],
-    [
-      "classes with equal fields",
-      Schema.Array(Point),
-      [new Point({ time: at(1), value: 1 })],
-      [new Point({ time: at(1), value: 1 })],
-    ],
-    [
-      "classes with a different Date",
-      Schema.Array(Point),
-      [new Point({ time: at(1), value: 1 })],
-      [new Point({ time: at(2), value: 1 })],
-    ],
-    ["a union", Schema.Union([Schema.Date, Schema.String]), at(1), at(1)],
-    ["a record", Schema.Record(Schema.String, Schema.Date), { a: at(1) }, { a: at(1) }],
-    ["a tuple", Schema.Tuple([Schema.Date, Schema.Number]), [at(1), 1], [at(1), 1]],
-  ];
-
-  for (const [name, schema, left, right] of cases) {
-    test(name, () => {
-      const effect = Schema.toEquivalence(schema as Schema.Schema<unknown>);
-      expect(equalsOf<unknown>(schema)(left, right)).toBe(effect(left, right));
-      expect(equalsOf<unknown>(schema)(right, left)).toBe(effect(right, left));
-    });
-  }
-
   test("a Date box treats a fresh equal Date as the same value", () => {
     const first = new Date(1);
-    const $at = schemaBox(realm, Schema.Date, first);
+    const $at = Box.schema(realm, Schema.Date, first);
     using watched = record(realm, (read) => read($at));
     write($at, new Date(1));
     expect(watched.values.length).toBe(0);
-    expect(untracked(realm, (read) => read($at))).toBe(first);
+    expect(Realm.untracked(realm, (read) => read($at))).toBe(first);
     write($at, new Date(2));
     expect(watched.values.length).toBe(1);
   });
 });
 
 describe("identity under Effect's Equal", () => {
-  test("Effect still uses the keys Pinna spells out", () => {
-    expect(Equal.symbol).toBe(equalKey);
-    expect(Hash.symbol).toBe(hashKey);
-    expect(schemaKey in Schema.String).toBe(true);
-    expect(Schema.isSchema({ [schemaKey]: schemaKey })).toBe(true);
-  });
-
   test("two boxes, computed values, atoms, and realms with equal contents are not equal", () => {
-    const realm = createRealm();
-    const other = createRealm();
+    const realm = Realm.make();
+    const other = Realm.make();
     const pairs: ReadonlyArray<readonly [unknown, unknown]> = [
-      [schemaBox(realm, Schema.Number, 1), schemaBox(realm, Schema.Number, 1)],
-      [computed(realm, () => 1), computed(realm, () => 1)],
-      [atom(realm), atom(realm)],
+      [Box.schema(realm, Schema.Number, 1), Box.schema(realm, Schema.Number, 1)],
+      [Computed.make(realm, () => 1), Computed.make(realm, () => 1)],
+      [Atom.make(realm), Atom.make(realm)],
       [realm, other],
     ];
     for (const [left, right] of pairs) {
@@ -951,7 +884,7 @@ describe("a schema that says nothing of the value's shape", () => {
   for (const [name, schema] of shapeless) {
     test(`a ${name} box counts an equal-shaped object as a change`, () => {
       const held = { a: 1 };
-      const $value = schemaBox(realm, schema, held);
+      const $value = Box.schema(realm, schema, held);
       using watched = record(realm, (read) => read($value));
       write($value, held);
       expect(watched.values.length).toBe(0);
@@ -961,12 +894,12 @@ describe("a schema that says nothing of the value's shape", () => {
   }
 
   test("an Unknown field inside a struct still compares structurally", () => {
-    const $value = schemaBox(realm, Schema.Struct({ a: Schema.Unknown }), { a: { x: 1 } });
-    const held = untracked(realm, (read) => read($value));
+    const $value = Box.schema(realm, Schema.Struct({ a: Schema.Unknown }), { a: { x: 1 } });
+    const held = Realm.untracked(realm, (read) => read($value));
     using watched = record(realm, (read) => read($value));
     write($value, { a: { x: 1 } });
     expect(watched.values.length).toBe(0);
-    expect(untracked(realm, (read) => read($value))).toBe(held);
+    expect(Realm.untracked(realm, (read) => read($value))).toBe(held);
     write($value, { a: { x: 2 } });
     expect(watched.values.length).toBe(1);
   });
@@ -987,12 +920,12 @@ describe("a plain Schema.Class with its own Equal", () => {
     }
   }
 
-  class Board extends SchemaModel<Board>("Board")({
-    $tickers: CollectionField(Ticker, { keyOf: (ticker) => ticker.symbol }),
+  class Board extends Model.Schema<Board>("Board")({
+    $tickers: Model.collectionField(Ticker, { keyOf: (ticker) => ticker.symbol }),
   }) {}
 
   test("a schemaBox ignores it and compares field by field", () => {
-    const $ticker = schemaBox(realm, Ticker, new Ticker({ symbol: "A", price: 1 }));
+    const $ticker = Box.schema(realm, Ticker, new Ticker({ symbol: "A", price: 1 }));
     using watched = record(realm, (read) => read($ticker));
     write($ticker, new Ticker({ symbol: "A", price: 1 }));
     expect(watched.values.length).toBe(0);
@@ -1003,36 +936,38 @@ describe("a plain Schema.Class with its own Equal", () => {
   test("reconcileSchema ignores it and compares field by field", () => {
     const previous = [new Ticker({ symbol: "A", price: 1 })];
     const keyOf = (ticker: Ticker): string => ticker.symbol;
-    expect(reconcileSchema(previous, [new Ticker({ symbol: "A", price: 1 })], { keyOf })).toBe(
+    expect(Collection.reconcile(previous, [new Ticker({ symbol: "A", price: 1 })], { keyOf })).toBe(
       previous,
     );
-    const moved = reconcileSchema(previous, [new Ticker({ symbol: "A", price: 2 })], { keyOf });
+    const moved = Collection.reconcile(previous, [new Ticker({ symbol: "A", price: 2 })], {
+      keyOf,
+    });
     expect(moved[0]).not.toBe(previous[0]);
     expect(moved[0]?.price).toBe(2);
   });
 
   test("a CollectionField's replaceAll ignores it: an equal row is kept, a new price is written", () => {
-    const board = decode(realm, Board)({ tickers: [{ symbol: "A", price: 1 }] });
-    const held = untracked(realm, (read) => read(board.$tickers.row("A")));
+    const board = Model.decode(realm, Board)({ tickers: [{ symbol: "A", price: 1 }] });
+    const held = Realm.untracked(realm, (read) => read(board.$tickers.row("A")));
     using watched = record(realm, (read) => read(board.$tickers.row("A")));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(board.$tickers, [new Ticker({ symbol: "A", price: 1 })]);
     });
     expect(watched.values.length).toBe(0);
-    expect(untracked(realm, (read) => read(board.$tickers.row("A")))).toBe(held);
-    update(realm, (_read, write) => {
+    expect(Realm.untracked(realm, (read) => read(board.$tickers.row("A")))).toBe(held);
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(board.$tickers, [new Ticker({ symbol: "A", price: 2 })]);
     });
     expect(watched.values.length).toBe(1);
-    expect(untracked(realm, (read) => read(board.$tickers.row("A")))?.price).toBe(2);
+    expect(Realm.untracked(realm, (read) => read(board.$tickers.row("A")))?.price).toBe(2);
   });
 });
 
 describe("Effect's Equal.equals against the schema's equivalence", () => {
   test("they agree on a SchemaModel whose fields are all plain, and HashSet finds either", () => {
-    class Venue extends SchemaModel<Venue>("Venue")({ id: Schema.String }) {}
-    const first = decode(realm, Venue)({ id: "x" });
-    const again = decode(realm, Venue)({ id: "x" });
+    class Venue extends Model.Schema<Venue>("Venue")({ id: Schema.String }) {}
+    const first = Model.decode(realm, Venue)({ id: "x" });
+    const again = Model.decode(realm, Venue)({ id: "x" });
     expect(Schema.toEquivalence(Venue)(first, again)).toBe(true);
     expect(Equal.equals(first, again)).toBe(true);
     expect(HashSet.has(HashSet.make(first), again)).toBe(true);
@@ -1048,26 +983,26 @@ describe("Effect's Equal.equals against the schema's equivalence", () => {
   });
 
   test("a computed value in the class body is ignored by the schema and compared by identity by Effect", () => {
-    class Venue extends SchemaModel<Venue>("Venue")({ id: Schema.String }) {
-      readonly $upper = computed(this.realm, () => this.id.toUpperCase());
+    class Venue extends Model.Schema<Venue>("Venue")({ id: Schema.String }) {
+      readonly $upper = Computed.make(this.realm, () => this.id.toUpperCase());
     }
-    const first = decode(realm, Venue)({ id: "x" });
-    const again = decode(realm, Venue)({ id: "x" });
+    const first = Model.decode(realm, Venue)({ id: "x" });
+    const again = Model.decode(realm, Venue)({ id: "x" });
     expect(Schema.toEquivalence(Venue)(first, again)).toBe(true);
     expect(Equal.equals(first, again)).toBe(false);
   });
 
   test("an own Equal without a Hash is called by the schema and never reached by Effect", () => {
-    class Venue extends SchemaModel<Venue>("Venue")({
+    class Venue extends Model.Schema<Venue>("Venue")({
       id: Schema.String,
-      $volume: BoxField(Schema.Number),
+      $volume: Model.boxField(Schema.Number),
     }) {
       [Equal.symbol](that: unknown): boolean {
         return that instanceof Venue && this.id === that.id;
       }
     }
-    const first = decode(realm, Venue)({ id: "x", volume: 1 });
-    const again = decode(realm, Venue)({ id: "x", volume: 2 });
+    const first = Model.decode(realm, Venue)({ id: "x", volume: 1 });
+    const again = Model.decode(realm, Venue)({ id: "x", volume: 2 });
     expect(Schema.toEquivalence(Venue)(first, again)).toBe(true);
     expect(Equal.equals(first, again)).toBe(false);
   });
@@ -1075,20 +1010,20 @@ describe("Effect's Equal.equals against the schema's equivalence", () => {
 
 describe("an equals that reads through the update's read", () => {
   test("reconcileSchema keeps a row whose box holds the same value", () => {
-    const decodePositions = decode(realm, Schema.Array(Position));
-    const $positions = schemaBox(
+    const decodePositions = Model.decode(realm, Schema.Array(Position));
+    const $positions = Box.schema(
       realm,
       Schema.Array(Position),
       decodePositions([{ id: "a", size: 1 }]),
     );
-    const held = untracked(realm, (read) => read($positions));
+    const held = Realm.untracked(realm, (read) => read($positions));
     using watched = record(realm, (read) => read($positions));
     const receive = (json: unknown): void => {
       const next = decodePositions(json);
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write(
           $positions,
-          reconcileSchema(read($positions), next, {
+          Collection.reconcile(read($positions), next, {
             keyOf: (position) => position.id,
             equals: (old, fresh) => old.id === fresh.id && read(old.$size) === read(fresh.$size),
           }),
@@ -1097,7 +1032,7 @@ describe("an equals that reads through the update's read", () => {
     };
     receive([{ id: "a", size: 1 }]);
     expect(watched.values.length).toBe(0);
-    expect(untracked(realm, (read) => read($positions))).toBe(held);
+    expect(Realm.untracked(realm, (read) => read($positions))).toBe(held);
     receive([{ id: "a", size: 2 }]);
     expect(watched.values.length).toBe(1);
   });
@@ -1105,9 +1040,9 @@ describe("an equals that reads through the update's read", () => {
 
 describe("merging a refetched SchemaModel into the held instance", () => {
   test("cross-realm reconciliation replaces a model despite its own Equal and honors caller equality", () => {
-    class Quote extends SchemaModel<Quote>("Quote")({
+    class Quote extends Model.Schema<Quote>("Quote")({
       pair: Schema.String,
-      $bid: BoxField(Schema.Number),
+      $bid: Model.boxField(Schema.Number),
     }) {
       [Equal.symbol](that: unknown): boolean {
         return that instanceof Quote && this.pair === that.pair;
@@ -1117,53 +1052,53 @@ describe("merging a refetched SchemaModel into the held instance", () => {
         return Hash.string(this.pair);
       }
     }
-    const other = createRealm();
-    const held = decode(realm, Quote)({ pair: "BTC", bid: 1 });
-    const fresh = decode(other, Quote)({ pair: "BTC", bid: 2 });
+    const other = Realm.make();
+    const held = Model.decode(realm, Quote)({ pair: "BTC", bid: 1 });
+    const fresh = Model.decode(other, Quote)({ pair: "BTC", bid: 2 });
     const previous = [held];
     const keyOf = (quote: Quote): string => quote.pair;
-    const next = reconcileSchema(previous, [fresh], { keyOf });
+    const next = Collection.reconcile(previous, [fresh], { keyOf });
     expect(next[0]).toBe(fresh);
-    expect(untracked(other, (read) => read((next[0] as Quote).$bid))).toBe(2);
-    expect(untracked(realm, (read) => read(held.$bid))).toBe(1);
-    expect(reconcileSchema(previous, [fresh], { keyOf, equals: () => true })).toBe(previous);
-    expect(reconcileSchema(previous, [fresh], { keyOf, equals: () => false })[0]).toBe(fresh);
+    expect(Realm.untracked(other, (read) => read((next[0] as Quote).$bid))).toBe(2);
+    expect(Realm.untracked(realm, (read) => read(held.$bid))).toBe(1);
+    expect(Collection.reconcile(previous, [fresh], { keyOf, equals: () => true })).toBe(previous);
+    expect(Collection.reconcile(previous, [fresh], { keyOf, equals: () => false })[0]).toBe(fresh);
     expectRealmAtRest(realm);
     expectRealmAtRest(other);
   });
 
-  class Holding extends SchemaModel<Holding>("Holding")({
+  class Holding extends Model.Schema<Holding>("Holding")({
     id: Schema.String,
     name: Schema.String,
-    $size: BoxField(Schema.Number),
+    $size: Model.boxField(Schema.Number),
   }) {}
 
-  class Portfolio extends SchemaModel<Portfolio>("Portfolio")({
+  class Portfolio extends Model.Schema<Portfolio>("Portfolio")({
     id: Schema.String,
-    $holdings: CollectionField(Holding, { keyOf: (holding) => holding.id }),
+    $holdings: Model.collectionField(Holding, { keyOf: (holding) => holding.id }),
   }) {}
 
-  class Desk extends SchemaModel<Desk>("Desk")({
-    $portfolios: CollectionField(Portfolio, { keyOf: (portfolio) => portfolio.id }),
+  class Desk extends Model.Schema<Desk>("Desk")({
+    $portfolios: Model.collectionField(Portfolio, { keyOf: (portfolio) => portfolio.id }),
   }) {}
 
-  const decodeHolding = decode(realm, Holding);
-  const decodeHoldings = decode(realm, Schema.Array(Holding));
+  const decodeHolding = Model.decode(realm, Holding);
+  const decodeHoldings = Model.decode(realm, Schema.Array(Holding));
   const keyOf = (holding: Holding): string => holding.id;
   const sizeOf = (holding: Holding | undefined): number | undefined =>
-    holding === undefined ? undefined : untracked(realm, (read) => read(holding.$size));
+    holding === undefined ? undefined : Realm.untracked(realm, (read) => read(holding.$size));
   const portfolioOf = (size: number) =>
-    decode(realm, Portfolio)({ id: "p", holdings: [{ id: "a", name: "Acme", size }] });
+    Model.decode(realm, Portfolio)({ id: "p", holdings: [{ id: "a", name: "Acme", size }] });
 
   test("replaceAll keeps the held instance and writes a changed box", () => {
     const portfolio = portfolioOf(1);
-    const held = untracked(realm, (read) => read(portfolio.$holdings.row("a")));
+    const held = Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")));
     using rowReaders = record(realm, (read) => read(portfolio.$holdings.row("a")));
     using sizeReaders = record(realm, (read) => read((held as Holding).$size));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(portfolio.$holdings, [decodeHolding({ id: "a", name: "Acme", size: 2 })]);
     });
-    expect(untracked(realm, (read) => read(portfolio.$holdings.row("a")))).toBe(held);
+    expect(Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")))).toBe(held);
     expect(sizeOf(held)).toBe(2);
     expect(rowReaders.values.length).toBe(0);
     expect(sizeReaders.values.length).toBe(1);
@@ -1171,10 +1106,10 @@ describe("merging a refetched SchemaModel into the held instance", () => {
 
   test("an unchanged refetch notifies nobody", () => {
     const portfolio = portfolioOf(1);
-    const held = untracked(realm, (read) => read(portfolio.$holdings.row("a")));
+    const held = Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")));
     using rowsReaders = record(realm, (read) => read(portfolio.$holdings.rows));
     using sizeReaders = record(realm, (read) => read((held as Holding).$size));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(portfolio.$holdings, [decodeHolding({ id: "a", name: "Acme", size: 1 })]);
     });
     expect(rowsReaders.values.length).toBe(0);
@@ -1183,13 +1118,13 @@ describe("merging a refetched SchemaModel into the held instance", () => {
 
   test("a plain field that differs replaces the instance", () => {
     const portfolio = portfolioOf(1);
-    const held = untracked(realm, (read) => read(portfolio.$holdings.row("a")));
-    update(realm, (_read, write) => {
+    const held = Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")));
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(portfolio.$holdings, [
         decodeHolding({ id: "a", name: "Acme Inc", size: 2 }),
       ]);
     });
-    const next = untracked(realm, (read) => read(portfolio.$holdings.row("a")));
+    const next = Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")));
     expect(next).not.toBe(held);
     expect(next?.name).toBe("Acme Inc");
     expect(sizeOf(held)).toBe(1);
@@ -1197,36 +1132,38 @@ describe("merging a refetched SchemaModel into the held instance", () => {
 
   test("upsert merges as replaceAll does", () => {
     const portfolio = portfolioOf(1);
-    const held = untracked(realm, (read) => read(portfolio.$holdings.row("a")));
-    update(realm, (_read, write) => {
+    const held = Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")));
+    Realm.update(realm, (_read, write) => {
       write.upsert(portfolio.$holdings, decodeHolding({ id: "a", name: "Acme", size: 3 }));
     });
-    expect(untracked(realm, (read) => read(portfolio.$holdings.row("a")))).toBe(held);
+    expect(Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")))).toBe(held);
     expect(sizeOf(held)).toBe(3);
   });
 
   test("a nested CollectionField merges its rows too", () => {
-    const desk = decode(
+    const desk = Model.decode(
       realm,
       Desk,
     )({
       portfolios: [{ id: "p", holdings: [{ id: "a", name: "Acme", size: 1 }] }],
     });
-    const portfolio = untracked(realm, (read) => read(desk.$portfolios.row("p"))) as Portfolio;
-    const holding = untracked(realm, (read) => read(portfolio.$holdings.row("a")));
-    update(realm, (_read, write) => {
+    const portfolio = Realm.untracked(realm, (read) =>
+      read(desk.$portfolios.row("p")),
+    ) as Portfolio;
+    const holding = Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")));
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(desk.$portfolios, [portfolioOf(4)]);
     });
-    expect(untracked(realm, (read) => read(desk.$portfolios.row("p")))).toBe(portfolio);
-    expect(untracked(realm, (read) => read(portfolio.$holdings.row("a")))).toBe(holding);
+    expect(Realm.untracked(realm, (read) => read(desk.$portfolios.row("p")))).toBe(portfolio);
+    expect(Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")))).toBe(holding);
     expect(sizeOf(holding)).toBe(4);
   });
 
   test("a rejected update puts the merged box back", () => {
     const portfolio = portfolioOf(1);
-    const held = untracked(realm, (read) => read(portfolio.$holdings.row("a")));
+    const held = Realm.untracked(realm, (read) => read(portfolio.$holdings.row("a")));
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.replaceAll(portfolio.$holdings, [decodeHolding({ id: "a", name: "Acme", size: 5 })]);
         throw new Error("abandon");
       }),
@@ -1238,9 +1175,13 @@ describe("merging a refetched SchemaModel into the held instance", () => {
   test("reconcileSchema merges outside an update, in one of its own", () => {
     const previous = decodeHoldings([{ id: "a", name: "Acme", size: 1 }]);
     using sizeReaders = record(realm, (read) => read((previous[0] as Holding).$size));
-    const next = reconcileSchema(previous, decodeHoldings([{ id: "a", name: "Acme", size: 2 }]), {
-      keyOf,
-    });
+    const next = Collection.reconcile(
+      previous,
+      decodeHoldings([{ id: "a", name: "Acme", size: 2 }]),
+      {
+        keyOf,
+      },
+    );
     expect(next).toBe(previous);
     expect(sizeOf(previous[0])).toBe(2);
     expect(sizeReaders.values.length).toBe(1);
@@ -1251,8 +1192,8 @@ describe("merging a refetched SchemaModel into the held instance", () => {
     const previous = decodeHoldings([{ id: "a", name: "Acme", size: 1 }]);
     const fresh = decodeHoldings([{ id: "a", name: "Acme", size: 2 }]);
     expect(() =>
-      update(realm, () => {
-        reconcileSchema(previous, fresh, { keyOf });
+      Realm.update(realm, () => {
+        Collection.reconcile(previous, fresh, { keyOf });
         expect(sizeOf(previous[0])).toBe(2);
         throw new Error("abandon");
       }),
@@ -1263,16 +1204,20 @@ describe("merging a refetched SchemaModel into the held instance", () => {
   test("reconcileSchema that writes nothing runs inside a computed value", () => {
     const previous = decodeHoldings([{ id: "a", name: "Acme", size: 1 }]);
     const fresh = decodeHoldings([{ id: "a", name: "Acme", size: 1 }]);
-    const $kept = computed(realm, () => reconcileSchema(previous, fresh, { keyOf }));
-    expect(untracked(realm, (read) => read($kept))).toBe(previous);
+    const $kept = Computed.make(realm, () => Collection.reconcile(previous, fresh, { keyOf }));
+    expect(Realm.untracked(realm, (read) => read($kept))).toBe(previous);
   });
 
   test("a caller's equals turns the merge off", () => {
     const previous = decodeHoldings([{ id: "a", name: "Acme", size: 1 }]);
-    const next = reconcileSchema(previous, decodeHoldings([{ id: "a", name: "Acme", size: 2 }]), {
-      keyOf,
-      equals: () => false,
-    });
+    const next = Collection.reconcile(
+      previous,
+      decodeHoldings([{ id: "a", name: "Acme", size: 2 }]),
+      {
+        keyOf,
+        equals: () => false,
+      },
+    );
     expect(next[0]).not.toBe(previous[0]);
     expect(sizeOf(previous[0])).toBe(1);
   });
@@ -1283,27 +1228,27 @@ describe("merging a refetched SchemaModel into the held instance", () => {
       decodeHolding({ id: "a", name: "Acme", size: 5 }),
       decodeHolding({ id: "a", name: "Acme", size: 6 }),
     ];
-    expect(() => reconcileSchema(previous, fresh, { keyOf })).toThrow("appears twice");
+    expect(() => Collection.reconcile(previous, fresh, { keyOf })).toThrow("appears twice");
     expect(sizeOf(previous[0])).toBe(1);
   });
 
   test("a schemaBox of an array does not merge: a refetch replaces the held row", () => {
     const held = decodeHoldings([{ id: "a", name: "Acme", size: 1 }]);
-    const $holdings = schemaBox(realm, Schema.Array(Holding), held);
+    const $holdings = Box.schema(realm, Schema.Array(Holding), held);
     using readers = record(realm, (read) => read($holdings));
     write($holdings, decodeHoldings([{ id: "a", name: "Acme", size: 1 }]));
-    const next = untracked(realm, (read) => read($holdings));
+    const next = Realm.untracked(realm, (read) => read($holdings));
     expect(next).not.toBe(held);
     expect(next[0]).not.toBe(held[0]);
     expect(readers.values.length).toBe(1);
   });
 
   test("an instance from another realm is not merged", () => {
-    const other = createRealm();
+    const other = Realm.make();
     const previous = decodeHoldings([{ id: "a", name: "Acme", size: 1 }]);
-    const next = reconcileSchema(
+    const next = Collection.reconcile(
       previous,
-      decode(other, Schema.Array(Holding))([{ id: "a", name: "Acme", size: 2 }]),
+      Model.decode(other, Schema.Array(Holding))([{ id: "a", name: "Acme", size: 2 }]),
       { keyOf },
     );
     expect(next[0]).not.toBe(previous[0]);
@@ -1311,10 +1256,10 @@ describe("merging a refetched SchemaModel into the held instance", () => {
   });
 
   test("a class's own Equal decides whether the instance stays, and its boxes still merge", () => {
-    class Quote extends SchemaModel<Quote>("Quote")({
+    class Quote extends Model.Schema<Quote>("Quote")({
       pair: Schema.String,
       at: Schema.Number,
-      $bid: BoxField(Schema.Number),
+      $bid: Model.boxField(Schema.Number),
     }) {
       [Equal.symbol](that: unknown): boolean {
         return that instanceof Quote && this.pair === that.pair;
@@ -1324,13 +1269,13 @@ describe("merging a refetched SchemaModel into the held instance", () => {
         return Hash.string(this.pair);
       }
     }
-    const decodeQuotes = decode(realm, Schema.Array(Quote));
+    const decodeQuotes = Model.decode(realm, Schema.Array(Quote));
     const previous = decodeQuotes([{ pair: "BTC", at: 1, bid: 1 }]);
-    const next = reconcileSchema(previous, decodeQuotes([{ pair: "BTC", at: 2, bid: 2 }]), {
+    const next = Collection.reconcile(previous, decodeQuotes([{ pair: "BTC", at: 2, bid: 2 }]), {
       keyOf: (quote) => quote.pair,
     });
     expect(next).toBe(previous);
     expect(previous[0]?.at).toBe(1);
-    expect(untracked(realm, (read) => read((previous[0] as Quote).$bid))).toBe(2);
+    expect(Realm.untracked(realm, (read) => read((previous[0] as Quote).$bid))).toBe(2);
   });
 });

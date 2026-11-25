@@ -2,62 +2,46 @@ import { describe, expect, test } from "bun:test";
 import { held, testRealm } from "@frondruntime/pinna/testing";
 import { Cause, Deferred, Effect, Exit, Fiber, Schema, Stream } from "effect";
 import {
-  applyStage,
-  BoxField,
-  box,
-  CollectionField,
-  changes,
-  computed,
-  decode,
-  dropStage,
-  onRowChange,
-  openStage,
+  Box,
+  Collection,
+  Computed,
+  Model,
+  Program,
   type Read,
-  type Recipe,
-  reconcileSchema,
-  SchemaModel,
-  type Stage,
-  StageConflict,
+  Realm,
+  Stage,
   StageConflictError,
   type StageOptions,
-  schemaBox,
-  schemaCollection,
-  stageRead,
-  stageStatus,
-  stageUpdate,
-  untracked,
-  update,
-  watch,
-  withStage,
+  type UpdateRecipe,
 } from "../src/index.ts";
 
 /**
- * Stages over schema boxes and `SchemaModel`s, and `withStage`, which holds
+ * Stages over schema boxes and `Model.Schema`s, and `Stage.scoped`, which holds
  * an Effect program's writes until it succeeds (`docs/api.md`, ruling 53).
  */
 
 const NonNegative = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
 
-class Quote extends SchemaModel<Quote>("Quote")({
+class Quote extends Model.Schema<Quote>("Quote")({
   id: Schema.String,
   symbol: Schema.String,
-  $price: BoxField(NonNegative),
+  $price: Model.boxField(NonNegative),
 }) {}
 
-class Book extends SchemaModel<Book>("Book")({
-  $quotes: CollectionField(Quote, { keyOf: (quote) => quote.id }),
+class Book extends Model.Schema<Book>("Book")({
+  $quotes: Model.collectionField(Quote, { keyOf: (quote) => quote.id }),
 }) {}
 
-class MergeRow extends SchemaModel<MergeRow>("MergeRow")({
+class MergeRow extends Model.Schema<MergeRow>("MergeRow")({
   id: Schema.String,
-  $price: BoxField(NonNegative),
-  $items: CollectionField(Schema.Number, { keyOf: (value) => value }),
+  $price: Model.boxField(NonNegative),
+  $items: Model.collectionField(Schema.Number, { keyOf: (value) => value }),
 }) {}
 
-class Basket extends SchemaModel<Basket>("Basket")({
+class Basket extends Model.Schema<Basket>("Basket")({
   id: Schema.String,
   label: Schema.String,
-  $items: CollectionField(Schema.Number, { keyOf: (value) => value }),
+  $items: Model.collectionField(Schema.Number, { keyOf: (value) => value }),
 }) {}
 
 const quotesJson = (...quotes: ReadonlyArray<readonly [string, number]>) =>
@@ -66,66 +50,65 @@ const quotesJson = (...quotes: ReadonlyArray<readonly [string, number]>) =>
 describe("a schema box through a stage", () => {
   test("a refused value throws at stageUpdate, where the work wrote it", () => {
     using realm = testRealm();
-    const $held = schemaBox(realm, NonNegative, 1);
-    const stage = openStage(realm);
+    const $held = Box.schema(realm, NonNegative, 1);
+    const stage = Stage.make(realm);
     expect(() =>
-      stageUpdate(stage, (_read, write) => {
+      Stage.update(stage, (_read, write) => {
         write($held, -1);
       }),
     ).toThrow("pinna: the box rejects this value");
-    expect(stageRead(stage, (read) => read($held))).toBe(1);
-    dropStage(stage);
+    expect(Stage.read(stage, (read) => read($held))).toBe(1);
+    Stage.drop(stage);
   });
 
   test("a value refused on replay throws at applyStage and rolls back the stage's writes", () => {
     using realm = testRealm();
-    const $held = schemaBox(realm, NonNegative, 5);
-    const $own = box(realm, 0);
-    const stage = openStage(realm);
-    stageUpdate(stage, (read, write) => {
+    const $held = Box.schema(realm, NonNegative, 5);
+    const $own = Box.make(realm, 0);
+    const stage = Stage.make(realm);
+    Stage.update(stage, (read, write) => {
       write($held, read($held) - 3);
     });
-    expect(stageRead(stage, (read) => read($held))).toBe(2);
-    update(realm, (_read, write) => {
+    expect(Stage.read(stage, (read) => read($held))).toBe(2);
+    Realm.update(realm, (_read, write) => {
       write($held, 1);
     });
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($own, 1);
-        applyStage(stage);
+        Stage.apply(stage);
       }),
     ).toThrow("pinna: the box rejects this value");
-    expect(untracked(realm, (read) => [read($held), read($own)])).toEqual([1, 0]);
-    expect(stageStatus(stage)).toBe("dropped");
+    expect(Realm.untracked(realm, (read) => [read($held), read($own)])).toEqual([1, 0]);
+    expect(Stage.status(stage)).toBe("dropped");
   });
 });
 
 describe("a refetch through a stage", () => {
   test("replaceAll merges into the held models: the stage reads the new prices, the realm keeps its own", () => {
     using realm = testRealm();
-    const book = decode(realm, Book)({ quotes: quotesJson(["a", 1], ["b", 2]) });
-    const heldA = untracked(realm, (read) => read.row(book.$quotes, "a")) as Quote;
+    const book = Model.decode(realm, Book)({ quotes: quotesJson(["a", 1], ["b", 2]) });
+    const heldA = Realm.untracked(realm, (read) => read.row(book.$quotes, "a")) as Quote;
     // Decoded outside the recipe: the recipe runs twice, and would make two.
-    const fresh = decode(realm, Book)({ quotes: quotesJson(["a", 10], ["c", 3]) });
-    const rows = untracked(realm, (read) => read(fresh.$quotes.rows));
-    const stage = openStage(realm);
-    stageUpdate(stage, (_read, write) => {
+    const fresh = Model.decode(realm, Book)({ quotes: quotesJson(["a", 10], ["c", 3]) });
+    const rows = Realm.untracked(realm, (read) => read(fresh.$quotes.rows));
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => {
       write.replaceAll(book.$quotes, rows);
     });
     expect(
-      stageRead(stage, (read) => ({
+      Stage.read(stage, (read) => ({
         keys: read(book.$quotes.keys),
         sameA: read.row(book.$quotes, "a") === heldA,
         priceA: read(heldA.$price),
       })),
     ).toEqual({ keys: ["a", "c"], sameA: true, priceA: 10 });
-    expect(untracked(realm, (read) => [read(book.$quotes.keys), read(heldA.$price)])).toEqual([
-      ["a", "b"],
-      1,
-    ]);
-    applyStage(stage);
+    expect(Realm.untracked(realm, (read) => [read(book.$quotes.keys), read(heldA.$price)])).toEqual(
+      [["a", "b"], 1],
+    );
+    Stage.apply(stage);
     expect(
-      untracked(realm, (read) => [
+      Realm.untracked(realm, (read) => [
         read(book.$quotes.keys),
         read.row(book.$quotes, "a") === heldA,
         read(heldA.$price),
@@ -135,16 +118,16 @@ describe("a refetch through a stage", () => {
 
   test("upsert merges a refetched model into the held one through the stage, and dropping leaves it", () => {
     using realm = testRealm();
-    const book = decode(realm, Book)({ quotes: quotesJson(["a", 1]) });
+    const book = Model.decode(realm, Book)({ quotes: quotesJson(["a", 1]) });
     const fresh = Quote.make({ id: "a", symbol: "A", price: 5, realm });
-    const stage = openStage(realm);
-    stageUpdate(stage, (_read, write) => {
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => {
       write.upsert(book.$quotes, fresh);
     });
-    const heldA = untracked(realm, (read) => read.row(book.$quotes, "a")) as Quote;
-    expect(stageRead(stage, (read) => read(heldA.$price))).toBe(5);
-    dropStage(stage);
-    expect(untracked(realm, (read) => read(heldA.$price))).toBe(1);
+    const heldA = Realm.untracked(realm, (read) => read.row(book.$quotes, "a")) as Quote;
+    expect(Stage.read(stage, (read) => read(heldA.$price))).toBe(5);
+    Stage.drop(stage);
+    expect(Realm.untracked(realm, (read) => read(heldA.$price))).toBe(1);
   });
 
   // Landing compares the held row with the staged one through the field
@@ -152,49 +135,48 @@ describe("a refetch through a stage", () => {
   for (const over of ["realm", "child"] as const) {
     test(`upsert of a model whose plain field differs replaces the held row on apply (${over})`, () => {
       using realm = testRealm();
-      const quotes = schemaCollection(realm, Quote, { keyOf: (quote) => quote.id });
-      const baskets = schemaCollection(realm, Basket, { keyOf: (basket) => basket.id });
+      const quotes = Collection.schema(realm, Quote, { keyOf: (quote) => quote.id });
+      const baskets = Collection.schema(realm, Basket, { keyOf: (basket) => basket.id });
       const heldQuote = Quote.make({ id: "a", symbol: "A", price: 1, realm });
       const heldBasket = Basket.make({ id: "a", label: "old", items: [1], realm });
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.upsert(quotes, heldQuote);
         write.upsert(baskets, heldBasket);
       });
       const freshQuote = Quote.make({ id: "a", symbol: "RENAMED", price: 2, realm });
       const freshBasket = Basket.make({ id: "a", label: "new", items: [2], realm });
-      const root = openStage(realm);
-      const stage = over === "child" ? openStage(root) : root;
-      stageUpdate(stage, (_read, write) => {
+      const root = Stage.make(realm);
+      const stage = over === "child" ? Stage.make(root) : root;
+      Stage.update(stage, (_read, write) => {
         write.upsert(quotes, freshQuote);
         write.upsert(baskets, freshBasket);
       });
-      if (over === "child") applyStage(stage);
-      applyStage(root);
-      expect(stageStatus(root)).toBe("applied");
-      expect(untracked(realm, (read) => [read.row(quotes, "a"), read.row(baskets, "a")])).toEqual([
-        freshQuote,
-        freshBasket,
-      ]);
+      if (over === "child") Stage.apply(stage);
+      Stage.apply(root);
+      expect(Stage.status(root)).toBe("applied");
+      expect(
+        Realm.untracked(realm, (read) => [read.row(quotes, "a"), read.row(baskets, "a")]),
+      ).toEqual([freshQuote, freshBasket]);
     });
   }
 
   test("reconcileSchema inside a recipe merges into the stage", () => {
     using realm = testRealm();
-    const decodeQuotes = decode(realm, Schema.Array(Quote));
-    const $list = schemaBox(realm, Schema.Array(Quote), decodeQuotes(quotesJson(["a", 1])));
-    const held = untracked(realm, (read) => read($list)[0]) as Quote;
+    const decodeQuotes = Model.decode(realm, Schema.Array(Quote));
+    const $list = Box.schema(realm, Schema.Array(Quote), decodeQuotes(quotesJson(["a", 1])));
+    const held = Realm.untracked(realm, (read) => read($list)[0]) as Quote;
     const next = decodeQuotes(quotesJson(["a", 7]));
-    const stage = openStage(realm);
-    stageUpdate(stage, (read, write) => {
-      write($list, reconcileSchema(read($list), next, { keyOf: (quote) => quote.id }));
+    const stage = Stage.make(realm);
+    Stage.update(stage, (read, write) => {
+      write($list, Collection.reconcile(read($list), next, { keyOf: (quote) => quote.id }));
     });
-    expect(stageRead(stage, (read) => [read($list)[0] === held, read(held.$price)])).toEqual([
+    expect(Stage.read(stage, (read) => [read($list)[0] === held, read(held.$price)])).toEqual([
       true,
       7,
     ]);
-    expect(untracked(realm, (read) => read(held.$price))).toBe(1);
-    applyStage(stage);
-    expect(untracked(realm, (read) => [read($list)[0] === held, read(held.$price)])).toEqual([
+    expect(Realm.untracked(realm, (read) => read(held.$price))).toBe(1);
+    Stage.apply(stage);
+    expect(Realm.untracked(realm, (read) => [read($list)[0] === held, read(held.$price)])).toEqual([
       true,
       7,
     ]);
@@ -202,13 +184,13 @@ describe("a refetch through a stage", () => {
 
   test("decoding inside a recipe throws: the replay would make other instances", () => {
     using realm = testRealm();
-    const stage = openStage(realm);
+    const stage = Stage.make(realm);
     expect(() =>
-      stageUpdate(stage, () => {
-        decode(realm, Quote)({ id: "a", symbol: "A", price: 1 });
+      Stage.update(stage, () => {
+        Model.decode(realm, Quote)({ id: "a", symbol: "A", price: 1 });
       }),
     ).toThrow("is made inside a stage recipe");
-    dropStage(stage);
+    Stage.drop(stage);
   });
 });
 
@@ -219,18 +201,18 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
         using realm = testRealm();
         const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
         const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
-        const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
-        update(realm, (_read, write) => write.upsert($rows, previous));
-        const parent = openStage(realm);
-        using _parent = held(() => dropStage(parent));
-        const stage = destination === "parent" ? openStage(parent) : parent;
-        stageUpdate(parent, (_read, write) => {
+        const $rows = Collection.schema(realm, MergeRow, { keyOf: (row) => row.id });
+        Realm.update(realm, (_read, write) => write.upsert($rows, previous));
+        const parent = Stage.make(realm);
+        using _parent = held(() => Stage.drop(parent));
+        const stage = destination === "parent" ? Stage.make(parent) : parent;
+        Stage.update(parent, (_read, write) => {
           write(fresh.$price, 20);
           write.replaceAll(fresh.$items, [2]);
         });
-        stageUpdate(stage, (_read, write) => {
+        Stage.update(stage, (_read, write) => {
           if (entry === "reconcileSchema") {
-            expect(reconcileSchema([previous], [fresh], { keyOf: (row) => row.id })).toEqual([
+            expect(Collection.reconcile([previous], [fresh], { keyOf: (row) => row.id })).toEqual([
               previous,
             ]);
           } else {
@@ -242,15 +224,15 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
           read(previous.$items.rows),
           read.row($rows, "a") === previous,
         ];
-        const preview = stageRead(stage, inspect);
-        expect(untracked(realm, inspect)).toEqual([0, [], true]);
-        applyStage(stage);
+        const preview = Stage.read(stage, inspect);
+        expect(Realm.untracked(realm, inspect)).toEqual([0, [], true]);
+        Stage.apply(stage);
         if (destination === "parent") {
-          expect(stageRead(parent, inspect)).toEqual([20, [2], true]);
-          expect(untracked(realm, inspect)).toEqual([0, [], true]);
-          applyStage(parent);
+          expect(Stage.read(parent, inspect)).toEqual([20, [2], true]);
+          expect(Realm.untracked(realm, inspect)).toEqual([0, [], true]);
+          Stage.apply(parent);
         }
-        expect(untracked(realm, inspect)).toEqual([20, [2], true]);
+        expect(Realm.untracked(realm, inspect)).toEqual([20, [2], true]);
         expect(preview).toEqual([20, [2], true]);
       });
     }
@@ -260,31 +242,31 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
         using realm = testRealm();
         const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
         const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
-        const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
-        update(realm, (_read, write) => write.upsert($rows, previous));
-        const stage = openStage(realm, { conflicts: "fail" });
-        using _stage = held(() => dropStage(stage));
+        const $rows = Collection.schema(realm, MergeRow, { keyOf: (row) => row.id });
+        Realm.update(realm, (_read, write) => write.upsert($rows, previous));
+        const stage = Stage.make(realm, { conflicts: "fail" });
+        using _stage = held(() => Stage.drop(stage));
         if (field === "copied collection") {
-          stageUpdate(stage, (_read, write) => write.upsert(fresh.$items, 2));
+          Stage.update(stage, (_read, write) => write.upsert(fresh.$items, 2));
         }
-        stageUpdate(stage, (_read, write) => {
+        Stage.update(stage, (_read, write) => {
           if (entry === "reconcileSchema") {
-            reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+            Collection.reconcile([previous], [fresh], { keyOf: (row) => row.id });
           } else {
             write.upsert($rows, fresh);
           }
         });
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           if (field === "box") {
             write(fresh.$price, 99);
           } else {
             write.replaceAll(fresh.$items, [99]);
           }
         });
-        expect(() => applyStage(stage)).toThrow(StageConflictError);
-        expect(stageStatus(stage)).toBe("dropped");
+        expect(() => Stage.apply(stage)).toThrow(StageConflictError);
+        expect(Stage.status(stage)).toBe("dropped");
         expect(
-          untracked(realm, (read) => [read(previous.$price), read(previous.$items.rows)]),
+          Realm.untracked(realm, (read) => [read(previous.$price), read(previous.$items.rows)]),
         ).toEqual([0, []]);
       });
     }
@@ -293,19 +275,19 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
       using realm = testRealm();
       const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
       const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
-      const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
-      update(realm, (_read, write) => {
+      const $rows = Collection.schema(realm, MergeRow, { keyOf: (row) => row.id });
+      Realm.update(realm, (_read, write) => {
         write.upsert($rows, previous);
         write(fresh.$price, 20);
         write.replaceAll(fresh.$items, [3, 2]);
         if (entry === "reconcileSchema") {
-          reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+          Collection.reconcile([previous], [fresh], { keyOf: (row) => row.id });
         } else {
           write.upsert($rows, fresh);
         }
       });
       expect(
-        untracked(realm, (read) => [read(previous.$price), read(previous.$items.rows)]),
+        Realm.untracked(realm, (read) => [read(previous.$price), read(previous.$items.rows)]),
       ).toEqual([20, [3, 2]]);
     });
 
@@ -314,13 +296,13 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
         using realm = testRealm();
         const previous = MergeRow.make({ realm, id: "a", price: 0, items: [] });
         const fresh = MergeRow.make({ realm, id: "a", price: 10, items: [1] });
-        const $rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
-        const $nested = schemaCollection(realm, Schema.Number, { keyOf: (value) => value });
-        const $listener = box(realm, 0);
-        const $nestedListener = box(realm, 0);
-        const $earlier = box(realm, 0);
-        const $decision = box(realm, false);
-        const $total = computed(
+        const $rows = Collection.schema(realm, MergeRow, { keyOf: (row) => row.id });
+        const $nested = Collection.schema(realm, Schema.Number, { keyOf: (value) => value });
+        const $listener = Box.make(realm, 0);
+        const $nestedListener = Box.make(realm, 0);
+        const $earlier = Box.make(realm, 0);
+        const $decision = Box.make(realm, false);
+        const $total = Computed.make(
           realm,
           (read) =>
             read(previous.$price) +
@@ -333,16 +315,16 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
         const outerFailure = new Error("merge refused");
         const innerReads: Array<ReadonlyArray<unknown>> = [];
         const caught: Array<unknown> = [];
-        update(realm, (_read, write) => write.upsert($rows, previous));
+        Realm.update(realm, (_read, write) => write.upsert($rows, previous));
         using _nested = held(
-          onRowChange($nested, (_change, read, write) => {
+          Collection.onRowChange($nested, (_change, read, write) => {
             write($nestedListener, 99);
             read($total);
             throw innerFailure;
           }),
         );
         using _listener = held(
-          onRowChange(previous.$items, (_change, read, write) => {
+          Collection.onRowChange(previous.$items, (_change, read, write) => {
             write($listener, 1);
             if (nested) {
               try {
@@ -361,14 +343,14 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
             throw outerFailure;
           }),
         );
-        const stage = openStage(realm);
-        using _stage = held(() => dropStage(stage));
-        stageUpdate(stage, (read, write) => {
+        const stage = Stage.make(realm);
+        using _stage = held(() => Stage.drop(stage));
+        Stage.update(stage, (read, write) => {
           write($earlier, 7);
           write(previous.$price, 3);
           try {
             if (entry === "reconcileSchema") {
-              reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+              Collection.reconcile([previous], [fresh], { keyOf: (row) => row.id });
             } else {
               write.upsert($rows, fresh);
             }
@@ -386,11 +368,11 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
           read($earlier),
           read($total),
         ];
-        const preview = stageRead(stage, inspect);
-        const decision = stageRead(stage, (read) => read($decision));
-        stageUpdate(stage, (_read, write) => write($decision, decision));
-        expect(untracked(realm, inspect)).toEqual([0, [], 0, 0, [], 0, 0]);
-        applyStage(stage);
+        const preview = Stage.read(stage, inspect);
+        const decision = Stage.read(stage, (read) => read($decision));
+        Stage.update(stage, (_read, write) => write($decision, decision));
+        expect(Realm.untracked(realm, inspect)).toEqual([0, [], 0, 0, [], 0, 0]);
+        Stage.apply(stage);
         expect(caught).toEqual([outerFailure, outerFailure]);
         expect(innerReads).toEqual(
           nested
@@ -400,9 +382,9 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
               ]
             : [],
         );
-        expect(untracked(realm, inspect)).toEqual([3, [], 0, 0, [], 7, 3]);
+        expect(Realm.untracked(realm, inspect)).toEqual([3, [], 0, 0, [], 7, 3]);
         expect(preview).toEqual([3, [], 0, 0, [], 7, 3]);
-        expect(untracked(realm, (read) => read($decision))).toBe(false);
+        expect(Realm.untracked(realm, (read) => read($decision))).toBe(false);
         expect(decision).toBe(false);
       });
     }
@@ -412,15 +394,15 @@ for (const entry of ["reconcileSchema", "write.upsert"] as const) {
 describe("withStage", () => {
   test("interruption during landing leaves the stage applied and the exit interrupted", async () => {
     using realm = testRealm();
-    const value = box(realm, 0);
+    const value = Box.make(realm, 0);
     const started = Deferred.makeUnsafe<void>();
     const gate = Deferred.makeUnsafe<void>();
     let kept!: Stage;
     const fiber = Effect.runFork(
-      withStage(realm, (stage) =>
+      Stage.scoped(realm, (stage) =>
         Effect.gen(function* () {
           kept = stage;
-          stageUpdate(stage, (_read, write) => write(value, 1));
+          Stage.update(stage, (_read, write) => write(value, 1));
           Deferred.doneUnsafe(started, Exit.void);
           yield* Deferred.await(gate);
           return "landed";
@@ -429,7 +411,7 @@ describe("withStage", () => {
     );
     await Effect.runPromise(Deferred.await(started));
     using _watch = held(
-      watch(
+      Realm.watch(
         realm,
         (read) => read(value),
         () => {
@@ -440,68 +422,72 @@ describe("withStage", () => {
     await Effect.runPromise(Deferred.succeed(gate, undefined));
     const exit = await Effect.runPromise(Fiber.await(fiber));
     expect(Exit.hasInterrupts(exit)).toBe(true);
-    expect(stageStatus(kept)).toBe("applied");
-    expect(untracked(realm, (read) => read(value))).toBe(1);
+    expect(Stage.status(kept)).toBe("applied");
+    expect(Realm.untracked(realm, (read) => read(value))).toBe(1);
   });
 
-  test("child options exclude conflicts, and a child cannot fail with StageConflict, at the type boundary", () => {
+  test("child options exclude conflicts, and a child cannot fail with StageConflictError, at the type boundary", () => {
     using realm = testRealm();
-    const parent = openStage(realm);
-    using _parent = held(() => dropStage(parent));
-    const root: Effect.Effect<number, StageConflict> = withStage(realm, () => Effect.succeed(1), {
-      name: "root",
-      conflicts: "fail",
-    });
+    const parent = Stage.make(realm);
+    using _parent = held(() => Stage.drop(parent));
+    const root: Effect.Effect<number, StageConflictError> = Stage.scoped(
+      realm,
+      () => Effect.succeed(1),
+      {
+        name: "root",
+        conflicts: "fail",
+      },
+    );
     // A child never conflicts: its root checks what it read.
-    const child: Effect.Effect<number, never> = withStage(parent, () => Effect.succeed(2), {
+    const child: Effect.Effect<number, never> = Stage.scoped(parent, () => Effect.succeed(2), {
       name: "child",
     });
     // @ts-expect-error A child inherits the root's conflicts option.
-    withStage(parent, () => Effect.void, { conflicts: "fail" });
+    Stage.scoped(parent, () => Effect.void, { conflicts: "fail" });
     const options: StageOptions = { name: "child", conflicts: "fail" };
     // @ts-expect-error A named options variable cannot override the root either.
-    withStage(parent, () => Effect.void, options);
+    Stage.scoped(parent, () => Effect.void, options);
     expect(Effect.runSync(root)).toBe(1);
     expect(Effect.runSync(child)).toBe(2);
   });
 
   test("release preserves dropped status after an enclosing update rolls back", () => {
     using realm = testRealm();
-    const value = box(realm, 0);
+    const value = Box.make(realm, 0);
     let kept!: Stage;
     expect(() =>
-      update(realm, () => {
+      Realm.update(realm, () => {
         Effect.runSync(
-          withStage(realm, (stage) =>
+          Stage.scoped(realm, (stage) =>
             Effect.sync(() => {
               kept = stage;
-              stageUpdate(stage, (_read, write) => write(value, 1));
+              Stage.update(stage, (_read, write) => write(value, 1));
             }),
           ),
         );
         throw new Error("host rollback");
       }),
     ).toThrow("host rollback");
-    expect(untracked(realm, (read) => read(value))).toBe(0);
-    expect(stageStatus(kept)).toBe("dropped");
-    dropStage(kept);
-    expect(stageStatus(kept)).toBe("dropped");
+    expect(Realm.untracked(realm, (read) => read(value))).toBe(0);
+    expect(Stage.status(kept)).toBe("dropped");
+    Stage.drop(kept);
+    expect(Stage.status(kept)).toBe("dropped");
   });
 
   test("applies the stage when the section succeeds", async () => {
     using realm = testRealm();
-    const $status = box(realm, "idle");
-    const $total = box(realm, 0);
+    const $status = Box.make(realm, "idle");
+    const $total = Box.make(realm, 0);
     const seen: Array<ReadonlyArray<unknown>> = [];
     const result = await Effect.runPromise(
-      withStage(realm, (stage) =>
+      Stage.scoped(realm, (stage) =>
         Effect.gen(function* () {
-          stageUpdate(stage, (_read, write) => {
+          Stage.update(stage, (_read, write) => {
             write($status, "saving");
           });
           yield* Effect.sleep("1 millis");
-          seen.push(untracked(realm, (read) => [read($status), read($total)]));
-          stageUpdate(stage, (read, write) => {
+          seen.push(Realm.untracked(realm, (read) => [read($status), read($total)]));
+          Stage.update(stage, (read, write) => {
             write($total, read($total) + 10);
             write($status, "saved");
           });
@@ -511,35 +497,35 @@ describe("withStage", () => {
     );
     expect(result).toBe("done");
     expect(seen).toEqual([["idle", 0]]);
-    expect(untracked(realm, (read) => [read($status), read($total)])).toEqual(["saved", 10]);
+    expect(Realm.untracked(realm, (read) => [read($status), read($total)])).toEqual(["saved", 10]);
   });
 
   test("drops the stage when the section fails, and the failure stands", async () => {
     using realm = testRealm();
-    const $total = box(realm, 0);
+    const $total = Box.make(realm, 0);
     let held: Stage | undefined;
     const exit = await Effect.runPromiseExit(
-      withStage(realm, (stage) => {
+      Stage.scoped(realm, (stage) => {
         held = stage;
-        stageUpdate(stage, (read, write) => {
+        Stage.update(stage, (read, write) => {
           write($total, read($total) + 5);
         });
         return Effect.fail("request failed" as const);
       }),
     );
     expect(exit).toEqual(Exit.fail("request failed"));
-    expect(stageStatus(held as Stage)).toBe("dropped");
-    expect(untracked(realm, (read) => read($total))).toBe(0);
+    expect(Stage.status(held as Stage)).toBe("dropped");
+    expect(Realm.untracked(realm, (read) => read($total))).toBe(0);
   });
 
   test("drops the stage when the section is interrupted", async () => {
     using realm = testRealm();
-    const $total = box(realm, 0);
+    const $total = Box.make(realm, 0);
     const started = Deferred.makeUnsafe<void>();
     const fiber = Effect.runFork(
-      withStage(realm, (stage) =>
+      Stage.scoped(realm, (stage) =>
         Effect.gen(function* () {
-          stageUpdate(stage, (read, write) => {
+          Stage.update(stage, (read, write) => {
             write($total, read($total) + 7);
           });
           Deferred.doneUnsafe(started, Exit.void);
@@ -549,25 +535,25 @@ describe("withStage", () => {
     );
     await Effect.runPromise(Deferred.await(started));
     await Effect.runPromise(Fiber.interrupt(fiber));
-    expect(untracked(realm, (read) => read($total))).toBe(0);
+    expect(Realm.untracked(realm, (read) => read($total))).toBe(0);
   });
 
   test("a cancel seen through changes, with no RealmService, drops the stage", async () => {
     using realm = testRealm();
-    const $total = box(realm, 0);
-    const $cancelled = box(realm, false);
+    const $total = Box.make(realm, 0);
+    const $cancelled = Box.make(realm, false);
     const started = Deferred.makeUnsafe<void>();
     const fiber = Effect.runFork(
-      withStage(realm, (stage) =>
+      Stage.scoped(realm, (stage) =>
         Effect.raceFirst(
           Effect.gen(function* () {
-            stageUpdate(stage, (read, write) => {
+            Stage.update(stage, (read, write) => {
               write($total, read($total) + 10);
             });
             Deferred.doneUnsafe(started, Exit.void);
             return yield* Effect.never;
           }),
-          changes($cancelled).pipe(
+          Program.changes($cancelled).pipe(
             Stream.filter(Boolean),
             Stream.runHead,
             Effect.andThen(Effect.fail("cancelled" as const)),
@@ -576,29 +562,29 @@ describe("withStage", () => {
       ),
     );
     await Effect.runPromise(Deferred.await(started));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($cancelled, true);
     });
     expect(await Effect.runPromise(Fiber.await(fiber))).toEqual(Exit.fail("cancelled"));
-    expect(untracked(realm, (read) => read($total))).toBe(0);
+    expect(Realm.untracked(realm, (read) => read($total))).toBe(0);
   });
 
-  test("a conflict fails with StageConflict, which retry reruns over the new values", async () => {
+  test("a conflict fails with pinna's StageConflictError, which retry reruns over the new values", async () => {
     using realm = testRealm();
-    const $price = box(realm, 10, { name: "price" });
-    const $total = box(realm, 0);
+    const $price = Box.make(realm, 10, { name: "price" });
+    const $total = Box.make(realm, 0);
     let attempts = 0;
-    const section = withStage(
+    const section = Stage.scoped(
       realm,
       (stage) =>
         Effect.sync(() => {
           attempts++;
-          stageUpdate(stage, (read, write) => {
+          Stage.update(stage, (read, write) => {
             write($total, read($price) * 2);
           });
           if (attempts === 1) {
             // Another writer moves the price before the first attempt lands.
-            update(realm, (_read, write) => {
+            Realm.update(realm, (_read, write) => {
               write($price, 11);
             });
           }
@@ -608,78 +594,83 @@ describe("withStage", () => {
     const first = await Effect.runPromiseExit(section);
     expect(Exit.isFailure(first)).toBe(true);
     const failure = Exit.isFailure(first) ? Cause.findErrorOption(first.cause) : undefined;
-    expect(failure?._tag === "Some" ? failure.value : undefined).toEqual(
-      new StageConflict({ stage: "checkout", changed: ["price"], observables: [$price] }),
-    );
+    const conflict = failure?._tag === "Some" ? failure.value : undefined;
+    expect(conflict).toBeInstanceOf(StageConflictError);
+    expect(conflict).toMatchObject({
+      _tag: "StageConflictError",
+      stage: "checkout",
+      changed: ["price"],
+      observables: [$price],
+    });
     await Effect.runPromise(section.pipe(Effect.retry({ times: 1 })));
     expect(attempts).toBe(2);
-    expect(untracked(realm, (read) => read($total))).toBe(22);
+    expect(Realm.untracked(realm, (read) => read($total))).toBe(22);
     const caught = await Effect.runPromise(
-      withStage(realm, () =>
-        Effect.fail(new StageConflict({ stage: undefined, changed: [], observables: [] })),
-      ).pipe(Effect.catchTag("StageConflict", () => Effect.succeed("caught"))),
+      Stage.scoped(realm, () => Effect.fail(new StageConflictError(undefined, [], []))).pipe(
+        Effect.catchTag("StageConflictError", () => Effect.succeed("caught")),
+      ),
     );
     expect(caught).toBe("caught");
   });
 
   test("over a stage, a section that fails and is caught leaves the parent as it was", async () => {
     using realm = testRealm();
-    const $a = box(realm, 0);
-    const $b = box(realm, 0);
+    const $a = Box.make(realm, 0);
+    const $b = Box.make(realm, 0);
     let attempts = 0;
     await Effect.runPromise(
-      withStage(realm, (parent) =>
+      Stage.scoped(realm, (parent) =>
         Effect.gen(function* () {
-          stageUpdate(parent, (_read, write) => {
+          Stage.update(parent, (_read, write) => {
             write($a, 1);
           });
           // Each attempt opens a fresh child: the failed one's write never reaches the parent.
-          yield* withStage(parent, (child) =>
+          yield* Stage.scoped(parent, (child) =>
             Effect.suspend(() => {
               attempts++;
-              stageUpdate(child, (_read, write) => {
+              Stage.update(child, (_read, write) => {
                 write($b, attempts * 100);
               });
               return attempts === 1 ? Effect.fail("flaky" as const) : Effect.void;
             }),
           ).pipe(Effect.retry({ times: 1 }));
-          const failed = yield* withStage(parent, (child) => {
-            stageUpdate(child, (_read, write) => {
+          const failed = yield* Stage.scoped(parent, (child) => {
+            Stage.update(child, (_read, write) => {
               write($a, 99);
             });
             return Effect.fail("refused" as const);
           }).pipe(Effect.catch(() => Effect.succeed("caught")));
           expect(failed).toBe("caught");
-          expect(stageRead(parent, (read) => [read($a), read($b)])).toEqual([1, 200]);
+          expect(Stage.read(parent, (read) => [read($a), read($b)])).toEqual([1, 200]);
         }),
       ),
     );
-    expect(untracked(realm, (read) => [read($a), read($b)])).toEqual([1, 200]);
+    expect(Realm.untracked(realm, (read) => [read($a), read($b)])).toEqual([1, 200]);
   });
 
   test("a recipe that throws on replay is a defect, and the stage ends dropped", async () => {
     using realm = testRealm();
-    const $a = box(realm, 1);
+    const $a = Box.make(realm, 1);
     let held: Stage | undefined;
     const exit = await Effect.runPromiseExit(
-      withStage(realm, (stage) =>
+      Stage.scoped(realm, (stage) =>
         Effect.sync(() => {
           held = stage;
-          stageUpdate(stage, (read, write) => {
+          Stage.update(stage, (read, write) => {
             if (read($a) > 1) {
               throw new Error("moved");
             }
             write($a, 0);
           });
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($a, 2);
           });
         }),
       ),
     );
     expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-    expect(stageStatus(held as Stage)).toBe("dropped");
-    expect(untracked(realm, (read) => read($a))).toBe(2);
+    expect(Stage.status(held as Stage)).toBe("dropped");
+    expect(Realm.untracked(realm, (read) => read($a))).toBe(2);
   });
 });
 
@@ -690,11 +681,11 @@ describe("root replay schema differential", () => {
         using realm = testRealm();
         const previous = MergeRow.make({ realm, id: "a", price: 1, items: [1] });
         const fresh = MergeRow.make({ realm, id: "a", price: 8, items: [2, 3] });
-        const rows = schemaCollection(realm, MergeRow, { keyOf: (row) => row.id });
-        update(realm, (_read, write) => write.upsert(rows, previous));
+        const rows = Collection.schema(realm, MergeRow, { keyOf: (row) => row.id });
+        Realm.update(realm, (_read, write) => write.upsert(rows, previous));
         const log: unknown[] = [];
         using _listener = held(
-          onRowChange(previous.$items, (change) => {
+          Collection.onRowChange(previous.$items, (change) => {
             log.push(change);
           }),
         );
@@ -706,35 +697,40 @@ describe("root replay schema differential", () => {
         ];
         const seen: unknown[] = [];
         using _watcher = held(
-          watch(realm, snapshot, (value) => {
+          Realm.watch(realm, snapshot, (value) => {
             seen.push(value);
           }),
         );
-        const conflict = openStage(realm, { conflicts: "fail" });
-        stageRead(conflict, snapshot);
-        const recipes: ReadonlyArray<Recipe> = [
+        const conflict = Stage.make(realm, { conflicts: "fail" });
+        Stage.read(conflict, snapshot);
+        const recipes: ReadonlyArray<UpdateRecipe> = [
           (_read, write) => write(fresh.$price, 12),
           (_read, write) => {
             if (entry === "upsert") write.upsert(rows, fresh);
             else if (entry === "replaceAll") write.replaceAll(rows, [fresh]);
-            else reconcileSchema([previous], [fresh], { keyOf: (row) => row.id });
+            else Collection.reconcile([previous], [fresh], { keyOf: (row) => row.id });
           },
         ];
         log.length = 0;
         if (staged) {
-          const stage = openStage(realm);
-          for (const recipe of recipes) stageUpdate(stage, recipe);
+          const stage = Stage.make(realm);
+          for (const recipe of recipes) Stage.update(stage, recipe);
           const stagedLog = [...log];
           log.length = 0;
-          applyStage(stage);
+          Stage.apply(stage);
           expect(log).toEqual(stagedLog);
         } else {
-          update(realm, () => {
-            for (const recipe of recipes) update(realm, recipe);
+          Realm.update(realm, () => {
+            for (const recipe of recipes) Realm.update(realm, recipe);
           });
         }
-        expect(() => applyStage(conflict)).toThrow(StageConflictError);
-        return { state: untracked(realm, snapshot), log, seen, status: stageStatus(conflict) };
+        expect(() => Stage.apply(conflict)).toThrow(StageConflictError);
+        return {
+          state: Realm.untracked(realm, snapshot),
+          log,
+          seen,
+          status: Stage.status(conflict),
+        };
       };
       expect(run(true)).toEqual(run(false));
     });
@@ -742,12 +738,12 @@ describe("root replay schema differential", () => {
 
   test("replay schema rejection matches update and preserves the caller's own write", () => {
     using realm = testRealm();
-    const value = schemaBox(realm, NonNegative, 5);
-    const own = box(realm, 0);
-    const recipe: Recipe = (read, write) => write(value, read(value) - 3);
-    const stage = openStage(realm);
-    stageUpdate(stage, recipe);
-    update(realm, (_read, write) => write(value, 1));
+    const value = Box.schema(realm, NonNegative, 5);
+    const own = Box.make(realm, 0);
+    const recipe: UpdateRecipe = (read, write) => write(value, read(value) - 3);
+    const stage = Stage.make(realm);
+    Stage.update(stage, recipe);
+    Realm.update(realm, (_read, write) => write(value, 1));
     const failure = (run: () => void) => {
       try {
         run();
@@ -756,14 +752,14 @@ describe("root replay schema differential", () => {
       }
       return undefined;
     };
-    const expected = failure(() => update(realm, recipe));
-    update(realm, (_read, write) => {
+    const expected = failure(() => Realm.update(realm, recipe));
+    Realm.update(realm, (_read, write) => {
       write(own, 7);
-      expect(failure(() => applyStage(stage))).toBe(expected);
+      expect(failure(() => Stage.apply(stage))).toBe(expected);
     });
     expect(expected).toContain("the box rejects this value");
-    expect(untracked(realm, (read) => [read(value), read(own)])).toEqual([1, 7]);
-    expect(stageStatus(stage)).toBe("dropped");
+    expect(Realm.untracked(realm, (read) => [read(value), read(own)])).toEqual([1, 7]);
+    expect(Stage.status(stage)).toBe("dropped");
   });
 
   test("a replay-only schema check cannot start an update", () => {
@@ -773,20 +769,20 @@ describe("root replay schema differential", () => {
     const schema = Schema.Number.check(
       Schema.makeFilter(() => {
         if (replay)
-          update(realm, () => {
+          Realm.update(realm, () => {
             callbacks++;
           });
         return true;
       }),
     );
-    const value = schemaBox(realm, schema, 0);
-    const stage = openStage(realm);
-    stageUpdate(stage, (_read, write) => write(value, 1));
+    const value = Box.schema(realm, schema, 0);
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => write(value, 1));
     replay = true;
-    expect(() => applyStage(stage)).toThrow();
+    expect(() => Stage.apply(stage)).toThrow();
     expect(callbacks).toBe(0);
-    expect(stageStatus(stage)).toBe("dropped");
-    expect(untracked(realm, (read) => read(value))).toBe(0);
+    expect(Stage.status(stage)).toBe("dropped");
+    expect(Realm.untracked(realm, (read) => read(value))).toBe(0);
   });
 });
 
@@ -795,16 +791,16 @@ test("withStage releases a stage and its child after an apply precondition defec
   let parent: Stage | undefined;
   let child: Stage | undefined;
   const exit = await Effect.runPromiseExit(
-    withStage(realm, (stage) =>
+    Stage.scoped(realm, (stage) =>
       Effect.sync(() => {
         parent = stage;
-        child = openStage(stage);
+        child = Stage.make(stage);
       }),
     ),
   );
   expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-  expect(stageStatus(parent as Stage)).toBe("dropped");
-  expect(stageStatus(child as Stage)).toBe("dropped");
+  expect(Stage.status(parent as Stage)).toBe("dropped");
+  expect(Stage.status(child as Stage)).toBe("dropped");
 });
 
 test("schema checks run for staged writes and replay, without an extra check on landing", () => {
@@ -816,14 +812,14 @@ test("schema checks run for staged writes and replay, without an extra check on 
       return true;
     }),
   );
-  const value = schemaBox(realm, schema, 0);
-  const stage = openStage(realm);
-  stageUpdate(stage, (_read, write) => {
+  const value = Box.schema(realm, schema, 0);
+  const stage = Stage.make(realm);
+  Stage.update(stage, (_read, write) => {
     write(value, 1);
     write(value, 2);
   });
   expect(checks).toBe(3);
-  applyStage(stage);
+  Stage.apply(stage);
   expect(checks).toBe(5);
-  expect(untracked(realm, (read) => read(value))).toBe(2);
+  expect(Realm.untracked(realm, (read) => read(value))).toBe(2);
 });

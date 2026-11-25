@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { type Read, untracked, update, watch } from "@frondruntime/pinna";
+import { type Read, Realm } from "@frondruntime/pinna";
 import { held, record, testRealm } from "@frondruntime/pinna/testing";
 import { RealmService } from "@frondruntime/pinna-effect";
 import { Effect, Exit, Schema } from "effect";
@@ -72,10 +72,10 @@ test("corrupted saves start with defaults and report the root JSON failure", asy
   await Effect.gen(function* () {
     const store = new MemoryStore("{not JSON");
     const workspace = yield* makeDesk(feed([], true).transport, store);
-    expect(untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(
       defaultWorkspace(symbols),
     );
-    expect(untracked(realm, (read) => read(workspace.layouts.$dropped))).toEqual([
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$dropped))).toEqual([
       { path: "$", reason: "invalid JSON; used default workspace" },
     ]);
     yield* settleStorage();
@@ -97,7 +97,7 @@ test("version 1 migrates slash pair names in order, with defaults and precise dr
     await Effect.gen(function* () {
       const store = new MemoryStore(JSON.stringify(legacy));
       const workspace = yield* makeDesk(feed([], true).transport, store);
-      expect(untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual({
+      expect(Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual({
         ...defaultWorkspace(symbols),
         tiles: [
           { symbol: "GBPUSD", notional: "1000000" },
@@ -105,7 +105,7 @@ test("version 1 migrates slash pair names in order, with defaults and precise dr
         ],
       });
       const prefix = Array.isArray(legacy) ? "$" : "$.openTiles";
-      expect(untracked(realm, (read) => read(workspace.layouts.$dropped))).toEqual([
+      expect(Realm.untracked(realm, (read) => read(workspace.layouts.$dropped))).toEqual([
         { path: `${prefix}[2]`, reason: "pair is not listed; dropped tile" },
         { path: `${prefix}[3]`, reason: "duplicate pair; dropped tile" },
       ]);
@@ -173,7 +173,7 @@ test("untrusted workspace and layout rows retain every valid neighbor and report
           : memory.transport.request(path, body),
     };
     const workspace = yield* makeDesk(transport, new MemoryStore(JSON.stringify(input)));
-    const recovered = untracked(realm, (read) => read(workspace.layouts.$snapshot));
+    const recovered = Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot));
     expect(recovered).toEqual({
       tiles: [
         { symbol: "GBPUSD", notional: "2.50" },
@@ -186,7 +186,7 @@ test("untrusted workspace and layout rows retain every valid neighbor and report
         scrollTop: 720,
       },
     });
-    const dropped = untracked(realm, (read) => read(workspace.layouts.$dropped));
+    const dropped = Realm.untracked(realm, (read) => read(workspace.layouts.$dropped));
     expect(dropped).toEqual([
       { path: "$.workspace.tiles[1].symbol", reason: "pair is not listed; dropped tile" },
       {
@@ -224,7 +224,7 @@ test("untrusted workspace and layout rows retain every valid neighbor and report
       { path: "$.activeLayoutId", reason: "layout does not exist; cleared active layout" },
     ]);
     expect(Schema.is(WorkspaceData)(recovered)).toBe(true);
-    const layouts = untracked(realm, (read) => read(workspace.layouts.$layouts.rows));
+    const layouts = Realm.untracked(realm, (read) => read(workspace.layouts.$layouts.rows));
     expect(layouts.map((layout) => layout.name)).toEqual(["Morning", "Evening"]);
     expect(layouts.every(Schema.is(LayoutData))).toBe(true);
     expect(layouts[1]?.workspace.blotter).toEqual({
@@ -232,7 +232,7 @@ test("untrusted workspace and layout rows retain every valid neighbor and report
       filter: "",
       scrollTop: 0,
     });
-    expect(untracked(realm, (read) => read(workspace.layouts.$activeId))).toBeNull();
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$activeId))).toBeNull();
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,
@@ -264,7 +264,7 @@ test("restore finishes before watching, one interaction saves once, rollback and
     const memory = feed([], true);
     const workspace = yield* makeDesk(memory.transport, store);
     expect(store.loads).toBe(1);
-    expect(untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(initial);
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(initial);
     yield* settleStorage();
     expect(store.saves).toEqual([]);
     workspace.tile("EURUSD").setNotional("30");
@@ -277,13 +277,13 @@ test("restore finishes before watching, one interaction saves once, rollback and
     expect(store.saves).toHaveLength(1);
     const persisted = JSON.parse(store.saves[0] ?? "null");
     expect(persisted.workspace).toEqual(
-      untracked(realm, (read) => read(workspace.layouts.$snapshot)),
+      Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot)),
     );
     expect(persisted.layouts).toEqual([{ id: "held", name: "Held", workspace: initial }]);
     expect(persisted.activeLayoutId).toBe("held");
     expect(Object.keys(persisted.workspace)).toEqual(["tiles", "positionsShown", "blotter"]);
     expect(() =>
-      update(realm, () => {
+      Realm.update(realm, () => {
         workspace.tile("EURUSD").setNotional("40");
         workspace.closeTile("EURUSD");
         throw new Error("refused workspace");
@@ -292,7 +292,7 @@ test("restore finishes before watching, one interaction saves once, rollback and
     yield* settleStorage();
     expect(store.saves).toHaveLength(1);
     using _live = held(
-      watch(
+      Realm.watch(
         realm,
         (read) => read(workspace.$view),
         () => {},
@@ -307,11 +307,13 @@ test("restore finishes before watching, one interaction saves once, rollback and
     yield* settleStorage();
     expect(store.saves).toHaveLength(1);
     const restored = yield* makeDesk(feed([], true).transport, new MemoryStore(store.value));
-    expect(untracked(realm, (read) => read(restored.layouts.$snapshot))).toEqual(
+    expect(Realm.untracked(realm, (read) => read(restored.layouts.$snapshot))).toEqual(
       persisted.workspace,
     );
-    expect(untracked(realm, (read) => read(restored.trades.$selection))).toEqual([]);
-    expect(untracked(realm, (read) => read(restored.tile("EURUSD").$prices).current)).toBeNull();
+    expect(Realm.untracked(realm, (read) => read(restored.trades.$selection))).toEqual([]);
+    expect(
+      Realm.untracked(realm, (read) => read(restored.tile("EURUSD").$prices).current),
+    ).toBeNull();
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,
@@ -331,28 +333,30 @@ test("named layouts save, switch, rename and delete with unique names and persis
     expect(() => layouts.save("  ")).toThrow("Enter a layout name");
     workspace.closeTile("GBPUSD");
     workspace.tile("EURUSD").setNotional("12");
-    expect(untracked(realm, (read) => read(layouts.$modified))).toBe(true);
+    expect(Realm.untracked(realm, (read) => read(layouts.$modified))).toBe(true);
     const evening = layouts.save("Evening");
-    expect(untracked(realm, (read) => read(layouts.$modified))).toBe(false);
+    expect(Realm.untracked(realm, (read) => read(layouts.$modified))).toBe(false);
     layouts.switchTo(morning);
-    expect(untracked(realm, (read) => read(layouts.$snapshot))).toEqual(defaultWorkspace(symbols));
+    expect(Realm.untracked(realm, (read) => read(layouts.$snapshot))).toEqual(
+      defaultWorkspace(symbols),
+    );
     layouts.rename(morning, "London");
     expect(() => layouts.rename(morning, "Evening")).toThrow("already exists");
     expect(
-      untracked(realm, (read) => read(layouts.$layouts.rows).map((layout) => layout.name)),
+      Realm.untracked(realm, (read) => read(layouts.$layouts.rows).map((layout) => layout.name)),
     ).toEqual(["London", "Evening"]);
     layouts.delete(evening);
-    expect(untracked(realm, (read) => read(layouts.$activeId))).toBe(morning);
+    expect(Realm.untracked(realm, (read) => read(layouts.$activeId))).toBe(morning);
     workspace.tile("EURUSD").setNotional("50");
     yield* settleStorage();
     expect(store.saves).toHaveLength(1);
     const restored = yield* makeDesk(feed([], true).transport, new MemoryStore(store.value));
-    expect(untracked(realm, (read) => read(restored.layouts.$activeId))).toBe(morning);
-    expect(untracked(realm, (read) => read(restored.layouts.$modified))).toBe(true);
+    expect(Realm.untracked(realm, (read) => read(restored.layouts.$activeId))).toBe(morning);
+    expect(Realm.untracked(realm, (read) => read(restored.layouts.$modified))).toBe(true);
     restored.layouts.delete(morning);
-    expect(untracked(realm, (read) => read(restored.layouts.$activeId))).toBeNull();
-    expect(untracked(realm, (read) => read(restored.layouts.$layouts.keys))).toEqual([]);
-    expect(untracked(realm, (read) => read(restored.tile("EURUSD").$notional))).toBe("50");
+    expect(Realm.untracked(realm, (read) => read(restored.layouts.$activeId))).toBeNull();
+    expect(Realm.untracked(realm, (read) => read(restored.layouts.$layouts.keys))).toEqual([]);
+    expect(Realm.untracked(realm, (read) => read(restored.tile("EURUSD").$notional))).toBe("50");
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,
@@ -390,21 +394,21 @@ test("switches preserve shared quotes and subscriptions and every synchronous re
     memory.send("prices/EURUSD", quote);
     memory.send("prices/GBPUSD", { ...quote, symbol: "GBPUSD", bid: "1.27000", ask: "1.27010" });
     yield* TestClock.adjust(0);
-    const old = untracked(realm, select);
+    const old = Realm.untracked(realm, select);
     const shared = workspace.tile("EURUSD");
-    const price = untracked(realm, (read) => read(shared.$prices));
+    const price = Realm.untracked(realm, (read) => read(shared.$prices));
     const receipts: ReturnType<typeof select>[] = [];
     const capture = (): undefined => {
-      receipts.push(untracked(realm, select));
+      receipts.push(Realm.untracked(realm, select));
     };
     const stops = [
-      watch(realm, (read) => read(workspace.$openSymbols), capture),
-      watch(realm, (read) => read(shared.$notional), capture),
-      watch(realm, (read) => read(workspace.trades.$sort), capture),
-      watch(realm, (read) => read(workspace.trades.$filter), capture),
-      watch(realm, (read) => read(workspace.trades.$scrollTop), capture),
-      watch(realm, (read) => read(layouts.$activeId), capture),
-      watch(realm, (read) => read(workspace.$view), capture),
+      Realm.watch(realm, (read) => read(workspace.$openSymbols), capture),
+      Realm.watch(realm, (read) => read(shared.$notional), capture),
+      Realm.watch(realm, (read) => read(workspace.trades.$sort), capture),
+      Realm.watch(realm, (read) => read(workspace.trades.$filter), capture),
+      Realm.watch(realm, (read) => read(workspace.trades.$scrollTop), capture),
+      Realm.watch(realm, (read) => read(layouts.$activeId), capture),
+      Realm.watch(realm, (read) => read(workspace.$view), capture),
     ];
     using _receipts = held(() => {
       for (const stop of stops) stop();
@@ -412,12 +416,12 @@ test("switches preserve shared quotes and subscriptions and every synchronous re
     const countBefore = states.values.length;
     const logBefore = memory.log.length;
     layouts.switchTo(second);
-    const next = untracked(realm, select);
+    const next = Realm.untracked(realm, select);
     expect(receipts.length).toBeGreaterThanOrEqual(6);
     expect(states.values.slice(countBefore)).toEqual([next]);
     for (const receipt of receipts) expect([old, next]).toContainEqual(receipt);
     expect(workspace.tile("EURUSD")).toBe(shared);
-    expect(untracked(realm, (read) => read(shared.$prices))).toBe(price);
+    expect(Realm.untracked(realm, (read) => read(shared.$prices))).toBe(price);
     yield* TestClock.adjust(0);
     const traffic = memory.log
       .slice(logBefore)
@@ -428,11 +432,15 @@ test("switches preserve shared quotes and subscriptions and every synchronous re
     layouts.switchTo(second);
     yield* TestClock.adjust(0);
     expect(states.values).toHaveLength(count);
-    expect(untracked(realm, (read) => read(workspace.tile("GBPUSD").$prices).current)).toBeNull();
+    expect(
+      Realm.untracked(realm, (read) => read(workspace.tile("GBPUSD").$prices).current),
+    ).toBeNull();
     layouts.switchTo(first);
     yield* TestClock.adjust(0);
-    expect(untracked(realm, (read) => read(shared.$prices))).toBe(price);
-    expect(untracked(realm, (read) => read(workspace.tile("GBPUSD").$prices).current)).toBeNull();
+    expect(Realm.untracked(realm, (read) => read(shared.$prices))).toBe(price);
+    expect(
+      Realm.untracked(realm, (read) => read(workspace.tile("GBPUSD").$prices).current),
+    ).toBeNull();
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,
@@ -473,25 +481,27 @@ test("a layout closing an execution in flight withdraws it and prevents late cli
     using view = mount(<WorkspaceView workspace={workspace} />);
     yield* actEffect(TestClock.adjust(10));
     const tile = workspace.tile("EURUSD");
-    act(() => tile.startExecution("buy", untracked(realm, (read) => read(tile.$display)).ask));
-    expect(untracked(realm, (read) => read(tile.$execution))).toBe("pending");
+    act(() =>
+      tile.startExecution("buy", Realm.untracked(realm, (read) => read(tile.$display)).ask),
+    );
+    expect(Realm.untracked(realm, (read) => read(tile.$execution))).toBe("pending");
     using executions = record(realm, (read) => read(tile.$execution));
     using trades = record(realm, (read) => read(workspace.trades.$trades.rows));
     expect(() =>
-      update(realm, () => {
+      Realm.update(realm, () => {
         workspace.layouts.switchTo(closed);
         throw new Error("refused layout");
       }),
     ).toThrow("refused layout");
-    expect(untracked(realm, (read) => read(tile.$execution))).toBe("pending");
-    expect(untracked(realm, (read) => read(workspace.trades.$trades.rows))).toHaveLength(1);
-    expect(untracked(realm, (read) => read(workspace.$openSymbols))).toContain("EURUSD");
+    expect(Realm.untracked(realm, (read) => read(tile.$execution))).toBe("pending");
+    expect(Realm.untracked(realm, (read) => read(workspace.trades.$trades.rows))).toHaveLength(1);
+    expect(Realm.untracked(realm, (read) => read(workspace.$openSymbols))).toContain("EURUSD");
     expect(interrupted).toBe(false);
     expect(executions.values).toEqual([]);
     expect(trades.values).toEqual([]);
     act(() => workspace.layouts.switchTo(closed));
-    expect(untracked(realm, (read) => read(tile.$execution))).toBe("idle");
-    expect(untracked(realm, (read) => read(workspace.trades.$trades.rows))).toEqual([]);
+    expect(Realm.untracked(realm, (read) => read(tile.$execution))).toBe("idle");
+    expect(Realm.untracked(realm, (read) => read(workspace.trades.$trades.rows))).toEqual([]);
     yield* actEffect(TestClock.adjust(0));
     expect(interrupted).toBe(true);
     expect(
@@ -596,7 +606,7 @@ test("invalid pasted text previews paths before confirmation; cancel is inert an
     const workspace = yield* makeDesk(feed([], true).transport, store);
     const id = workspace.layouts.save("Original");
     yield* settleStorage();
-    const original = untracked(realm, (read) => read(workspace.layouts.$snapshot));
+    const original = Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot));
     const text = JSON.stringify({
       version: 2,
       workspace: {
@@ -616,9 +626,9 @@ test("invalid pasted text previews paths before confirmation; cancel is inert an
     });
     using view = mount(<LayoutsPanel layouts={workspace.layouts} />);
     act(() => workspace.layouts.preview(text));
-    expect(untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(original);
-    expect(untracked(realm, (read) => read(workspace.layouts.$activeId))).toBe(id);
-    const preview = untracked(realm, (read) => read(workspace.layouts.$preview));
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(original);
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$activeId))).toBe(id);
+    const preview = Realm.untracked(realm, (read) => read(workspace.layouts.$preview));
     if (!preview) throw new Error("missing preview");
     expect(preview?.dropped.map((part) => part.path)).toEqual([
       "$.workspace.tiles[0].notional",
@@ -635,8 +645,8 @@ test("invalid pasted text previews paths before confirmation; cancel is inert an
     act(() => cancel.click());
     yield* settleStorage();
     expect(store.saves).toHaveLength(1);
-    expect(untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(original);
-    expect(untracked(realm, (read) => read(workspace.layouts.$preview))).toBeNull();
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(original);
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$preview))).toBeNull();
     act(() => workspace.layouts.preview(text));
     const confirm = [...view.container.querySelectorAll("button")].find(
       (button) => button.textContent === "Confirm layout",
@@ -644,20 +654,22 @@ test("invalid pasted text previews paths before confirmation; cancel is inert an
     if (!confirm) throw new Error("missing Confirm");
     using receipts = record(realm, (read) => read(workspace.layouts.$snapshot));
     act(() => confirm.click());
-    expect(untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$snapshot))).toEqual(
       preview.workspace,
     );
     expect(receipts.values).toHaveLength(1);
-    expect(untracked(realm, (read) => read(workspace.layouts.$activeId))).toBeNull();
-    expect(untracked(realm, (read) => read(workspace.layouts.$dropped))).toEqual(preview.dropped);
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$activeId))).toBeNull();
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$dropped))).toEqual(
+      preview.dropped,
+    );
     yield* settleStorage();
     expect(store.saves).toHaveLength(2);
     const exported = workspace.layouts.copy(id);
     act(() => workspace.layouts.preview(exported));
-    expect(untracked(realm, (read) => read(workspace.layouts.$preview)?.workspace)).toEqual(
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$preview)?.workspace)).toEqual(
       original,
     );
-    expect(untracked(realm, (read) => read(workspace.layouts.$preview)?.dropped)).toEqual([]);
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$preview)?.dropped)).toEqual([]);
     act(() => workspace.layouts.cancelPreview());
   }).pipe(
     Effect.provideService(RealmService, realm),
@@ -680,13 +692,13 @@ test("storage failures are visible and disposal flushes a pending interaction ex
         throw new Error("quota exceeded");
       },
     });
-    expect(untracked(realm, (read) => read(workspace.layouts.$storageError))).toContain(
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$storageError))).toContain(
       "storage denied",
     );
     workspace.tile("EURUSD").setNotional("20");
     workspace.layouts.flush();
     expect(writes).toBe(1);
-    expect(untracked(realm, (read) => read(workspace.layouts.$storageError))).toContain(
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$storageError))).toContain(
       "quota exceeded",
     );
     workspace.tile("EURUSD").setNotional("30");
@@ -760,7 +772,7 @@ test("the layouts UI saves, renames, copies text and deletes a layout", async ()
       name.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => saveForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    const keys = untracked(realm, (read) => read(workspace.layouts.$layouts.keys));
+    const keys = Realm.untracked(realm, (read) => read(workspace.layouts.$layouts.keys));
     expect(keys).toHaveLength(1);
     const row = view.container.querySelector("[data-layout]");
     const renameForm = row?.querySelector("form");
@@ -768,7 +780,7 @@ test("the layouts UI saves, renames, copies text and deletes a layout", async ()
     if (!rename || !renameForm) throw new Error("missing Rename form");
     rename.value = "London";
     act(() => renameForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    expect(untracked(realm, (read) => read(workspace.layouts.$layouts.rows)[0]?.name)).toBe(
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$layouts.rows)[0]?.name)).toBe(
       "London",
     );
     const copy = [...view.container.querySelectorAll("button")].find(
@@ -787,7 +799,7 @@ test("the layouts UI saves, renames, copies text and deletes a layout", async ()
     if (!remove) throw new Error("missing Delete");
     act(() => remove.click());
     expect(view.container.querySelector("[data-layout]")).toBeNull();
-    expect(untracked(realm, (read) => read(workspace.layouts.$activeId))).toBeNull();
+    expect(Realm.untracked(realm, (read) => read(workspace.layouts.$activeId))).toBeNull();
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,

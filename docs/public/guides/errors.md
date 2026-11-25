@@ -20,7 +20,7 @@ A watch effect runs after the write has landed, so its error goes to
 
 <!-- region errors.ts#effect -->
 
-`inspect` reports what a value last read, how many observe it, and, for a
+`Source.inspect` reports what a value last read, how many observe it, and, for a
 named computed value, why it last recomputed. It reports one level; inspect a
 dependency to go further.
 
@@ -33,19 +33,24 @@ dependency to go further.
   while a write's watchers run throws to the writer, with the writes in
   place.
 - Errors without one go to `onError`: a watch effect's, an autorun's after
-  its first run, an `onObserved` hook's or cleanup's, and watchers that never
-  settle. The first run of a `watch` or `autorun` throws to the caller, and
+  its first run, a `Source.onObserved` hook's or cleanup's, and watchers that never
+  settle. The first run of a `Realm.watch` or `Realm.autorun` throws to the caller, and
   nothing is watched.
 - Name what gets debugged: `{ name }` on a box or a computed value.
   A named computed value keeps why it last recomputed, and its errors name
   it. An unnamed one costs nothing for names.
 - Pinna has no development mode. Every check runs in every build.
+- Every error Pinna throws is a `PinnaError` with a literal `_tag`. Catch a
+  condition with `isPinnaError(error, "StageConflictError")`, which narrows
+  to the class; a misuse is a `PinnaUsageError` whose `code` names it. Match
+  by brand and `_tag`, never by `instanceof`, which fails across two copies
+  of Pinna, and never by message text, which changes with the API.
 
 ## Answers
 
 | Call | Answers |
 | --- | --- |
-| `inspect($x)` | `{ name, realm, dependencies, observers, lastReason }`. `realm` is the name of the realm that made the value, `undefined` for an unnamed realm. |
+| `Source.inspect($x)` | `{ name, realm, dependencies, observers, lastReason }`. `realm` is the name of the realm that made the value, `undefined` for an unnamed realm. |
 
 Every message Pinna throws, with its cause and fix, is on
 [Error messages](../reference/errors.md).
@@ -54,14 +59,15 @@ Every message Pinna throws, with its cause and fix, is on
 
 A schema adds errors with a caller, and a program has a place for defects.
 
-- A write the schema of a [`schemaBox`](../effect/boxes.md) or a `BoxField` refuses
-  throws from the write, and the update rolls back. The error's `cause` is the
-  `Schema.SchemaError` that says what did not fit. A row a
+- A write the schema of a [`Box.schema`](../effect/boxes.md) or a `Model.boxField` refuses
+  throws a `ValueRejectedError` from the write, and the update rolls back. Its
+  `cause` is the `Schema.SchemaError` that says what did not fit. A row a
   [collection field](../effect/collections.md) refuses throws the same error.
-- `decode` throws `Schema.SchemaError` for input that does not fit the schema.
+- `Model.decode` throws a `DecodeError` for input that does not fit the schema. Its
+  `cause` is the `Schema.SchemaError`, and `issue` that error's issue.
 - A [program's](../effect/programs.md) defect is logged at the error level
-  through Effect's logger. A `watchScoped` watch keeps running; a
-  `fromStream` stream or a `whileObserved` run ends, and the next
+  through Effect's logger. A `Program.watchScoped` watch keeps running; a
+  `Program.fromStream` stream or a `Program.whileObserved` run ends, and the next
   observation starts it again.
 
 Their messages are on [Error messages](../reference/errors.md#with-effect).
@@ -77,14 +83,14 @@ of `false`.
 
 The `Schema.SchemaError` holds an `issue`, and
 `SchemaIssue.makeFormatterStandardSchemaV1()` turns it into a list of
-`{ path, message }`. `decode` throws the `SchemaError` itself; a write a box
-refuses throws an `Error` whose `cause` is the `SchemaError`.
+`{ path, message }`. `Model.decode` throws a `DecodeError` and a write a box
+refuses a `ValueRejectedError`; each holds the `SchemaError` as its `cause`.
 
 <!-- region effectErrors.ts#issues -->
 
 <!-- region effectErrors.ts#read -->
 
-- `decode` stops at the first field it refuses, so for a struct such as
+- `Model.decode` stops at the first field it refuses, so for a struct such as
   `Signup` the list holds one issue: input with two bad fields reports the
   first. A union, or a filter that returns several issues, reports more.
 - A field that is absent reads as `Missing key` at its path, and a value of

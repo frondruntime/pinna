@@ -5,7 +5,7 @@
  * component lowers the priority of a slow render that follows a write.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { box, createRealm, onObserved, update } from "@frondruntime/pinna";
+import { Box, Realm, Source } from "@frondruntime/pinna";
 import {
   Activity,
   act,
@@ -45,8 +45,8 @@ afterEach(async () => {
 
 describe("useDeferredValue", () => {
   test("a write renders the urgent value first and the deferred one after", async () => {
-    const realm = createRealm();
-    const $query = box(realm, "");
+    const realm = Realm.make();
+    const $query = Box.make(realm, "");
     const log: Array<string> = [];
     function Search(): ReactNode {
       const query = useValue($query);
@@ -56,13 +56,13 @@ describe("useDeferredValue", () => {
     }
     await mount(<Search />);
     log.length = 0;
-    await act(async () => update(realm, (_read, write) => write($query, "a")));
+    await act(async () => Realm.update(realm, (_read, write) => write($query, "a")));
     expect(log).toEqual(["a/", "a/a"]);
   });
 
   test("a write inside startTransition still renders at once", async () => {
-    const realm = createRealm();
-    const $query = box(realm, "");
+    const realm = Realm.make();
+    const $query = Box.make(realm, "");
     const log: Array<string> = [];
     function Search(): ReactNode {
       const query = useValue($query);
@@ -73,7 +73,7 @@ describe("useDeferredValue", () => {
     await mount(<Search />);
     log.length = 0;
     await act(async () =>
-      startTransition(() => update(realm, (_read, write) => write($query, "a"))),
+      startTransition(() => Realm.update(realm, (_read, write) => write($query, "a"))),
     );
     expect(log).toEqual(["a/", "a/a"]);
   });
@@ -112,8 +112,8 @@ describe("Suspense", () => {
   }
 
   test("a write that suspends shows the fallback in place of the shown content", async () => {
-    const realm = createRealm();
-    const $id = box(realm, 1);
+    const realm = Realm.make();
+    const $id = Box.make(realm, 1);
     const loads = users();
     loads.resolve(1);
     function Profile(): ReactNode {
@@ -125,15 +125,15 @@ describe("Suspense", () => {
       </Suspense>,
     );
     expect(shown(view)).toBe("user 1");
-    await act(async () => update(realm, (_read, write) => write($id, 2)));
+    await act(async () => Realm.update(realm, (_read, write) => write($id, 2)));
     expect(shown(view)).toBe("loading");
     await act(async () => loads.resolve(2));
     expect(shown(view)).toBe("user 2");
   });
 
   test("a deferred id keeps the shown content until the next one loads", async () => {
-    const realm = createRealm();
-    const $id = box(realm, 1);
+    const realm = Realm.make();
+    const $id = Box.make(realm, 1);
     const loads = users();
     loads.resolve(1);
     function Profile(): ReactNode {
@@ -145,7 +145,7 @@ describe("Suspense", () => {
         <Profile />
       </Suspense>,
     );
-    await act(async () => update(realm, (_read, write) => write($id, 2)));
+    await act(async () => Realm.update(realm, (_read, write) => write($id, 2)));
     expect(shown(view)).toBe("user 1");
     await act(async () => loads.resolve(2));
     expect(shown(view)).toBe("user 2");
@@ -154,10 +154,10 @@ describe("Suspense", () => {
 
 describe("Activity", () => {
   test("hiding unsubscribes, and showing again renders what was written meanwhile", async () => {
-    const realm = createRealm();
-    const $count = box(realm, 0);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
     const events: Array<string> = [];
-    onObserved($count, () => {
+    Source.onObserved($count, () => {
       events.push("start");
       return () => events.push("stop");
     });
@@ -182,7 +182,7 @@ describe("Activity", () => {
     );
     expect(events).toEqual(["start", "stop"]);
     renders.length = 0;
-    await act(async () => update(realm, (_read, write) => write($count, 1)));
+    await act(async () => Realm.update(realm, (_read, write) => write($count, 1)));
     expect(renders).toEqual([]);
     await act(async () =>
       root?.render(

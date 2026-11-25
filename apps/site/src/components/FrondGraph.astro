@@ -70,16 +70,7 @@ const picture = {
 </div>
 
 <script>
-  import {
-    autorun,
-    type Box,
-    box,
-    type Computed,
-    computed,
-    createRealm,
-    untracked,
-    update,
-  } from "@frondruntime/pinna";
+  import { Box, Computed, Realm } from "@frondruntime/pinna";
   import {
     type FrondPart,
     type FrondPicture,
@@ -123,15 +114,15 @@ const picture = {
     const addButton = find<HTMLButtonElement>(form, "button");
     const caption = find<HTMLElement>(frond, "[data-frond-caption]");
 
-    const realm = createRealm();
-    const $todos = box<ReadonlyArray<Todo>>(realm, []);
+    const realm = Realm.make();
+    const $todos = Box.make<ReadonlyArray<Todo>>(realm, []);
     // The realm's totals, drawn on the leaves past the last todo.
-    const $count = computed(realm, (read) => read($todos).length);
-    const $left = computed(
+    const $count = Computed.make(realm, (read) => read($todos).length);
+    const $left = Computed.make(
       realm,
       (read) => read($todos).filter((todo) => !read(todo.$done)).length,
     );
-    const $allDone = computed(realm, (read) => read($count) > 0 && read($left) === 0);
+    const $allDone = Computed.make(realm, (read) => read($count) > 0 && read($left) === 0);
 
     // What the last action cost, counted by the pads themselves: a `$label` counts each compute and
     // a `<Row>` each render. The counters are for this drawing only; a model keeps computes pure.
@@ -143,13 +134,13 @@ const picture = {
     let nextId = 1;
     const makeTodo = (title: string, done: boolean): Todo => {
       const id = String(nextId++);
-      const $done = box(realm, done);
-      const $label = computed(realm, (read) => {
+      const $done = Box.make(realm, done);
+      const $label = Computed.make(realm, (read) => {
         computes++;
         return read($done) ? `✓ ${title}` : title;
       });
       // The `<Row>`: it reads `$label` alone, so it renders again only when its own label changes.
-      const stop = autorun(realm, (read) => {
+      const stop = Realm.autorun(realm, (read) => {
         labels.set(id, read($label));
         rendered.add(id);
         return undefined;
@@ -165,7 +156,7 @@ const picture = {
     let disposed = false;
 
     const snapshot = (added: string | undefined): FrondPicture =>
-      untracked(realm, (read) => ({
+      Realm.untracked(realm, (read) => ({
         todos: read($todos).map((todo) => ({
           id: todo.id,
           title: todo.title,
@@ -228,17 +219,17 @@ const picture = {
     };
 
     const syncAddButton = (): void => {
-      addButton.disabled = untracked(realm, (read) => read($todos).length) >= frondMaximum;
+      addButton.disabled = Realm.untracked(realm, (read) => read($todos).length) >= frondMaximum;
     };
 
     const toggle = (todo: Todo): void => {
       const cost = act(() => {
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write(todo.$done, !read(todo.$done));
         });
       });
       draw(snapshot(undefined), { from: todo.id, reached: [...rendered] });
-      const total = untracked(realm, (read) => read($todos).length);
+      const total = Realm.untracked(realm, (read) => read($todos).length);
       say(
         code("toggle()"),
         " writes one ",
@@ -256,13 +247,13 @@ const picture = {
       const cost = act(() => {
         const todo = makeTodo(title, false);
         added = todo;
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write($todos, [...read($todos), todo]);
         });
       });
       draw(snapshot(added?.id), { from: "root", reached: [...rendered] });
       syncAddButton();
-      const others = untracked(realm, (read) => read($todos).length) - 1;
+      const others = Realm.untracked(realm, (read) => read($todos).length) - 1;
       say(
         code("add()"),
         " writes ",
@@ -278,7 +269,7 @@ const picture = {
     const remove = (todo: Todo): void => {
       const cost = act(() => {
         todo.stop();
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write(
             $todos,
             read($todos).filter((other) => other !== todo),
@@ -287,7 +278,7 @@ const picture = {
       });
       draw(snapshot(undefined), { from: "root", reached: [...rendered] });
       syncAddButton();
-      const total = untracked(realm, (read) => read($todos).length);
+      const total = Realm.untracked(realm, (read) => read($todos).length);
       say(
         code("remove()"),
         " writes ",
@@ -347,7 +338,7 @@ const picture = {
       const control = target.closest("[data-action]");
       const id = control?.closest("[data-id]")?.getAttribute("data-id");
       const action = control?.getAttribute("data-action");
-      const todo = untracked(realm, (read) => read($todos).find((each) => each.id === id));
+      const todo = Realm.untracked(realm, (read) => read($todos).find((each) => each.id === id));
       return todo === undefined || action === null || action === undefined
         ? undefined
         : { todo, action };
@@ -404,13 +395,13 @@ const picture = {
       ["Bench on Node", true],
     ];
     const initial = seed.map(([title, done]) => makeTodo(title, done));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($todos, initial);
     });
     const site = initial[1];
     if (site !== undefined) {
       act(() => {
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write(site.$done, !read(site.$done));
         });
       });
@@ -453,7 +444,7 @@ const picture = {
       disposed = true;
       resizes.disconnect();
       scene?.dispose();
-      for (const todo of untracked(realm, (read) => read($todos))) {
+      for (const todo of Realm.untracked(realm, (read) => read($todos))) {
         todo.stop();
       }
     };

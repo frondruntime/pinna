@@ -1,5 +1,5 @@
-import { box, computed, Model, type Realm, untracked, update } from "@frondruntime/pinna";
-import { schemaBox } from "@frondruntime/pinna-effect";
+import { Computed, Model, Realm } from "@frondruntime/pinna";
+import { Box } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 import { add, decimal, divide, fraction, subtract } from "./decimal.ts";
 import type { Desk } from "./desk.ts";
@@ -18,24 +18,24 @@ import {
 import type { Orders } from "./orders.ts";
 
 type Editable = "notional" | "limitPrice";
-export class OrderTicket extends Model {
+export class OrderTicket extends Model.Class {
   readonly side;
   readonly notional;
   readonly limitPrice;
   readonly timeInForce;
   readonly expiry;
   readonly note;
-  readonly $pending = box(this.realm, false);
-  readonly $confirmation = box(this.realm, false);
-  readonly $exchangeReason = schemaBox(this.realm, Schema.NullOr(Schema.String), null);
-  readonly $localReason = box<string | null>(this.realm, null);
-  readonly $reason = computed(
+  readonly $pending = Box.make(this.realm, false);
+  readonly $confirmation = Box.make(this.realm, false);
+  readonly $exchangeReason = Box.schema(this.realm, Schema.NullOr(Schema.String), null);
+  readonly $localReason = Box.make<string | null>(this.realm, null);
+  readonly $reason = Computed.make(
     this.realm,
     (read) => read(this.$localReason) ?? read(this.$exchangeReason),
   );
-  readonly $conflicts = box<Readonly<Partial<Record<Editable, string>>>>(this.realm, {});
+  readonly $conflicts = Box.make<Readonly<Partial<Record<Editable, string>>>>(this.realm, {});
   private readonly $base;
-  readonly $value = computed(this.realm, (read) => ({
+  readonly $value = Computed.make(this.realm, (read) => ({
     symbol: this.tile.pair.symbol,
     side: read(this.side.$accepted),
     notional: read(this.notional.$accepted),
@@ -44,7 +44,7 @@ export class OrderTicket extends Model {
     expiry: read(this.timeInForce.$accepted) === "date" ? read(this.expiry.$accepted) : "",
     note: read(this.note.$accepted),
   }));
-  readonly $fieldValid = computed(
+  readonly $fieldValid = Computed.make(
     this.realm,
     (read) =>
       [this.side, this.notional, this.limitPrice, this.timeInForce, this.expiry, this.note].every(
@@ -52,7 +52,7 @@ export class OrderTicket extends Model {
       ) &&
       (read(this.timeInForce.$accepted) !== "date" || read(this.expiry.$error) === null),
   );
-  readonly $rules = computed(
+  readonly $rules = Computed.make(
     this.realm,
     (read) => {
       const value = read(this.$value);
@@ -99,7 +99,7 @@ export class OrderTicket extends Model {
         left.reasons.join("\n") === right.reasons.join("\n"),
     },
   );
-  readonly $canSend = computed(
+  readonly $canSend = Computed.make(
     this.realm,
     (read) =>
       read(this.$fieldValid) &&
@@ -107,7 +107,7 @@ export class OrderTicket extends Model {
       !read(this.$pending) &&
       Object.keys(read(this.$conflicts)).length === 0,
   );
-  readonly $needsConfirmation = computed(
+  readonly $needsConfirmation = Computed.make(
     this.realm,
     (read) =>
       compareDecimal(
@@ -122,15 +122,15 @@ export class OrderTicket extends Model {
     readonly order?: WorkingOrder,
   ) {
     super(realm);
-    const base = order ? untracked(realm, (read) => read(order.$value)) : null;
-    this.$base = schemaBox(realm, Schema.NullOr(OrderValue), base);
-    const price = untracked(realm, (read) => read(tile.$prices).current);
+    const base = order ? Realm.untracked(realm, (read) => read(order.$value)) : null;
+    this.$base = Box.schema(realm, Schema.NullOr(OrderValue), base);
+    const price = Realm.untracked(realm, (read) => read(tile.$prices).current);
     this.side = new FormField(realm, Side, base?.side ?? "buy", "Choose buy or sell.");
     this.notional = new FormField(
       realm,
       Amount,
       base?.notional ??
-        untracked(
+        Realm.untracked(
           realm,
           (read) => read(orders.account.settings.$defaultNotionals)[tile.pair.symbol],
         ),
@@ -160,7 +160,7 @@ export class OrderTicket extends Model {
     this.note = new FormField(realm, Note, base?.note ?? "", "Use at most 200 characters.");
   }
   receive(next: OrderValue) {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const base = read(this.$base);
       const conflicts = { ...read(this.$conflicts) };
       if (base)
@@ -177,7 +177,7 @@ export class OrderTicket extends Model {
     });
   }
   choose(field: Editable, choice: "mine" | "exchange") {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const conflicts = { ...read(this.$conflicts) };
       if (choice === "exchange" && conflicts[field] !== undefined)
         this[field].set(conflicts[field]);

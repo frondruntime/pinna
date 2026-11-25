@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { box, untracked, update } from "../src/index.ts";
+import { Box, Realm } from "../src/index.ts";
 import { testRealm } from "../src/testing/index.ts";
 
 describe("finalizing assigned containers read through a draft", () => {
   test.each(["read length", "push"])("filter then %s finalizes every item", (operation) => {
     using realm = testRealm();
     const before = { items: [{ id: 1 }, { id: 2 }, { id: 3 }] };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     let supplied: Array<{ id: number }> | undefined;
     let firstDraft: { id: number } | undefined;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         supplied = draft.items.filter((item) => item.id !== 2);
         firstDraft = supplied[0];
@@ -21,7 +21,7 @@ describe("finalizing assigned containers read through a draft", () => {
         }
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.items.map((item) => item.id)).toEqual(operation === "push" ? [1, 3, 4] : [1, 3]);
     expect(result.items[0]).toBe(before.items[0]);
     expect(result.items[1]).toBe(before.items[2]);
@@ -44,10 +44,10 @@ describe("finalizing assigned containers read through a draft", () => {
       items: [{ id: 1 }, { id: 2 }, { id: 3 }],
       wrapper: undefined as Wrapper | undefined,
     };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     let supplied: Wrapper | undefined;
     let firstDraft: { id: number } | undefined;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         firstDraft = draft.items[0];
         supplied = Object.freeze({ item: firstDraft });
@@ -59,7 +59,7 @@ describe("finalizing assigned containers read through a draft", () => {
         }
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.wrapper?.item?.id).toBe(1);
     expect(result.wrapper?.item).toBe(before.items[0]);
     expect(result.wrapper?.label).toBe(operation === "write label" ? "x" : undefined);
@@ -79,8 +79,8 @@ describe("finalizing assigned containers read through a draft", () => {
         { id: 3, count: 0 },
       ],
     };
-    const $state = box(realm, before);
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.items = [...draft.items].reverse();
         const first = draft.items[0];
@@ -89,7 +89,7 @@ describe("finalizing assigned containers read through a draft", () => {
         }
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.items.map((item) => [item.id, item.count])).toEqual([
       [3, 1],
       [2, 0],
@@ -109,8 +109,8 @@ describe("finalizing assigned containers read through a draft", () => {
         { id: 3, count: 0 },
       ],
     };
-    const $state = box(realm, before);
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         const first = draft.items[0];
         if (first !== undefined) {
@@ -120,7 +120,7 @@ describe("finalizing assigned containers read through a draft", () => {
         expect([...draft.items].map((item) => item.count)).toEqual([5, 0]);
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.items.map((item) => [item.id, item.count])).toEqual([
       [1, 5],
       [3, 0],
@@ -130,7 +130,7 @@ describe("finalizing assigned containers read through a draft", () => {
   });
 
   test("a written supplied object that reaches itself splits at the written key, and the supplied object stays as it was", () => {
-    // Ruling 54: an object at two keys is two values once one is written, and
+    // Ruling 60: an object at two keys is two values once one is written, and
     // a self-reference is a second key.
     using realm = testRealm();
     interface Node {
@@ -138,16 +138,16 @@ describe("finalizing assigned containers read through a draft", () => {
       self: Node | undefined;
     }
     const before = { child: undefined as Node | undefined };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     const supplied: Node = { label: "old", self: undefined };
     supplied.self = supplied;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.child = supplied;
         draft.child.label = "new";
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.child).not.toBe(supplied);
     expect(result.child?.label).toBe("new");
     expect(result.child?.self).toBe(supplied);
@@ -161,16 +161,16 @@ describe("finalizing assigned containers read through a draft", () => {
       nested: { item: { id: number } | undefined; label?: string };
     }
     const before = { items: [{ id: 1 }], wrapper: undefined as Wrapper | undefined };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     let supplied: Wrapper | undefined;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         supplied = { nested: { item: draft.items[0] } };
         draft.wrapper = supplied;
         draft.wrapper.nested.label = "x";
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.wrapper?.nested.item?.id).toBe(1);
     expect(result.wrapper?.nested.item).toBe(before.items[0]);
     expect(result.wrapper?.nested.label).toBe("x");
@@ -191,10 +191,10 @@ describe("finalizing assigned containers read through a draft", () => {
       wrapper: undefined as Wrapper | undefined,
       shared: undefined as Wrapper | undefined,
     };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     let supplied: Wrapper | undefined;
     let firstDraft: { id: number } | undefined;
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         firstDraft = draft.items[0];
         supplied = { self: undefined, item: firstDraft };
@@ -210,7 +210,7 @@ describe("finalizing assigned containers read through a draft", () => {
         }
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.wrapper?.item?.id).toBe(1);
     expect(result.wrapper).not.toBe(supplied);
     expect(result.wrapper).toBe(result.shared);
@@ -233,15 +233,15 @@ describe("finalizing assigned containers read through a draft", () => {
       wrappers: [] as Array<Wrapper>,
       removed: undefined as Wrapper | undefined,
     };
-    const $state = box(realm, before);
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.wrappers.push({ item: draft.items[0] });
         draft.removed =
           operation === "shift" ? draft.wrappers.shift() : draft.wrappers.splice(0, 1)[0];
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.removed?.item?.id).toBe(1);
     expect(result.removed?.item).toBe(before.items[0]);
     expect(result.wrappers).toEqual([]);
@@ -272,9 +272,9 @@ describe("a box's value is a tree", () => {
     ["b", "a"],
   ] as const)("an object assigned to %s and %s, written through a, is two values", (first, second) => {
     using realm = testRealm();
-    const $state = box(realm, empty());
+    const $state = Box.make(realm, empty());
     const shared = sharedValue();
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft[first] = shared;
         draft[second] = shared;
@@ -284,7 +284,7 @@ describe("a box's value is a tree", () => {
         expect(draft.b?.n).toBe(0);
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.a?.n).toBe(1);
     expect(result.a).not.toBe(shared);
     expect(result.b).toBe(shared);
@@ -293,9 +293,9 @@ describe("a box's value is a tree", () => {
 
   test("writes through two keys of one assigned object land in two values", () => {
     using realm = testRealm();
-    const $state = box(realm, empty());
+    const $state = Box.make(realm, empty());
     const shared = sharedValue();
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.a = shared;
         draft.b = shared;
@@ -303,7 +303,7 @@ describe("a box's value is a tree", () => {
         draft.b.m = 2;
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect([result.a?.n, result.a?.m]).toEqual([1, 0]);
     expect([result.b?.n, result.b?.m]).toEqual([0, 2]);
     expect(shared).toEqual({ n: 0, m: 0, self: shared });
@@ -311,17 +311,17 @@ describe("a box's value is a tree", () => {
 
   test("a container assigned and never read through the draft keeps the unwritten object", () => {
     using realm = testRealm();
-    const $state = box(realm, empty());
+    const $state = Box.make(realm, empty());
     const shared = sharedValue();
     const holder = { shared };
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.holder = holder;
         draft.a = shared;
         draft.a.n = 1;
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.a?.n).toBe(1);
     expect(result.holder).toBe(holder);
     expect(holder.shared).toBe(shared);
@@ -330,12 +330,12 @@ describe("a box's value is a tree", () => {
 
   test("an object moved by splice gets a draft of its own", () => {
     using realm = testRealm();
-    const $list = box<{ list: Array<Shared>; a: Shared | undefined }>(realm, {
+    const $list = Box.make<{ list: Array<Shared>; a: Shared | undefined }>(realm, {
       list: [],
       a: undefined,
     });
     const shared = sharedValue();
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($list, (draft) => {
         draft.list = [shared];
         draft.a = shared;
@@ -345,7 +345,7 @@ describe("a box's value is a tree", () => {
         draft.a.n = 1;
       });
     });
-    const result = untracked(realm, (read) => read($list));
+    const result = Realm.untracked(realm, (read) => read($list));
     expect(result.list[0]).toBe(shared);
     expect(result.a?.n).toBe(1);
     expect(shared.n).toBe(0);
@@ -354,13 +354,13 @@ describe("a box's value is a tree", () => {
   test("an unwritten draft at two keys finalizes to the one object the box held", () => {
     using realm = testRealm();
     const before = { left: { n: 0 }, right: undefined as { n: number } | undefined };
-    const $state = box(realm, before);
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.right = draft.left;
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.left).toBe(before.left);
     expect(result.right).toBe(before.left);
   });
@@ -377,9 +377,9 @@ describe("a box's value is a tree", () => {
       inner: { n: number };
     }
     const before = { left: { n: 0, inner: { n: 0 } }, right: undefined as Side | undefined };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($state, (draft) => {
           if (origin === "an assigned object") {
             draft.left = { n: 0, inner: { n: 0 } };
@@ -393,7 +393,7 @@ describe("a box's value is a tree", () => {
         });
       }),
     ).toThrow("pinna: write.modify left an object it wrote under two keys");
-    expect(untracked(realm, (read) => read($state))).toBe(before);
+    expect(Realm.untracked(realm, (read) => read($state))).toBe(before);
   });
 
   test("a written draft placed inside itself throws when the recipe writes a nested object", () => {
@@ -403,16 +403,16 @@ describe("a box's value is a tree", () => {
       self?: Node;
     }
     const before: { node: Node } = { node: { inner: { n: 0 } } };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($state, (draft) => {
           draft.node.self = draft.node;
           draft.node.inner.n = 1;
         });
       }),
     ).toThrow("pinna: write.modify left an object it wrote under two keys");
-    expect(untracked(realm, (read) => read($state))).toBe(before);
+    expect(Realm.untracked(realm, (read) => read($state))).toBe(before);
   });
 
   test.each([
@@ -421,9 +421,9 @@ describe("a box's value is a tree", () => {
   ])("%s the recipe builds around a written draft and places at two keys throws", (shape) => {
     using realm = testRealm();
     const before: { item?: { n: number }; a?: unknown; b?: unknown } = { item: { n: 0 } };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($state, (draft) => {
           const item = draft.item as { n: number };
           item.n = 1;
@@ -436,7 +436,7 @@ describe("a box's value is a tree", () => {
         });
       }),
     ).toThrow("pinna: write.modify left an object it wrote under two keys");
-    expect(untracked(realm, (read) => read($state))).toBe(before);
+    expect(Realm.untracked(realm, (read) => read($state))).toBe(before);
   });
 
   test("a wrapper that reaches itself before the written draft it holds throws", () => {
@@ -446,9 +446,9 @@ describe("a box's value is a tree", () => {
       item?: { n: number };
     }
     const before: { item?: { n: number }; wrapper?: Wrapper } = { item: { n: 0 } };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($state, (draft) => {
           const item = draft.item as { n: number };
           item.n = 1;
@@ -462,21 +462,21 @@ describe("a box's value is a tree", () => {
         });
       }),
     ).toThrow("pinna: write.modify left an object it wrote under two keys");
-    expect(untracked(realm, (read) => read($state))).toBe(before);
+    expect(Realm.untracked(realm, (read) => read($state))).toBe(before);
   });
 
   test("a wrapper the recipe builds around unwritten values stays one object at two keys", () => {
     using realm = testRealm();
     const before = { item: { n: 0 }, a: undefined as unknown, b: undefined as unknown };
-    const $state = box(realm, before);
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         const wrapper = { item: draft.item, tags: [] as string[] };
         draft.a = wrapper;
         draft.b = wrapper;
       });
     });
-    const after = untracked(realm, (read) => read($state));
+    const after = Realm.untracked(realm, (read) => read($state));
     expect(after.a).toBe(after.b);
     expect((after.a as { item: unknown }).item).toBe(before.item);
   });
@@ -484,14 +484,14 @@ describe("a box's value is a tree", () => {
   test("a snapshot read from the box before the write keeps the old value in the history", () => {
     using realm = testRealm();
     const before = { present: { count: 0 }, history: [] as Array<{ count: number }> };
-    const $state = box(realm, before);
-    update(realm, (read, write) => {
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (read, write) => {
       write.modify($state, (draft) => {
         draft.history.push(read($state).present);
         draft.present.count++;
       });
     });
-    const after = untracked(realm, (read) => read($state));
+    const after = Realm.untracked(realm, (read) => read($state));
     expect(after.history[0]).toBe(before.present);
     expect(after.present).toEqual({ count: 1 });
     expect(before.present).toEqual({ count: 0 });
@@ -499,8 +499,8 @@ describe("a box's value is a tree", () => {
 
   test("a written draft moved to another key, with the old key deleted, is one value", () => {
     using realm = testRealm();
-    const $state = box<{ a?: { n: number }; b?: { n: number } }>(realm, { a: { n: 1 } });
-    update(realm, (_read, write) => {
+    const $state = Box.make<{ a?: { n: number }; b?: { n: number } }>(realm, { a: { n: 1 } });
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         const moved = draft.a as { n: number };
         moved.n++;
@@ -508,33 +508,33 @@ describe("a box's value is a tree", () => {
         delete draft.a;
       });
     });
-    expect(untracked(realm, (read) => read($state))).toEqual({ b: { n: 2 } });
+    expect(Realm.untracked(realm, (read) => read($state))).toEqual({ b: { n: 2 } });
   });
 
   test("a draft pushed into a history and then written throws", () => {
     using realm = testRealm();
     const before = { present: { count: 0 }, history: [] as Array<{ count: number }> };
-    const $state = box(realm, before);
+    const $state = Box.make(realm, before);
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.modify($state, (draft) => {
           draft.history.push(draft.present);
           draft.present.count++;
         });
       }),
     ).toThrow("pinna: write.modify left an object it wrote under two keys");
-    expect(untracked(realm, (read) => read($state))).toBe(before);
+    expect(Realm.untracked(realm, (read) => read($state))).toBe(before);
   });
 
   test("a selection held as a key follows its item across calls", () => {
     using realm = testRealm();
-    const $state = box(realm, { items: [{ id: 1, n: 0 }], selectedId: 0 });
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, { items: [{ id: 1, n: 0 }], selectedId: 0 });
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.selectedId = 1;
       });
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         const item = draft.items.find((entry) => entry.id === draft.selectedId);
         if (item !== undefined) {
@@ -542,7 +542,7 @@ describe("a box's value is a tree", () => {
         }
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.items.find((entry) => entry.id === result.selectedId)?.n).toBe(1);
   });
 
@@ -553,8 +553,8 @@ describe("a box's value is a tree", () => {
     using realm = testRealm();
     const key = Symbol("row");
     const supplied = { [key]: { n: 0 } };
-    const $state = box(realm, { wrapper: undefined as typeof supplied | undefined });
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, { wrapper: undefined as typeof supplied | undefined });
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.wrapper = supplied;
         const child =
@@ -564,7 +564,7 @@ describe("a box's value is a tree", () => {
         child.n = 1;
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.wrapper?.[key].n).toBe(1);
     expect(result.wrapper).not.toBe(supplied);
     expect(supplied[key].n).toBe(0);
@@ -576,11 +576,11 @@ describe("a box's value is a tree", () => {
       list: Array<Holder>;
     }
     const supplied: Holder = { list: [] };
-    const $state = box(realm, {
+    const $state = Box.make(realm, {
       holder: undefined as Holder | undefined,
       list: undefined as Array<Holder> | undefined,
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         draft.holder = supplied;
         draft.list = supplied.list;
@@ -589,7 +589,7 @@ describe("a box's value is a tree", () => {
         draft.list.push(draft.holder);
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.holder).toBe(supplied);
     expect(result.list).toEqual([supplied]);
     expect(result.list?.[0]).toBe(supplied);
@@ -603,8 +603,8 @@ describe("a box's value is a tree", () => {
       item: { id: number };
     }
     const before = { items: [{ id: 1 }], wrapper: undefined as Wrapper | undefined };
-    const $state = box(realm, before);
-    update(realm, (_read, write) => {
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (_read, write) => {
       write.modify($state, (draft) => {
         const supplied: Wrapper = { back: undefined, item: draft.items[0] as { id: number } };
         draft.wrapper = supplied;
@@ -613,7 +613,7 @@ describe("a box's value is a tree", () => {
         supplied.back = draft.wrapper;
       });
     });
-    const result = untracked(realm, (read) => read($state));
+    const result = Realm.untracked(realm, (read) => read($state));
     expect(result.wrapper?.item).toBe(before.items[0]);
     expect(result.wrapper?.back).toBe(result.wrapper);
   });

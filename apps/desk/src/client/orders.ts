@@ -1,14 +1,5 @@
-import {
-  box,
-  type Computed,
-  computed,
-  computedFunction,
-  Model,
-  type Realm,
-  untracked,
-  update,
-} from "@frondruntime/pinna";
-import { decode, fromStream, RealmService } from "@frondruntime/pinna-effect";
+import { Box, Computed, Realm, Stage } from "@frondruntime/pinna";
+import { Model, Program, RealmService } from "@frondruntime/pinna-effect";
 import { Effect, Schema, Stream } from "effect";
 import type { Transport } from "../transport.ts";
 import type { Account } from "./account.ts";
@@ -35,24 +26,21 @@ const Answer = Schema.Union([
   Schema.Struct({ ok: Schema.Literal(false), reason: Schema.String }),
   Schema.Struct({ ok: Schema.Literal(true), message: Schema.Unknown }),
 ]);
-interface PendingAmendment {
-  readonly before: typeof OrderWire.Type;
-}
-export class Orders extends Model {
+export class Orders extends Model.Class {
   readonly book = OrderBook.make({ realm: this.realm, orders: [], acknowledgments: [] });
   readonly $orders = this.book.$orders;
-  readonly $ticket = box<OrderTicket | null>(this.realm, null);
-  readonly $notice = box<string | null>(this.realm, null);
-  readonly $rejections = box<{ readonly count: number; readonly latest: Diagnostic | null }>(
+  readonly $ticket = Box.make<OrderTicket | null>(this.realm, null);
+  readonly $notice = Box.make<string | null>(this.realm, null);
+  readonly $rejections = Box.make<{ readonly count: number; readonly latest: Diagnostic | null }>(
     this.realm,
     { count: 0, latest: null },
   );
-  readonly $loaded = box(this.realm, false);
-  private readonly $pending = box<ReadonlyMap<string, PendingAmendment>>(this.realm, new Map());
-  readonly $isPending = computedFunction(this.realm, (read, id: string) =>
-    read(this.$pending).has(id),
-  );
-  readonly $keys = computed(this.realm, (read) => {
+  readonly $loaded = Box.make(this.realm, false);
+  // Written by an amendment's guess alone, so an id shows as pending exactly
+  // while its guess shows.
+  private readonly $pending = Box.make<ReadonlySet<string>>(this.realm, new Set());
+  readonly $isPending = Computed.fn(this.realm, (read, id: string) => read(this.$pending).has(id));
+  readonly $keys = Computed.make(this.realm, (read) => {
     read(this.$feed);
     return read(this.$orders.keys);
   });
@@ -69,23 +57,24 @@ export class Orders extends Model {
   }
   private sequence = 0;
   open(tile: Desk, order?: WorkingOrder) {
-    if (order && untracked(this.realm, (read) => terminal(read(order.$value).status))) return null;
+    if (order && Realm.untracked(this.realm, (read) => terminal(read(order.$value).status)))
+      return null;
     const ticket = new OrderTicket(this.realm, this, tile, order);
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       write(this.$ticket, ticket);
       write(this.$notice, null);
     });
     return ticket;
   }
   close() {
-    update(this.realm, (_read, write) => write(this.$ticket, null));
+    Realm.update(this.realm, (_read, write) => write(this.$ticket, null));
   }
   reject(error: unknown) {
     const latest =
       error instanceof MessageError
         ? { path: error.path, reason: error.reason }
         : { path: "$", reason: String(error) };
-    update(this.realm, (read, write) =>
+    Realm.update(this.realm, (read, write) =>
       write(this.$rejections, { count: read(this.$rejections).count + 1, latest }),
     );
   }
@@ -95,8 +84,8 @@ export class Orders extends Model {
       const checked = value.map((row, index) => checkOrder(row, `orders[${index}]`));
       if (new Set(checked.map((row) => row.id)).size !== checked.length)
         throw new MessageError("orders", "duplicate order identifier");
-      const fresh = checked.map((row) => decode(this.realm, WorkingOrder)(row));
-      update(this.realm, (read, write) => {
+      const fresh = checked.map((row) => Model.decode(this.realm, WorkingOrder)(row));
+      Realm.update(this.realm, (read, write) => {
         // A topic may already have advanced the held revision while the snapshot was in flight.
         for (const row of fresh) {
           const held = read.row(this.$orders, row.id);
@@ -120,11 +109,11 @@ export class Orders extends Model {
       }
       requireSchema(Schema.NullOr(Trade), envelope.fill, "fill", "invalid fill trade");
       const message = requireSchema(OrderMessage, value, "$", "invalid order message");
-      const fresh = decode(this.realm, WorkingOrder)(checkedOrder);
-      update(this.realm, (read, write) => {
+      const fresh = Model.decode(this.realm, WorkingOrder)(checkedOrder);
+      Realm.update(this.realm, (read, write) => {
+        // An update reads the confirmed order, under any amendment's guess.
         const held = read.row(this.$orders, fresh.id);
-        const pending = read(this.$pending).get(fresh.id);
-        const previous = pending?.before.value ?? (held ? read(held.$value) : undefined);
+        const previous = held ? read(held.$value) : undefined;
         const next = read(fresh.$value);
         if (!previous && message.kind !== "accepted")
           throw new MessageError("order.id", "unknown order");
@@ -214,11 +203,6 @@ export class Orders extends Model {
         if (message.kind === "accepted" || message.kind === "amended")
           write.upsert(this.book.$acknowledgments, checkedOrder);
         if (message.fill) write.upsert(this.trades.$trades, message.fill);
-        if (pending) {
-          const map = new Map(read(this.$pending));
-          map.set(fresh.id, { ...pending, before: checkedOrder });
-          write(this.$pending, map);
-        }
       });
       return true;
     } catch (error) {
@@ -229,149 +213,160 @@ export class Orders extends Model {
   submit(ticket: OrderTicket, confirmed = false) {
     const orders = this;
     return Effect.gen(function* () {
-      const input = untracked(orders.realm, (read) => ({
+      const input = Realm.untracked(orders.realm, (read) => ({
         allowed: read(ticket.$canSend),
         confirm: read(ticket.$needsConfirmation),
         value: read(ticket.$value),
       }));
       if (!input.allowed) return;
       if (input.value.timeInForce === "date" && input.value.expiry <= orders.today()) {
-        update(orders.realm, (_read, write) =>
+        Realm.update(orders.realm, (_read, write) =>
           write(ticket.$localReason, "Choose a date after today."),
         );
         return;
       }
       if (input.confirm && !confirmed) {
-        update(orders.realm, (_read, write) => write(ticket.$confirmation, true));
+        Realm.update(orders.realm, (_read, write) => write(ticket.$confirmation, true));
         return;
       }
       const id = ticket.order?.id ?? `limit-local-${++orders.sequence}`;
       const heldOrder = ticket.order;
+      // The revision a guess never changes: the confirmed one, as the request needs.
       const before = heldOrder
-        ? untracked(orders.realm, (read) => read(heldOrder.$value))
+        ? Realm.untracked(orders.realm, (read) => read(heldOrder.$value))
         : undefined;
-      update(orders.realm, (read, write) => {
-        write(ticket.$pending, true);
-        write(ticket.$confirmation, false);
-        write(ticket.$localReason, null);
-        write(ticket.$exchangeReason, null);
-        if (ticket.order && before) {
-          write(ticket.order.$value, {
-            ...before,
-            notional: input.value.notional,
-            limitPrice: input.value.limitPrice,
-          });
-          const map = new Map(read(orders.$pending));
-          map.set(id, {
-            before: { id, value: before },
-          });
-          write(orders.$pending, map);
-        }
-      });
       let accepted = false;
-      yield* orders.transport
-        .request(
-          ticket.order ? "/orders/amend" : "/orders/place",
-          JSON.stringify({ id, ...input.value, ...(before ? { revision: before.revision } : {}) }),
-        )
-        .pipe(
-          Effect.flatMap((raw) =>
-            Schema.decodeUnknownEffect(Schema.fromJsonString(Answer))(raw).pipe(
-              Effect.tapError((error) => Effect.sync(() => orders.reject(error))),
-            ),
-          ),
-          Effect.flatMap((answer) =>
-            Effect.try({
-              try: () => {
-                if (!answer.ok) return answer;
-                checkOrder(object(answer.message).order, "message.order");
-                return {
-                  ok: true as const,
-                  message: requireSchema(
-                    OrderMessage,
-                    answer.message,
-                    "message",
-                    "invalid acknowledgment",
+      // The guess is made in the acquire and dropped in the release, so no
+      // interruption between the two leaves it showing.
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          // An amendment's new terms show at once over the confirmed order;
+          // fills and later changes from the feed land under them, and the
+          // guess replays over each.
+          const guess =
+            heldOrder && Stage.make(orders.realm, { name: `amend ${id} (guess)`, visible: true });
+          try {
+            // One update: the ticket and the guess show together.
+            Realm.update(orders.realm, (_read, write) => {
+              write(ticket.$pending, true);
+              write(ticket.$confirmation, false);
+              write(ticket.$localReason, null);
+              write(ticket.$exchangeReason, null);
+              if (guess && heldOrder) {
+                Stage.update(guess, (read, write) => {
+                  write(heldOrder.$value, {
+                    ...read(heldOrder.$value),
+                    notional: input.value.notional,
+                    limitPrice: input.value.limitPrice,
+                  });
+                  write(orders.$pending, new Set(read(orders.$pending)).add(id));
+                });
+              }
+            });
+          } catch (error) {
+            if (guess) Stage.drop(guess);
+            throw error;
+          }
+          return guess;
+        }),
+        () =>
+          orders.transport
+            .request(
+              ticket.order ? "/orders/amend" : "/orders/place",
+              JSON.stringify({
+                id,
+                ...input.value,
+                ...(before ? { revision: before.revision } : {}),
+              }),
+            )
+            .pipe(
+              Effect.flatMap((raw) =>
+                Schema.decodeUnknownEffect(Schema.fromJsonString(Answer))(raw).pipe(
+                  Effect.tapError((error) => Effect.sync(() => orders.reject(error))),
+                ),
+              ),
+              Effect.flatMap((answer) =>
+                Effect.try({
+                  try: () => {
+                    if (!answer.ok) return answer;
+                    checkOrder(object(answer.message).order, "message.order");
+                    return {
+                      ok: true as const,
+                      message: requireSchema(
+                        OrderMessage,
+                        answer.message,
+                        "message",
+                        "invalid acknowledgment",
+                      ),
+                    };
+                  },
+                  catch: (error) => {
+                    orders.reject(error);
+                    return error;
+                  },
+                }),
+              ),
+              Effect.tap((answer) =>
+                Effect.sync(() => {
+                  if (!answer.ok)
+                    Realm.update(orders.realm, (_read, write) =>
+                      write(ticket.$exchangeReason, answer.reason),
+                    );
+                  else if (
+                    answer.message.order.id !== id ||
+                    answer.message.kind !== (ticket.order ? "amended" : "accepted") ||
+                    answer.message.fill !== null ||
+                    answer.message.order.value.symbol !== input.value.symbol ||
+                    answer.message.order.value.side !== input.value.side ||
+                    answer.message.order.value.notional !== input.value.notional ||
+                    answer.message.order.value.timeInForce !== input.value.timeInForce ||
+                    answer.message.order.value.expiry !== input.value.expiry ||
+                    answer.message.order.value.note !== input.value.note ||
+                    (!ticket.order &&
+                      answer.message.order.value.limitPrice !== input.value.limitPrice)
+                  ) {
+                    orders.reject(new MessageError("order.id", "mismatched response"));
+                    Realm.update(orders.realm, (_read, write) =>
+                      write(ticket.$localReason, "Mismatched exchange response."),
+                    );
+                  } else {
+                    // A matching topic acknowledgment may have arrived first.
+                    const acknowledgment = Realm.untracked(orders.realm, (read) =>
+                      read.row(orders.book.$acknowledgments, id),
+                    );
+                    const same =
+                      acknowledgment &&
+                      Schema.toEquivalence(OrderWire)(acknowledgment, answer.message.order);
+                    accepted = !!same || orders.accept(answer.message);
+                    if (!accepted)
+                      Realm.update(orders.realm, (_read, write) =>
+                        write(ticket.$localReason, "Invalid exchange response."),
+                      );
+                  }
+                }),
+              ),
+              Effect.catch((error) =>
+                Effect.sync(() =>
+                  Realm.update(orders.realm, (_read, write) =>
+                    write(ticket.$localReason, String(error)),
                   ),
-                };
-              },
-              catch: (error) => {
-                orders.reject(error);
-                return error;
-              },
-            }),
-          ),
-          Effect.tap((answer) =>
-            Effect.sync(() => {
-              if (!answer.ok)
-                update(orders.realm, (_read, write) =>
-                  write(ticket.$exchangeReason, answer.reason),
-                );
-              else if (
-                answer.message.order.id !== id ||
-                answer.message.kind !== (ticket.order ? "amended" : "accepted") ||
-                answer.message.fill !== null ||
-                answer.message.order.value.symbol !== input.value.symbol ||
-                answer.message.order.value.side !== input.value.side ||
-                answer.message.order.value.notional !== input.value.notional ||
-                answer.message.order.value.timeInForce !== input.value.timeInForce ||
-                answer.message.order.value.expiry !== input.value.expiry ||
-                answer.message.order.value.note !== input.value.note ||
-                (!ticket.order && answer.message.order.value.limitPrice !== input.value.limitPrice)
-              ) {
-                orders.reject(new MessageError("order.id", "mismatched response"));
-                update(orders.realm, (_read, write) =>
-                  write(ticket.$localReason, "Mismatched exchange response."),
-                );
-              } else {
-                // A matching topic acknowledgment may have arrived first.
-                const acknowledgment = untracked(orders.realm, (read) =>
-                  read.row(orders.book.$acknowledgments, id),
-                );
-                const same =
-                  acknowledgment &&
-                  Schema.toEquivalence(OrderWire)(acknowledgment, answer.message.order);
-                accepted = !!same || orders.accept(answer.message);
-                if (!accepted)
-                  update(orders.realm, (_read, write) =>
-                    write(ticket.$localReason, "Invalid exchange response."),
-                  );
+                ),
+              ),
+            ),
+        (guess) =>
+          Effect.sync(() =>
+            Realm.update(orders.realm, (read, write) => {
+              // Accepted, the answer has landed under the guess; refused, the
+              // confirmed order shows again, fills and later changes kept.
+              if (guess) Stage.drop(guess);
+              write(ticket.$pending, false);
+              if (accepted && read(orders.$ticket) === ticket) {
+                write(orders.$ticket, null);
+                write(orders.$notice, "Order accepted.");
               }
             }),
           ),
-          Effect.catch((error) =>
-            Effect.sync(() =>
-              update(orders.realm, (_read, write) => write(ticket.$localReason, String(error))),
-            ),
-          ),
-          Effect.ensuring(
-            Effect.sync(() =>
-              update(orders.realm, (read, write) => {
-                const pending = read(orders.$pending).get(id);
-                if (pending) {
-                  const held = read.row(orders.$orders, id);
-                  if (!accepted && held) {
-                    const current = read(held.$value);
-                    // Preserve fills and later authoritative changes while undoing optimistic terms.
-                    write(held.$value, {
-                      ...current,
-                      notional: pending.before.value.notional,
-                      limitPrice: pending.before.value.limitPrice,
-                    });
-                  }
-                  const map = new Map(read(orders.$pending));
-                  map.delete(id);
-                  write(orders.$pending, map);
-                }
-                write(ticket.$pending, false);
-                if (accepted && read(orders.$ticket) === ticket) {
-                  write(orders.$ticket, null);
-                  write(orders.$notice, "Order accepted.");
-                }
-              }),
-            ),
-          ),
-        );
+      );
     });
   }
 }
@@ -384,7 +379,7 @@ export const makeOrders = (
 ) =>
   Effect.gen(function* () {
     const realm = yield* RealmService;
-    const $feed: Computed<number> = yield* fromStream(
+    const $feed: Computed<number> = yield* Program.fromStream(
       realm,
       Stream.callback<number>(() =>
         Effect.gen(function* () {

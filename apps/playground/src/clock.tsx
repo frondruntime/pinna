@@ -1,5 +1,4 @@
-import type { Computed, Realm } from "@frondruntime/pinna-effect";
-import { atom, computed, onObserved, update } from "@frondruntime/pinna-effect";
+import { Atom, Computed, Realm, Source } from "@frondruntime/pinna-effect";
 import { useValue } from "@frondruntime/pinna-react";
 import { useState } from "react";
 import { Renders, useRenders } from "./renders.tsx";
@@ -9,16 +8,16 @@ import { Renders, useRenders } from "./renders.tsx";
  * since the epoch, ticking every `interval` milliseconds while something
  * observes it. Pinna has no clock of its own; this is one way to make one.
  *
- * - The atom stands for time. `onObserved` starts the timer with the first
+ * - The atom stands for time. `Source.onObserved` starts the timer with the first
  *   observer and stops it with the last.
  * - An unobserved atom counts as changed on every read, so a read with the
  *   timer stopped still returns the current time.
  */
 const makeClock = (realm: Realm, interval: number): Computed<number> => {
-  const $tick = atom(realm);
-  onObserved($tick, () => {
+  const $tick = Atom.make(realm);
+  Source.onObserved($tick, () => {
     const timer = setInterval(() => {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.changed($tick);
       });
     }, interval);
@@ -26,7 +25,7 @@ const makeClock = (realm: Realm, interval: number): Computed<number> => {
       clearInterval(timer);
     };
   });
-  return computed(realm, (read) => {
+  return Computed.make(realm, (read) => {
     read($tick);
     return Date.now();
   });
