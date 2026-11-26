@@ -170,6 +170,7 @@ export class ScheduledReaction {
     const core = owner.core;
     const settling = core.depth !== 0;
     this.running = true;
+    owner.scheduledRuns++;
     try {
       if (this.reaction.changed()) {
         this.pass(this.reaction);
@@ -180,6 +181,7 @@ export class ScheduledReaction {
       }
       core.reportAside(error);
     } finally {
+      owner.scheduledRuns--;
       this.running = false;
     }
   }

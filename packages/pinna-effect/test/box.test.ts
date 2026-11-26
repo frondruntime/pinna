@@ -150,3 +150,87 @@ describe("pinna's bare box", () => {
     expectRealmAtRest(realm);
   });
 });
+
+describe("a schema box given an outer draft", () => {
+  const positive = Schema.Struct({ n: Schema.Number.check(Schema.isGreaterThan(0)) });
+
+  test("a plain write of a live draft into a schema box throws pinna/draft-in-write and the update is undone", () => {
+    const realm = Realm.make();
+    const $outer = Box.make(realm, { child: { n: 1 } });
+    const $checked = Box.schema(realm, positive, { n: 1 });
+    let code: unknown;
+    try {
+      Realm.update(realm, (_read, write) => {
+        write.modify($outer, (draft) => {
+          draft.child.n = 2;
+          write($checked, draft.child);
+          draft.child.n = -1;
+        });
+      });
+    } catch (error) {
+      code = (error as { code?: unknown }).code;
+    }
+    expect(code).toBe("pinna/draft-in-write");
+    const [outer, checked] = Realm.untracked(realm, (read) => [read($outer), read($checked)]);
+    expect([outer.child.n, checked.n]).toEqual([1, 1]);
+    expectRealmAtRest(realm);
+    Realm.dispose(realm);
+  });
+
+  test("a live draft inside a plain container written to a schema box throws, written or not", () => {
+    const realm = Realm.make();
+    const $outer = Box.make(realm, { child: { n: 1 } });
+    const $checked = Box.schema(realm, Schema.Struct({ x: positive }), { x: { n: 1 } });
+    for (const writeFirst of [true, false]) {
+      expect(() =>
+        Realm.update(realm, (_read, write) => {
+          write.modify($outer, (draft) => {
+            if (writeFirst) {
+              draft.child.n = 2;
+            }
+            write($checked, { x: draft.child });
+          });
+        }),
+      ).toThrow("a checked box was given a draft of an open write.modify");
+    }
+    expect(Realm.untracked(realm, (read) => read($checked).x.n)).toBe(1);
+    Realm.dispose(realm);
+  });
+
+  test("a schema box write outside any recipe is unaffected", () => {
+    const realm = Realm.make();
+    const $checked = Box.schema(realm, positive, { n: 1 });
+    Realm.update(realm, (_read, write) => {
+      write($checked, { n: 3 });
+    });
+    expect(Realm.untracked(realm, (read) => read($checked).n)).toBe(3);
+    Realm.dispose(realm);
+  });
+
+  test("an outer modify's written draft assigned in an inner modify throws and the checked box keeps its value", () => {
+    const realm = Realm.make();
+    const $outer = Box.make(realm, { row: { n: 0 } });
+    const $checked = Box.schema(
+      realm,
+      Schema.Struct({
+        row: Schema.Struct({ n: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)) }),
+      }),
+      { row: { n: 0 } },
+    );
+    expect(() =>
+      Realm.update(realm, (_read, write) => {
+        write.modify($outer, (draft) => {
+          draft.row.n = 1;
+          write.modify($checked, (destination) => {
+            destination.row = draft.row;
+          });
+          draft.row.n = -1;
+        });
+      }),
+    ).toThrow("write.modify was given a draft another recipe wrote");
+    const [outer, checked] = Realm.untracked(realm, (read) => [read($outer), read($checked)]);
+    expect([outer.row.n, checked.row.n]).toEqual([0, 0]);
+    expectRealmAtRest(realm);
+    Realm.dispose(realm);
+  });
+});

@@ -8,11 +8,12 @@ import { isPinnaError, nextPlace, peekCell, placeKind } from "@frondruntime/pinn
 import type { AtomCell, BoxCell, Realm } from "./box.ts";
 import type { KeyedCollection } from "./collection.ts";
 import { orderValue } from "./patch.ts";
-import { type ObservableRealm, update, type VisibleStack } from "./realm.ts";
+import { type ObservableRealm, sendStackReports, update, type VisibleStack } from "./realm.ts";
 import {
   clearOverlay,
   findConflict,
   noteStageChange,
+  readVersion,
   runRecipes,
   type StageState,
 } from "./stage.ts";
@@ -131,17 +132,20 @@ const restoreIfMoved = (cell: BoxCell<unknown>, value: unknown, version: number)
  * sees base values alone.
  */
 /**
- * A box's `equals` while the stack settles what it shows, under the stage
+ * A box's `equals` while the stack plans what it shows, under the stage
  * guard as a replay's comparisons are: an `equals` that updates or observes
- * throws at the checks the core already makes. A throw counts as unequal
- * and goes to `onError`, so the stack never stops half shown.
+ * throws at the checks the core already makes. A throw counts as unequal,
+ * and reaches `onError` once the walk is over, as a stopped stage's error
+ * does (`sendStackReports`): a handler that writes or drops a stage must not
+ * change the stack under the plan.
  */
 const same = (
-  core: ObservableRealm["core"],
+  realm: ObservableRealm,
   box: BoxCell<unknown>,
   left: unknown,
   right: unknown,
 ): boolean => {
+  const core = realm.core;
   const active = core.active;
   const outerPlace = core.place;
   core.active = undefined;
@@ -149,7 +153,8 @@ const same = (
   try {
     return box.source.equals(left, right);
   } catch (error) {
-    core.reportAside(error);
+    if (realm.stackReports === undefined) realm.stackReports = [error];
+    else realm.stackReports.push(error);
     return false;
   } finally {
     core.active = active;
@@ -166,6 +171,12 @@ export class Stack implements VisibleStack {
   private readonly applied = new Set<AtomCell>();
   /** True while the cells hold the base. */
   window = false;
+  /**
+   * True while the stack writes cells raw (opening the window, showing
+   * again, the install pass): no application code may run then. Read by
+   * the stack's tests alone.
+   */
+  installing = false;
   /** The lowest stage whose overlay is out of date for a reason no input records. */
   private dirtyFrom = Number.POSITIVE_INFINITY;
   /** A replay ran or the stack changed in this window: the shown values are worked out again. */
@@ -178,6 +189,16 @@ export class Stack implements VisibleStack {
   open(): void {
     if (this.window) return;
     this.window = true;
+    this.installing = true;
+    try {
+      this.swapToBase();
+    } finally {
+      this.installing = false;
+    }
+  }
+
+  /** The base back in every covered cell, raw. */
+  private swapToBase(): void {
     for (const [box, under] of this.boxes) {
       restoreIfMoved(box, under.baseValue, under.baseVersion);
     }
@@ -211,7 +232,12 @@ export class Stack implements VisibleStack {
     if (this.changed) {
       this.show();
     } else {
-      this.reshow();
+      this.installing = true;
+      try {
+        this.reshow();
+      } finally {
+        this.installing = false;
+      }
     }
     this.window = false;
     this.changed = false;
@@ -272,11 +298,19 @@ export class Stack implements VisibleStack {
     return this.rows.get(collection as KeyedCollection<unknown, unknown>)?.base;
   }
 
-  /** The version shown at rest when `value` is the value shown there, for a landing. */
-  shownVersion(box: BoxCell<unknown>, value: unknown): number | undefined {
+  /**
+   * The value and version shown at rest when `value` equals the value shown
+   * there by the box's `equals`, for a landing: the shown value lands with
+   * the version readers hold, so applying the stage reruns nobody.
+   */
+  shownMatch(
+    box: BoxCell<unknown>,
+    value: unknown,
+  ): { readonly value: unknown; readonly version: number } | undefined {
     const under = this.boxes.get(box);
-    return under !== undefined && Object.is(under.shownValue, value)
-      ? under.shownVersion
+    if (under === undefined) return undefined;
+    return Object.is(under.shownValue, value) || box.source.equals(under.shownValue, value)
+      ? { value: under.shownValue, version: under.shownVersion }
       : undefined;
   }
 
@@ -290,18 +324,24 @@ export class Stack implements VisibleStack {
   }
 
   /** Takes a stage off the stack: the stages above it replay without it. */
-  leave(state: StageState, applied: boolean): void {
+  leave(state: StageState): void {
     const index = this.stages.indexOf(state);
     if (index === -1) return;
     this.stages.splice(index, 1);
-    if (applied && state.showing) {
-      // Leaving by `Stage.apply`: the marks it showed stay landed.
-      for (const atom of state.atoms) {
-        if (this.atoms.has(atom)) this.applied.add(atom);
-      }
-    }
     this.dirtyFrom = Math.min(this.dirtyFrom, index);
     this.changed = true;
+  }
+
+  /**
+   * `Stage.apply` of `state` replayed over the base and is about to land:
+   * the marks it showed stay landed, so the shown set does not withdraw
+   * them. Called only then, so an apply that fails withdraws its marks as a
+   * drop does.
+   */
+  keepMarks(state: StageState): void {
+    for (const atom of state.atoms) {
+      if (this.atoms.has(atom)) this.applied.add(atom);
+    }
   }
 
   /** A stage call on `state` reads through its root: brings the root's overlay up to date. */
@@ -310,6 +350,9 @@ export class Stack implements VisibleStack {
     if (!root.visible) return;
     const index = this.stages.indexOf(root);
     if (index !== -1) this.refresh(index);
+    if (this.realm.stackReports !== undefined && this.realm.updateDepth === 0) {
+      sendStackReports(this.realm);
+    }
     // `showing`, not the error, says a stage stopped: a recipe can throw `undefined`.
     if (root.status === "open" && !root.showing) throw root.failure;
   }
@@ -339,7 +382,7 @@ export class Stack implements VisibleStack {
       if (cell.source.version !== version) return true;
     }
     for (const [cell, read] of state.reads ?? []) {
-      if (cell.source.version !== read.version) return true;
+      if (readVersion(cell) !== read.version) return true;
     }
     return false;
   }
@@ -375,15 +418,27 @@ export class Stack implements VisibleStack {
     const journal = state.journal;
     const reads = state.reads;
     state.journal = [];
-    state.reads = undefined;
+    // Under "fail", the replay records what it reads apart: a box it reads
+    // or writes for the first time, such as through a branch a stage below
+    // now opens, joins the stage's reads at its version now, and the
+    // versions read first stay. A replay that throws adds nothing.
+    const replayReads: typeof reads = reads === undefined ? undefined : new Map();
+    state.reads = replayReads;
     state.inputs = new Map();
+    let failed = true;
     try {
       runRecipes(state, journal);
+      failed = false;
     } catch (error) {
       state.journal = journal;
       this.stop(state, error);
     } finally {
       state.reads = reads;
+      if (!failed && reads !== undefined && replayReads !== undefined) {
+        for (const [cell, read] of replayReads) {
+          if (!reads.has(cell)) reads.set(cell, read);
+        }
+      }
     }
   }
 
@@ -400,7 +455,11 @@ export class Stack implements VisibleStack {
     this.link(this.stages.length - 1);
     if (!isPinnaError(error, "StageConflictError")) {
       // A guess that is never applied would hide a broken recipe for good.
-      this.realm.core.reportAside(error);
+      // Sent once the walk is over (`sendStackReports`): a handler that
+      // writes or drops a stage must not change the stack under the walk.
+      const realm = this.realm;
+      if (realm.stackReports === undefined) realm.stackReports = [error];
+      else realm.stackReports.push(error);
     }
   }
 
@@ -430,8 +489,24 @@ export class Stack implements VisibleStack {
     }
   }
 
-  /** Works out what each covered cell shows from the stages' overlays, and shows it. */
+  /**
+   * Works out what each covered cell shows from the stages' overlays, then
+   * shows it, in two passes. The plan pass makes every `equals` call and no
+   * raw write; the install pass makes raw writes alone. So no application
+   * code runs between the first and the last raw install, and the cells
+   * never stand half shown where a box's `equals` could read them.
+   */
   private show(): void {
+    const plan = this.plan();
+    this.install(plan.boxes, plan.rows, plan.atoms);
+  }
+
+  /** The plan pass: the shown value and version of every covered cell. Writes nothing. */
+  private plan(): {
+    readonly boxes: Map<BoxCell<unknown>, UnderBox>;
+    readonly rows: Map<KeyedCollection<unknown, unknown>, UnderRows>;
+    readonly atoms: Set<AtomCell>;
+  } {
     const core = this.realm.core;
     const top = new Map<BoxCell<unknown>, unknown>();
     const topRows = new Map<
@@ -461,14 +536,13 @@ export class Stack implements VisibleStack {
       const baseValue = peekCell(box.source);
       const baseVersion = box.source.version;
       const previous = this.boxes.get(box);
-      const equals = (left: unknown, right: unknown): boolean => same(core, box, left, right);
       let shownValue = value;
       let shownVersion: number;
-      if (previous !== undefined && !fresh && equals(previous.shownValue, value)) {
+      if (previous !== undefined && !fresh && same(this.realm, box, previous.shownValue, value)) {
         // The value shown before stays, with its version: nobody reruns.
         shownValue = previous.shownValue;
         shownVersion = previous.shownVersion;
-      } else if (!fresh && equals(baseValue, value)) {
+      } else if (!fresh && same(this.realm, box, baseValue, value)) {
         shownValue = baseValue;
         shownVersion = baseVersion;
       } else {
@@ -505,8 +579,6 @@ export class Stack implements VisibleStack {
               : Object.is(peekCell(cell.source), value)
                 ? cell.source.version
                 : core.nextCellVersion();
-          restoreIfMoved(cell, value, version);
-          collection.placeCell(key, present ? (cell as BoxCell<unknown>) : undefined);
         }
         entries.set(key, {
           cell,
@@ -519,25 +591,52 @@ export class Stack implements VisibleStack {
       }
       // `rows` reads `changesCell`: its shown version moves when the shown rows do.
       settle(changes, peekCell(changes.source), moved);
-      for (const [key, entry] of entries) {
-        collection.putHeld(key, entry.shownPresent, entry.shownValue);
-      }
       rows.set(collection, { keys: entries, base: new BaseRows(collection, entries), baseChanges });
     }
-    for (const [box, under] of boxes) {
-      restoreIfMoved(box, under.shownValue, under.shownVersion);
-    }
-    this.boxes = boxes;
-    this.rows = rows;
-    // An atom marks when its mark enters the shown set and when it leaves
-    // by a drop or a stop, never again at apply.
-    const shownAtoms = this.atoms;
-    this.atoms = atoms;
-    for (const atom of atoms) {
-      if (!shownAtoms.has(atom)) atom.mark();
-    }
-    for (const atom of shownAtoms) {
-      if (!atoms.has(atom) && !this.applied.has(atom)) atom.mark();
+    return { boxes, rows, atoms };
+  }
+
+  /**
+   * The install pass: raw writes alone (`BoxCell.restore`, the rows held,
+   * a key's cell, an atom's mark), each of which only marks the graph
+   * inside the update's batch. No `equals`, listener, recipe, or `onError`
+   * runs here; `installing` says so to the stack's tests.
+   */
+  private install(
+    boxes: Map<BoxCell<unknown>, UnderBox>,
+    rows: Map<KeyedCollection<unknown, unknown>, UnderRows>,
+    atoms: Set<AtomCell>,
+  ): void {
+    this.installing = true;
+    try {
+      for (const [collection, under] of rows) {
+        for (const [key, entry] of under.keys) {
+          const cell = entry.cell;
+          if (cell === undefined) continue;
+          restoreIfMoved(cell, entry.shownValue, entry.shownVersion);
+          collection.placeCell(key, entry.shownPresent ? cell : undefined);
+        }
+        for (const [key, entry] of under.keys) {
+          collection.putHeld(key, entry.shownPresent, entry.shownValue);
+        }
+      }
+      for (const [box, under] of boxes) {
+        restoreIfMoved(box, under.shownValue, under.shownVersion);
+      }
+      this.boxes = boxes;
+      this.rows = rows;
+      // An atom marks when its mark enters the shown set and when it leaves
+      // by a drop or a stop, never again at apply.
+      const shownAtoms = this.atoms;
+      this.atoms = atoms;
+      for (const atom of atoms) {
+        if (!shownAtoms.has(atom)) atom.mark();
+      }
+      for (const atom of shownAtoms) {
+        if (!atoms.has(atom) && !this.applied.has(atom)) atom.mark();
+      }
+    } finally {
+      this.installing = false;
     }
   }
 }

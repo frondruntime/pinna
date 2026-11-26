@@ -16,7 +16,8 @@ import type { ObservableRealm } from "../realm.ts";
 
 /**
  * Each part of `realm` that is still open: an update, an untracked read or a
- * peek, an undo entry, an autorun's body, or a graph run, walk, or settle.
+ * peek, an undo entry, a journal slot still holding a value, an entry of the
+ * completion list, an autorun's body, or a graph run, walk, or settle.
  * Empty when the realm is at rest, as it is whenever no Pinna call is in
  * progress.
  */
@@ -40,6 +41,15 @@ export const openParts = (realm: Realm): ReadonlyArray<string> => {
   }
   if (state.scope !== 0) open.push(`update scope ${state.scope}`);
   if (state.journal.length !== 0) open.push(`${state.journal.length} undo entries`);
+  const slots = state.journal.slots;
+  let heldSlots = 0;
+  for (let index = state.journal.length; index < slots.length; index++) {
+    if (slots[index] !== undefined) heldSlots++;
+  }
+  if (heldSlots !== 0) open.push(`${heldSlots} journal slots past its end`);
+  if (state.completions.length !== 0) {
+    open.push(`${state.completions.length} completion entries`);
+  }
   if (state.stack?.window === true) open.push("a visible stage's window");
   if (core.active !== undefined) open.push("a running computed value or watch");
   if (core.depth !== 0) open.push(`graph depth ${core.depth}`);

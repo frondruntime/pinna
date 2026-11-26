@@ -33,6 +33,7 @@ import { equalKey, hashKey, identityHash } from "./identity.ts";
 import { Journal, runUndo, type UndoTarget } from "./journal.ts";
 import type { Atom } from "./modules/atom.ts";
 import type { Box } from "./modules/box.ts";
+import type { Collection } from "./modules/collection.ts";
 import type { Computed } from "./modules/computed.ts";
 import type { Realm } from "./modules/realm.ts";
 import {
@@ -174,11 +175,30 @@ export const endOfRecorded = {} as BoxCell<unknown>;
  * `collection.ts` implements: the realm asks each collection that changed
  * for its part of the record as the outermost update ends.
  */
+/** The rows a listener registered at rest heard first: its collection's key order and each key's row, in base values. */
+export interface RegistrationRows {
+  readonly collection: Collection<unknown, unknown>;
+  readonly keys: ReadonlyArray<unknown>;
+  readonly rows: ReadonlyArray<unknown>;
+}
+
 export interface RecordedCollection {
   /** True while the realm's `recordedCollections` holds it. */
   recording: boolean;
-  /** The collection's net change since the outermost update began, or `undefined`; forgets it. */
+  /**
+   * The collection's net change since the outermost update began, or
+   * `undefined`; forgets it. A change it returns has its listener counts in
+   * `listenerCounts` (`record.ts`).
+   */
   takeChange(stack: VisibleStack | undefined): CollectionChange | undefined;
+  /** True when the outermost update added a `Collection.onRowChange` listener to it; `takeChange` forgets it. */
+  registeredInUpdate(): boolean;
+  /**
+   * Runs `restore`, a `write.revert` or `write.replay` of this collection's
+   * rows, with only the `Collection.onRowChange` listeners registered after
+   * the first `count` hearing its writes.
+   */
+  restoreHeardAfter(count: number, restore: () => void): void;
 }
 
 /**
@@ -186,6 +206,14 @@ export interface RecordedCollection {
  * that changed with no row (a stage that lands a new order alone).
  */
 export const orderOwners = new WeakMap<object, RecordedCollection>();
+
+/**
+ * An entry of the realm's completion list: `complete` runs once, when the
+ * outermost update that added it ends, and does not throw.
+ */
+export interface Completion {
+  complete(): void;
+}
 
 /** A `Realm.onUpdate` listener, and whether it takes records yet: one added in an update starts at the next. */
 export interface UpdateListenerEntry {
@@ -260,6 +288,11 @@ export class ObservableRealm implements Realm {
    */
   status: RealmStatus = "open";
   /**
+   * Scheduled watches and autoruns running now, from their scheduler's
+   * `run`: the graph is at depth 0 there, so `Realm.dispose` asks this too.
+   */
+  scheduledRuns = 0;
+  /**
    * What `Realm.dispose` stops besides the graph's own watches and reactions:
    * each autorun, `Collection.onRowChange` listener, and open stage, by its label for
    * `testRealm`'s report. Added when each starts and deleted when it stops,
@@ -287,6 +320,32 @@ export class ObservableRealm implements Realm {
   recordedAtoms: Set<AtomCell> | undefined = undefined;
   /** The names of the stages `Stage.apply` landed in the outermost update, while a listener exists. */
   landedStages: Array<string | undefined> | undefined = undefined;
+  /**
+   * While the outermost update is the one `Collection.onRowChange` opens
+   * at rest for its listener's replay, the rows that listener hears, in
+   * key order; else `undefined`. Its record holds that listener's writes
+   * alone, and a restore of it checks these rows (`record.ts`).
+   */
+  registrationRows: RegistrationRows | undefined = undefined;
+  /**
+   * The completion list: what the outermost update acquired and releases
+   * when it ends, failed or not, each entry once, in the order added
+   * (`forget` drains it). A key order's log of changes in place
+   * (`OrderCell` in `collection.ts`) is one, so a removed key is not held
+   * past its update. A failure's release is a journal step instead. One
+   * flat array, reused between updates: an entry is the object itself, so
+   * the list adds no wrapper objects. Emptied with `length = 0`, which on
+   * Hermes drops its storage: the next update's first entry allocates it.
+   */
+  readonly completions: Array<Completion> = [];
+  /**
+   * Errors that stopped a visible stage in the last walk of the stack, not
+   * yet sent to `onError`. Sent once the outermost update is over, or once
+   * the stage call that walked the stack outside an update returns its
+   * walk, so a handler that writes or drops a stage starts its own update
+   * instead of changing the stack mid-walk. `undefined` when none.
+   */
+  stackReports: Array<unknown> | undefined = undefined;
   /** Records built and not yet handed to the listeners, oldest first. */
   recordQueue: Array<QueuedRecord> | undefined = undefined;
   /** True while the listeners take records: a record built meanwhile joins the queue. */
@@ -514,6 +573,14 @@ export class ObservableRealm implements Realm {
     this.recorded = endOfRecorded;
     this.recordedCount = 0;
     this.journal.forget(0);
+    // After the record: a collection's part of it reads an order's log.
+    const completions = this.completions;
+    if (completions.length !== 0) {
+      for (let index = 0; index < completions.length; index++) {
+        (completions[index] as Completion).complete();
+      }
+      completions.length = 0;
+    }
   }
 
   /** `Realm.untracked` for one computed value, without a closure: what `peek` costs on Hermes. */
@@ -531,6 +598,16 @@ export class ObservableRealm implements Realm {
     }
   }
 }
+
+/** Sends the errors that stopped visible stages to `onError`, oldest first, each once. */
+export const sendStackReports = (realm: ObservableRealm): void => {
+  const reports = realm.stackReports;
+  if (reports === undefined) return;
+  realm.stackReports = undefined;
+  for (const error of reports) {
+    realm.core.reportAside(error);
+  }
+};
 
 // The realm's operations: each takes the realm first, or reads it from the observable.
 
@@ -582,7 +659,7 @@ export const disposeRealm = (realm: Realm): void => {
     return;
   }
   const core = owner.core;
-  if (core.depth !== 0 || !placeAllows.rest(core.place)) {
+  if (core.depth !== 0 || !placeAllows.rest(core.place) || owner.scheduledRuns !== 0) {
     throw new PinnaUsageError(
       "pinna/dispose-not-at-rest",
       "pinna: Realm.dispose runs while the realm is running an update, a derivation, a watch, an autorun, a hook, or a Realm.onUpdate listener; dispose from an event handler or a teardown, once the realm is at rest",
@@ -856,6 +933,9 @@ export const update = (realm: Realm, recipe: UpdateRecipe, options?: UpdateOptio
       if (owner.recordQueue !== undefined) {
         drainRecords(owner);
       }
+      if (owner.stackReports !== undefined && owner.updateDepth === 0) {
+        sendStackReports(owner);
+      }
     }
   }
 };
@@ -932,7 +1012,8 @@ const scheduledWatch = <Value>(
       value = next;
       // A hook the run started may have stopped the watch, as `runWatch`
       // checks `linked`.
-      if (!scheduled.stopped && !equals(previous, next)) {
+      // `stopped` again after `equals`, which may stop the watch.
+      if (!scheduled.stopped && !equals(previous, next) && !scheduled.stopped) {
         effect(next, previous);
       }
     },

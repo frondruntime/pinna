@@ -12,6 +12,7 @@ import {
 } from "effect";
 import {
   Box,
+  Collection,
   Computed,
   DecodeError,
   isPinnaError,
@@ -877,4 +878,41 @@ describe("prototype-named fields", () => {
       expect(made[name]).toBe(7);
     });
   }
+});
+
+describe("a symbol-keyed plain field", () => {
+  const reference = Symbol("reference");
+  class Quote extends Model.Schema<Quote>("Quote")({
+    id: Schema.String,
+    [reference]: Schema.Number,
+    $price: Model.boxField(Schema.Number),
+  }) {}
+
+  test("decode, make, snapshot, and restore keep it", () => {
+    const realm = Realm.make();
+    const decoded = Model.decode(realm, Quote)({ id: "q", [reference]: 7, price: 1 });
+    expect(decoded[reference]).toBe(7);
+    const made = Quote.make({ realm, id: "q", [reference]: 7, price: 1 });
+    expect(made[reference]).toBe(7);
+    const saved = Realm.untracked(realm, (read) => read.snapshot(decoded));
+    expect(saved[reference]).toBe(7);
+    Realm.update(realm, (_read, write) => {
+      write.restore(decoded, { ...saved, price: 2 });
+    });
+    expect(Realm.untracked(realm, (read) => read(decoded.$price))).toBe(2);
+    Realm.dispose(realm);
+  });
+
+  test("reconcile replaces a row whose symbol field changed, and merges one whose field matches", () => {
+    const realm = Realm.make();
+    const previous = Quote.make({ realm, id: "q", [reference]: 1, price: 1 });
+    const changed = Quote.make({ realm, id: "q", [reference]: 2, price: 1 });
+    const [replaced] = Collection.reconcile([previous], [changed], { keyOf: (quote) => quote.id });
+    expect(replaced?.[reference]).toBe(2);
+    const same = Quote.make({ realm, id: "q", [reference]: 1, price: 5 });
+    const [merged] = Collection.reconcile([previous], [same], { keyOf: (quote) => quote.id });
+    expect(merged).toBe(previous);
+    expect(Realm.untracked(realm, (read) => read(previous.$price))).toBe(5);
+    Realm.dispose(realm);
+  });
 });

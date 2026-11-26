@@ -53,18 +53,76 @@ declared.
   (`before` and `after`) only when the key order moved. A `Model.Schema`
   row merged in place changes its `Model.boxField` boxes, which appear in
   `boxes`, and no row.
-- `write.revert` writes `before` whatever the box holds now. An undo that
-  skips a box changed since compares the box's value to the record's
-  `after` first. Revert records newest first and replay them oldest first:
-  a collection whose key order moved gets its whole order back, and a key
-  that order needs which neither the record nor the collection holds throws
-  `pinna/record-not-applicable`.
+- `write.revert` and `write.replay` take only a record `Realm.onUpdate`
+  handed out; a copy, such as `{ ...record, name }`, or a record made by
+  hand throws `pinna/record-not-applicable`. The realm keeps beside each
+  record which listeners its update had, and a copy loses that.
+- A record applies only to the state it left. `write.revert` requires
+  every box and row the record changed to hold its `after` now, and a key
+  order it moved to equal its `after` key by key; `write.replay` requires
+  each `before`. Values compare by `Object.is`. A mismatch throws
+  `pinna/record-not-applicable` before the first write, so nothing is
+  written. Revert records newest first and replay them oldest first;
+  applied out of order, a record would install values computed from a
+  state that is gone, such as a sum a listener keeps one change off.
+  The check reads each recorded box and row through `read`, so in a stage
+  recipe under `conflicts: "fail"` every recorded box is a conflict input,
+  and a visible stage that replays a restore stops with
+  `pinna/record-not-applicable` once the base moves under it; both are
+  intended.
+- A `Collection.onRowChange` listener added before a record's update ended
+  does not run when that record is reverted or replayed: the record
+  already holds what it wrote, in the boxes and collections it lists, and
+  those land at the record's values. A listener added later runs for each
+  row the restore changes, as for any write, because the record holds
+  nothing of its state.
+- A view (`View.ordered`, `View.grouped`, `View.totals`) is in no record:
+  its boxes and collections never appear in `boxes` or `collections`, and
+  it runs for each row every restore changes. Its state follows from the
+  rows and its options, so it needs no recorded value, and a record
+  applies whatever views exist.
+- `write.revert` and `write.replay` write collections first, then boxes,
+  then atoms, so a recorded value wins over what a later listener wrote to
+  the same box.
+- A listener added after the record that, as it hears one collection's
+  restore, changes a row the record lists, or a key order it moved, in a
+  collection restored before throws `pinna/record-not-applicable`, and
+  every write of the restore is put back. Each collection is compared with
+  what its own restore left once all are written; writing it again would
+  run its later listeners again, so the restore refuses rather than land a
+  value the record does not hold.
+- A record whose `Realm.update` added a `Collection.onRowChange` listener
+  throws `pinna/record-not-applicable` on `write.revert` and
+  `write.replay`, whether or not the update changed rows: it holds what
+  the new listener wrote, and its `before` holds that state from before
+  the listener existed. Add listeners at rest.
+- A record made only by a listener added at rest, which holds what it
+  wrote as it heard the rows held, restores without running it: its
+  `write.revert` writes nothing, since the listener still runs and its
+  state follows the rows, and its `write.replay` writes each `after`
+  again, the state the listener first built, which the records after it
+  hold. Both require the collection to hold the rows the listener first
+  heard.
 - A record is frozen and holds the values the update wrote, which Pinna
   never mutates. It lives for one session: it names boxes by identity, so
   it does not survive a reload.
 
 ## Limits
 
+- State a row listener keeps outside Pinna, such as a plain `Map` or a log
+  line, is not restored: a listener registered before the record's update
+  ended does not run on `write.revert` or `write.replay`. `Realm.onUpdate` hands the restore's
+  own record to code that mirrors state.
+- A `Collection.onRowChange` listener added after some records runs when
+  their restore changes rows, and a listener that keeps an object in a box
+  builds a new one. A record made after it was added holds the object it
+  built first, so that record's `write.replay` after such a restore throws
+  `pinna/record-not-applicable` unless the record of the listener's own
+  registration was replayed first and put the object back. Two cases have
+  no such record: a listener added to an empty collection, which wrote
+  nothing; and a history that dropped the registration's record, as a new
+  write after an undo past it does. A listener that keeps numbers or
+  strings, and a view, are not affected. Open (ruling 74).
 - A computed value is not in a record. It is derived, so replaying its
   sources reproduces it.
 - An atom carries no value. Its entry says it changed; replay and revert
@@ -91,8 +149,8 @@ the realm is disposed and requires no service.
 | `Realm.onUpdate(realm, (record) => ...)` | Adds a listener and returns its stop, which does nothing the second time. Throws in a computed value, a watch's select, a selector, and a stage recipe, and once the realm is disposing. `Realm.dispose` stops it and drops records not yet handed out; `testRealm` reports one left running. |
 | `Realm.update(realm, recipe, { name })` | The update, with `name` on its record. A nested update's name is ignored. An empty name throws `pinna/empty-name`. |
 | `UpdateRecord` | `{ name, stages, boxes, collections, atoms }`: `boxes` in the order first written, each `{ box, before, after }`; `collections` each `{ collection, rows, keys }`; `atoms` in the order first changed. |
-| `write.replay(record)` | Each box to `after`, each collection's rows to `after` and, when `keys` is set, its key order to `keys.after` through `write.replaceAll`, and each atom changed. Inside `Realm.update` or a stage recipe. A throw puts back every write it made. |
-| `write.revert(record)` | The same, to each `before`. |
+| `write.replay(record)` | Throws `pinna/record-not-applicable` unless the state holds each `before`, or the record's update added a listener. Then each collection's rows to `after` and, when `keys` is set, its key order to `keys.after` through `write.replaceAll`, then each box to `after`, then each atom changed. Inside `Realm.update` or a stage recipe. A throw puts back every write it made. |
+| `write.revert(record)` | The same from each `after`, to each `before`. A `Collection.onRowChange` listener added before the record's update ended does not run for either; a view always runs. Both install each recorded row by identity, with no merge and no `equals`: a `Model.Schema` row comes back as the object the record holds, and its boxes through the record's box changes. |
 | `Program.updates(realm)` | A stream of every record from the next update on, unbounded, ending when the realm is disposed. |
 
 ## See also

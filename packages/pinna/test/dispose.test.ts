@@ -463,3 +463,57 @@ describe("disposeRealm while the realm runs", () => {
     });
   });
 });
+
+describe("disposal from a scheduled run", () => {
+  for (const kind of ["watch", "autorun"] as const) {
+    test(`a scheduled ${kind}'s run refuses Realm.dispose and leaves the realm open`, () => {
+      const errors: Array<unknown> = [];
+      const realm = Realm.make({
+        onError: (error) => {
+          errors.push(error);
+        },
+      });
+      const $value = Box.make(realm, 0);
+      const frame: Array<() => void> = [];
+      const scheduler = (run: () => void) => {
+        frame.push(run);
+      };
+      let runs = 0;
+      const stop =
+        kind === "watch"
+          ? Realm.watch(
+              realm,
+              (read) => read($value),
+              () => {
+                Realm.dispose(realm);
+              },
+              { scheduler },
+            )
+          : Realm.autorun(
+              realm,
+              (read) => {
+                read($value);
+                if (runs++ > 0) {
+                  Realm.dispose(realm);
+                }
+                return undefined;
+              },
+              { scheduler },
+            );
+      Realm.update(realm, (_read, write) => {
+        write($value, 1);
+      });
+      frame.shift()?.();
+      expect(Realm.status(realm)).toBe("open");
+      expect(errors.map((error) => (error as PinnaUsageError).code)).toEqual([
+        "pinna/dispose-not-at-rest",
+      ]);
+      Realm.update(realm, (_read, write) => {
+        write($value, 2);
+      });
+      stop();
+      Realm.dispose(realm);
+      expect(Realm.status(realm)).toBe("disposed");
+    });
+  }
+});

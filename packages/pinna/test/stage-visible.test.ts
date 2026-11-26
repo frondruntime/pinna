@@ -426,6 +426,41 @@ describe("the nine probes", () => {
 });
 
 describe("errors", () => {
+  test("an equals that throws while the stack plans reaches onError after the walk, where a drop shows", () => {
+    let explode = false;
+    let upper: Stage | undefined;
+    const reported: Array<unknown> = [];
+    const realm = Realm.make({
+      onError: (error) => {
+        reported.push(error);
+        if (upper !== undefined) Stage.drop(upper);
+      },
+    });
+    const $input = Box.make(realm, 0);
+    const $shaky = Box.make(realm, 0, {
+      equals: (left, right) => {
+        // The shown 1 against the replayed 2: the plan's comparison alone.
+        if (explode && left === 1 && right === 2) {
+          explode = false;
+          throw new Error("equals");
+        }
+        return left === right;
+      },
+    });
+    const $other = Box.make(realm, 0);
+    const lower = Stage.make(realm, { visible: true });
+    Stage.update(lower, (read, write) => write($shaky, read($input) + 1));
+    upper = Stage.make(realm, { visible: true });
+    Stage.update(upper, (_read, write) => write($other, 5));
+    explode = true;
+    Realm.update(realm, (_read, write) => write($input, 1));
+    expect(reported).toHaveLength(1);
+    expect(Stage.status(upper)).toBe("dropped");
+    expect(Realm.untracked(realm, (read) => [read($shaky), read($other)])).toEqual([2, 0]);
+    Stage.drop(lower);
+    Realm.dispose(realm);
+  });
+
   test("a recipe that throws undefined on replay stops its stage all the same", () => {
     const reported: unknown[] = [];
     const realm = Realm.make({ onError: (error) => reported.push(error) });

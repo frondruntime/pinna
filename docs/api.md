@@ -196,7 +196,8 @@ there too.
 39. **The function form of `useValue` is its own hook** (2026-11-05).
     `useValue` and `useValues` know what they read before the render,
     subscribe when React subscribes, and read no context; the function form
-    keeps the layout effect a function needs. Renamed `useSelect` by 41.
+    keeps the layout effect a function needs. Renamed `useSelect` by 41;
+    amended by 75.
 40. **One name per action** (2026-11-07). The encoded type of a
     `Model.Schema` names a `$name` field `name` and leaves out `realm`, as
     the wire does. Its methods per action are replaced by 43. Replaces 9.
@@ -882,9 +883,17 @@ there too.
       from that stage. A collection a guess wrote is copied on each replay:
       100,000 rows cost 3.4 ms per base write under one guess on Bun 1.4.4.
       The design record is `docs/design.md`, "Visible stages".
+    - Amended 2026-11-26 (the install rule, slice 3 of the 0.2.0 fix
+      plan): no application code runs between the first and the last raw
+      write of a swap. `Stack.show` plans every `equals` call before any
+      raw write, and an `equals` that throws reaches `onError` after the
+      outermost update, as a stopped stage's error does; a handler's
+      `Stage.drop` under the walk was lost before. The collection key rule
+      this slice found is ruling 75. The stage fuzz gained the vocabulary that would have found the D6
+      findings, and 20,000 seeds ran clean.
 69. **The change stream** (2026-11-25, the owner unparked it as the base
     for devtools, replay, undo, and logging; designed the same day,
-    in the change stream design note). `Realm.onUpdate(realm, listener)` hands one
+    in the change stream design note; amended by 74). `Realm.onUpdate(realm, listener)` hands one
     frozen `UpdateRecord` per landed outermost update, `{ name, stages,
     boxes, collections, atoms }`; `write.replay(record)` and
     `write.revert(record)` apply one forward and backward;
@@ -1169,6 +1178,223 @@ there too.
       (from 461 µs), a remove 12 µs (from 137 µs), a hidden stage 9 µs (from
       4.0 ms), a base write under a guess 5.3 µs (from 2.79 ms)
       (`docs/performance.md`, "The core rewrite's row probes").
+
+74. **Restore once** (2026-11-26; amends 69. The 0.2.0 review's
+    "The amended restore design"; the owner approved that row listeners
+    stay silent on undo and redo when the record holds what they wrote).
+    `write.revert` and `write.replay` installed a record's endpoints and
+    also ran every row listener again, so a listener that wrote another
+    collection the recipe had written first left it wrong (probe P3), and
+    a record applied out of order installed a stale sum or order with no
+    error (P1, P2).
+    - **Check before writing.** A revert requires every recorded box and
+      row to hold its `after` now and a moved key order to equal its
+      `after` key by key, all by `Object.is`; a replay requires each
+      `before`. A mismatch throws `pinna/record-not-applicable` before the
+      first write. Cost: one pass over the record, on the restore's path.
+    - **A serial per listener.** A collection counts its
+      `Collection.onRowChange` registrations; each listener keeps the
+      count after its own. The record's update keeps each collection's
+      count at its end in a `WeakMap` keyed by the `CollectionChange`, so
+      the public record keeps its shape. On restore, a listener hears a
+      row change only when its serial is above that count: an older one
+      stays silent, since the record holds what it wrote; a later one,
+      a view's included, hears it through the normal path. Amends 69's
+      "are writes": a restore is still a checked, journaled write that
+      works in a stage recipe, rolls back whole on a throw, emits its own
+      record, and notifies observers, but it runs only later listeners.
+    - **Writes in the built order**: collections, then boxes, then atoms,
+      so a recorded value wins over what a later listener wrote to the
+      same box.
+    - **A later listener cannot move a restored collection.** Once every
+      collection is written, each recorded row and moved key order is
+      compared with what that collection's own restore left; a change
+      throws `pinna/record-not-applicable` and the update rolls back. A listener
+      added after the record that hears one collection's restore can
+      write another collection already restored (found in review:
+      a replaced `b.x`, then an inserted `a.x`, and a later `a`
+      listener that removes `b.x` on removals left `b.x` absent after a
+      revert). Writing the collection again would run its later listeners
+      again with no bound, and landing the wrong row is a silent wrong
+      value (ruling 71 test 3). Cost: for a record of two or more
+      collections, an array per collection and a second pass, on the
+      restore's path only.
+    - **A restore is not a refetch.** `write.revert` and `write.replay`
+      install each recorded row by identity: the collection's merge
+      (ruling 51) and its `equals` are off while its part is written, so a
+      `Model.Schema` row comes back as the object the record holds, not
+      merged into the one held, and a later listener hears the recorded
+      objects. The row's boxes come back through the record's box changes.
+      A merge is for data arriving from outside; merging a restore kept
+      the newer object, so a revert of an older record then threw
+      `pinna/record-not-applicable` on identity (test 3). Cost: two field
+      swaps per recorded collection, on the restore's path; `write.upsert`
+      and `write.replaceAll` read the same fields as before.
+    - **A view is in no record and hears every restore.** A view's state
+      box is a `CollectionCell`, and a collection `View.grouped` or
+      `View.totals` keeps has `inRecord` false, so neither appears in a
+      record's `boxes` or `collections`; both stay journaled and staged.
+      A view's listener entry takes no serial a record counts, so it hears
+      every restore and updates from the row changes. A view's state is a
+      function of its rows and options, kept by a deterministic,
+      incremental listener, so it needs no recorded endpoint: P2's revert
+      applies and the view follows the rows, a view made at rest or in an
+      update makes no record and no refusal, and records stop handing a
+      view's tree objects to devtools and `Realm.onUpdate`. The design
+      review of 2026-11-26 held the proposal's storage exclusion right and
+      its rebuild on restore unneeded.
+    - **A listener registered inside an update is refused.** A record
+      whose `Realm.update` added a `Collection.onRowChange` listener to a
+      collection throws `pinna/record-not-applicable`, rows changed or
+      not: its writes mix with the recipe's, and its `before` holds the
+      listener's state from before it existed. The design review's rule named only an
+      update that also changed the collection's rows; the change stream
+      fuzz found the same wrong value with no row change, so the purpose
+      decides (ruling 71 test 3).
+    - **A listener registered at rest restores.** The update
+      `Collection.onRowChange` opens at rest for its replay keeps the rows
+      the listener heard with its record (a `WeakMap` by record). Its
+      revert writes nothing, since the listener still runs and older
+      restores reach it; its replay writes each `after` again, the objects
+      the listener first built, which the later records hold. Both check
+      the rows first. Refusing it (test 3) lost to test 5: `pinna-devtools`
+      and an undo stack walk the log, and every listener added lazily would
+      be a wall. Writing nothing on replay lost to test 3 as well: a
+      listener that heard an older restore holds a new object, and every
+      later record's check would throw.
+    - **Only a record the realm made.** `write.revert` and
+      `write.replay` take only a record `takeRecord` built (a `WeakSet`);
+      any other object throws `pinna/record-not-applicable`. What the
+      realm keeps beside a record, the listener counts and the marks
+      above, is keyed by the record and its changes, and a copy such as
+      `{ ...record, name }` drops part of it and restored a wrong count
+      (the 0.2.0 review, test 3; ruling 69 already has a record
+      live for one session and name boxes by identity).
+    - Rejected: a realm-wide listener generation (refuses undo after an
+      unrelated listener is added; `apps/desk` adds one per
+      `PositionBook`), rebuilding views on restore, and running every
+      listener and throwing when the result differs from the record (P3's
+      undo becomes impossible instead of wrong).
+    - Not covered: state a listener keeps outside Pinna is not restored.
+      Open (test 7): a listener added after some records that keeps an
+      object in a box builds a new one when it hears their restore, so a
+      later record's replay throws when no registration record puts the
+      first object back: a listener added to an empty collection, or one
+      whose registration record a fork of the history dropped.
+75. **The 0.2.0 review, consolidated** (2026-11-26; the 0.2.0 review
+    and the fix plan's slices 0 to 5). The slices wrote their own
+    rulings (74, and the 2026-11-26 amendment of 68); this one holds what
+    they left open between them, and lists what a user can observe that
+    changed.
+    - **Amends 39.** `useValue` and `useValues` subscribe when React
+      subscribes, and `useValue` adopts its capture in React's own
+      `subscribe`, with no layout effect; `useValues` and `useSelect` keep
+      the layout effect, with `[store, capture]` deps. Every hook returns
+      the value its render computed as the snapshot, from a capture of the
+      render that nothing observes until React commits that render
+      (`docs/design.md`, "React hooks"). The ruling's "know what they read
+      before the render" holds, and a render React throws away no longer
+      moves a subscription.
+    - **`Capture` and `Reaction.follow` are `pinna-core` additions** (test
+      5 of ruling 71: complete, not speculative). A value-returning
+      `getSnapshot` needs a run whose reads are recorded with their
+      versions and observed by nothing, and a commit that moves a
+      reaction's edges to that record. The pending node `trackPending`
+      reused could do neither without observing, which is what restarted a
+      `Computed.fromPromise` request in a render React discarded. Both are
+      raw core API, as `Reaction.adopt` is; `pinna` and `pinna-effect`
+      export neither. A stated limit of the core API (an edge, ruling 67):
+      `Capture.changed` sees writes, not an unobserved atom's outside
+      value; `Reaction.follow` or `Reaction.activate` decide that, and the
+      hooks decide only through them.
+    - **The collection key rule.** Keys are equal as a `Map`'s are: `NaN`
+      matches `NaN`, and `0` matches `-0`. A collection stores a key as its
+      `Map` does, so a row keyed `-0` is held under `0`, and `keys`, a
+      view's keys, a row listener's `key`, and a record's row `key` hand out
+      `0` on every path, base or staged. Before, the order kept the sign of
+      a key's first write, a view and a listener the sign of the latest
+      row, and a record the `Map`'s `0`: one row, keys `Object.is` told
+      apart. This reverses what review finding D5-3 expected, which was the
+      first-written sign. The write paths (`upsert`, `write.remove`, their
+      staged twins, `replaceAll`, the constructor) normalize inline,
+      `key === 0 ? 0 : key`, off the `keyOf` wrapper, since Hermes pays for a
+      call it does not inline; the wrapped `keyOf` stays for snapshots,
+      views, and stage patches.
+    - **The depth budget replaces the rebuilt-chain rule.** A read that
+      stops past `maximumComputeDepth` (256) runs its value again at most
+      `maximumRestarts` (64, in `graph.ts`) times within one outer read,
+      then throws `pinna/depth-rebuilt`. The earlier rule refused the first
+      retry that stopped at a value it made, so a root that made a second
+      kept deep branch on its retry threw. A compute that makes and keeps
+      one deep chain per run finishes in chains + 1 runs, so it reads up to
+      63 kept chains; one that rebuilds a chain on every run throws after
+      65 runs. Open (test 7): the conservative option, a budget, was taken
+      over the alternatives, no limit (a rebuilt chain never ends) or a
+      larger one (more values made before the throw). A test ties the
+      numbers in `errors.md` to `graph.ts`.
+    - **A record is an identity, not a shape** (the reviewer, 2026-11-26).
+      A copy, a serialized record, or a hand-made one is refused with
+      `pinna/record-not-applicable` (ruling 74; test 7). Devtools export or
+      import of a history, if it ever comes, needs its own design and is
+      not implied by this one.
+    - **Edges recorded, not fixed** (ruling 67), each with one sentence
+      under "Some mistakes are not caught" in
+      `docs/public/start/principles.md` and a test that pins the current
+      behavior: D2-3 and D2-4 (`Reaction.adopt` of the raw core from a
+      derived value, and inside the reaction's own `trackPending` run), D3-3
+      (`Model.restore` or `Collection.reconcile` from a nested watch's
+      select), D4's `write.modify` draft stored in a new `Map`,
+      `Capture.changed` over an atom nothing observes (it answers by
+      writes alone; `Reaction.follow` and `Reaction.activate` see the
+      atom), and D2's
+      named comparator: a misuse inside the `equals` of a named
+      `Computed.make` still throws loudly, but with the generic label "a
+      derived value", since naming the computed value would need a store on
+      each recompute that has an `equals`. Each of the first four would
+      cost a check on a path ruling 71 test 6 closes; the `Capture.changed`
+      limit keeps a renderer's snapshot stable, since a walk would call an
+      unobserved atom changed at every call; the comparator's loud
+      error with a weaker label is an edge, and its label is not worth that
+      store.
+    - **Public contract changes in 0.2.0 from this review.** Every one is
+      in `docs/public`.
+      - New errors, all in `docs/public/reference/errors.md`:
+        `pinna/depth-rebuilt`; `pinna/draft-of-another-recipe` (an outer
+        `write.modify`'s written draft assigned inside an inner one);
+        `pinna/draft-in-write` (a `Box.schema` or `Model.boxField` written
+        with a draft of an open `write.modify`); new messages of
+        `pinna/record-not-applicable`: a record the realm did not hand out,
+        a box, row, or key order that no longer holds the record's side, a
+        record whose update added a `Collection.onRowChange` listener, and a
+        collection that no longer holds the rows a listener heard.
+      - `write.revert` and `write.replay` check the record first and write
+        nothing on a mismatch; listeners registered before the record's
+        update ended stay silent, and later ones hear the restore (ruling
+        74); a registration inside an update makes a record that
+        is refused.
+      - A collection key `-0` is stored and handed out as `0`.
+      - A draft copy keeps a prototype, `null` included, symbol keys, and a
+        match array's `index`, `input`, and `groups`; a model field key may
+        be a symbol; a snapshot walks symbol keys and keeps an empty
+        array slot.
+      - A `Collection.make` collection remembers that it holds model rows
+        once a snapshot or a restore finds one, so plain data then throws
+        `pinna/restore-cannot-make-row`.
+      - A stage's `equals` runs before any raw write of a swap, and its
+        throw reaches `onError` after the outermost update; an atom mark of
+        a failed `Stage.apply` is withdrawn; a fail stage counts an atom's
+        confirmed changes and a first read of a replay joins the reads at
+        its confirmed version; `Stage.update` before the section returns
+        its Effect throws the conflict as the Effect does.
+      - A disposed view keeps the confirmed order, not a stage's.
+      - `Computed.fn` returns the first of two entries made for one
+        argument list before either was observed, and the second once the
+        first is released.
+      - React: every hook returns what its render computed and a render
+        React discards moves nothing ("A render and its commit",
+        `docs/public/react/hooks.md`); `useValues` keeps its array
+        when equal values move to other observables; `useSelect` renders
+        again only when its result changes.
 
 ## Build slices
 

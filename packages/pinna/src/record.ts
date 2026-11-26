@@ -9,7 +9,7 @@
  * any update's record (`docs/design.md`, "Change stream").
  */
 import { nextPlace, PinnaUsageError, peekCell, placeKind } from "@frondruntime/pinna-core";
-import { type AtomCell, type BoxCell, CollectionCell } from "./box.ts";
+import { type AtomCell, type BoxCell, CollectionCell, names } from "./box.ts";
 import type { RowChange } from "./collection.ts";
 import { deleteMember } from "./journal.ts";
 import type { Atom } from "./modules/atom.ts";
@@ -21,6 +21,7 @@ import {
   orderOwners,
   type QueuedRecord,
   type RecordedCollection,
+  type RegistrationRows,
   type UpdateListenerEntry,
 } from "./realm.ts";
 import type { Read, Write } from "./verbs.ts";
@@ -76,6 +77,11 @@ const describeCollection = (collection: Collection<unknown, unknown>): string =>
   return name === undefined ? "a collection" : `the collection "${name}"`;
 };
 
+const describeBox = (box: Box<unknown>): string => {
+  const name = names.get((box as unknown as BoxCell<unknown>).source);
+  return name === undefined ? "a box" : `the box "${name}"`;
+};
+
 const keyText = (key: unknown): string => {
   try {
     return typeof key === "string" ? `"${key}"` : String(key);
@@ -84,23 +90,235 @@ const keyText = (key: unknown): string => {
   }
 };
 
-const notApplicable = (
+const inOrder = "apply records in the order they landed, each to the state the previous one left";
+
+const notApplicable = (message: string): PinnaUsageError =>
+  new PinnaUsageError("pinna/record-not-applicable", `pinna: ${message}`);
+
+/**
+ * The `Collection.onRowChange` registrations a collection had counted when
+ * the update that made a `CollectionChange` ended: its listeners up to that
+ * count stay silent when the change is restored. Kept beside the change, so
+ * the public record keeps its shape; a change made outside Pinna has none.
+ */
+export const listenerCounts = new WeakMap<CollectionChange, number>();
+
+/**
+ * The collections a record's update added a `Collection.onRowChange`
+ * listener to, whether or not it changed their rows. A record
+ * with any is refused: what the new listener wrote as it heard the rows
+ * held is in the record, and its `before` holds that state from before the
+ * listener existed.
+ */
+const registeredIn = new WeakMap<UpdateRecord, ReadonlyArray<Collection<unknown, unknown>>>();
+
+/**
+ * The records of an update `Collection.onRowChange` opened at rest for its
+ * listener's replay, a view's included, each with the rows that listener
+ * heard. Such a record holds what the new listener wrote as it heard them,
+ * and that listener still runs. Its revert writes nothing, since the
+ * listener's state follows the rows, and an older record's restore reaches
+ * it, as it was registered after that record. Its replay writes each
+ * `after` again: a listener that heard older restores rebuilt its state
+ * with new objects, and the records made after it hold the objects it made
+ * first, which their check compares by `Object.is`. Both require the rows
+ * it heard.
+ */
+const registrationRecords = new WeakMap<UpdateRecord, RegistrationRows>();
+
+/** Every record `takeRecord` built: `write.revert` and `write.replay` take no other. */
+const madeRecords = new WeakSet<UpdateRecord>();
+
+/** Throws `pinna/record-not-applicable` unless the collection holds `heard`'s rows, in its key order. */
+const assertRowsHeld = (read: Read, heard: RegistrationRows, verb: string): void => {
+  const { collection, keys, rows } = heard;
+  const now = read(collection.keys);
+  let same = now.length === keys.length;
+  for (let index = 0; same && index < keys.length; index++) {
+    const key = keys[index];
+    same = Object.is(now[index], key) && Object.is(read.row(collection, key), rows[index]);
+  }
+  if (!same) {
+    throw notApplicable(
+      `${verb} needs ${describeCollection(collection)} to hold the rows its Collection.onRowChange listener heard when it was added, and they changed since; ${inOrder}`,
+    );
+  }
+};
+
+/**
+ * What part of `change`'s collection differs from the record's `before`
+ * (`before` true) or `after`, compared by `Object.is`: a row, named by its
+ * key, or the key order when it moved. `undefined` when none does.
+ */
+const collectionDiffers = (
+  read: Read,
+  change: CollectionChange,
+  before: boolean,
+): string | undefined => {
+  const { collection, rows, keys } = change;
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index] as RowChange<unknown, unknown>;
+    const expected = before ? row.before : row.after;
+    if (!Object.is(read.row(collection, row.key), expected)) {
+      return `the row under ${keyText(row.key)}`;
+    }
+  }
+  if (keys !== undefined) {
+    const expected = before ? keys.before : keys.after;
+    const now = read(collection.keys);
+    let same = now.length === expected.length;
+    for (let index = 0; same && index < expected.length; index++) {
+      same = Object.is(now[index], expected[index]);
+    }
+    if (!same) {
+      return "the key order";
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Throws `pinna/record-not-applicable` unless the state holds what the
+ * record left on the side it starts from: `after` for a revert, `before`
+ * for a replay, for every box, every row, and a moved key order, key by
+ * key, by `Object.is`. Also throws for a record whose update added a
+ * listener to a collection: the record's `before` holds
+ * the state from before that listener existed. Runs before the first
+ * write, so a refused record writes nothing.
+ */
+const assertApplicable = (
+  read: Read,
+  record: UpdateRecord,
+  forward: boolean,
   verb: string,
-  collection: Collection<unknown, unknown>,
-  key: unknown,
-): PinnaUsageError =>
-  new PinnaUsageError(
-    "pinna/record-not-applicable",
-    `pinna: ${verb} needs the row under ${keyText(key)} of ${describeCollection(collection)}, which neither the record nor the collection holds; apply records in the order they landed, each to the state the previous one left`,
-  );
+): void => {
+  const side = forward ? "before" : "after";
+  const registered = registeredIn.get(record);
+  if (registered !== undefined) {
+    throw notApplicable(
+      `${verb} cannot apply a record whose update added a Collection.onRowChange listener to ${describeCollection(registered[0] as Collection<unknown, unknown>)}: the record holds what that listener wrote and its state from before it existed`,
+    );
+  }
+  for (const change of record.collections) {
+    const differs = collectionDiffers(read, change, forward);
+    if (differs !== undefined) {
+      throw notApplicable(
+        `${verb} needs ${differs} of ${describeCollection(change.collection)} to be the record's ${side}, and it changed since; ${inOrder}`,
+      );
+    }
+  }
+  for (const change of record.boxes) {
+    const expected = forward ? change.before : change.after;
+    if (!Object.is(read(change.box), expected)) {
+      throw notApplicable(
+        `${verb} needs ${describeBox(change.box)} to hold the record's ${side}, and it changed since; ${inOrder}`,
+      );
+    }
+  }
+};
+
+/** Writes one collection's part of a record, forward (`after`) or backward (`before`). */
+const applyCollection = (
+  read: Read,
+  write: Write,
+  change: CollectionChange,
+  forward: boolean,
+  verb: string,
+): void => {
+  const { collection, rows, keys } = change;
+  if (keys === undefined) {
+    for (const row of rows) {
+      const value = forward ? row.after : row.before;
+      if (value === undefined) {
+        write.remove(collection, row.key);
+      } else {
+        write.upsert(collection, value);
+      }
+    }
+    return;
+  }
+  const target = new Map<unknown, unknown>();
+  for (const row of rows) {
+    target.set(row.key, forward ? row.after : row.before);
+  }
+  const order = forward ? keys.after : keys.before;
+  const values = new Array<unknown>(order.length);
+  for (let index = 0; index < order.length; index++) {
+    const key = order[index];
+    const value = target.has(key) ? target.get(key) : read.row(collection, key);
+    if (value === undefined) {
+      throw notApplicable(
+        `${verb} needs the row under ${keyText(key)} of ${describeCollection(collection)}, which neither the record nor the collection holds; ${inOrder}`,
+      );
+    }
+    values[index] = value;
+  }
+  write.replaceAll(collection, values);
+};
+
+/** What a restore left in one collection: each recorded key's row, and the key order when the record moved it. */
+interface LandedCollection {
+  readonly rows: ReadonlyArray<unknown>;
+  readonly keys: ReadonlyArray<unknown> | undefined;
+}
+
+const landedOf = (read: Read, change: CollectionChange): LandedCollection => {
+  const { collection, rows, keys } = change;
+  const held = new Array<unknown>(rows.length);
+  for (let index = 0; index < rows.length; index++) {
+    held[index] = read.row(collection, (rows[index] as RowChange<unknown, unknown>).key);
+  }
+  return { rows: held, keys: keys === undefined ? undefined : read(collection.keys) };
+};
+
+/** The part of `change`'s collection that differs from `landed` by `Object.is`, or `undefined`. */
+const movedSince = (
+  read: Read,
+  change: CollectionChange,
+  landed: LandedCollection,
+): string | undefined => {
+  const { collection, rows } = change;
+  for (let index = 0; index < rows.length; index++) {
+    const key = (rows[index] as RowChange<unknown, unknown>).key;
+    if (!Object.is(read.row(collection, key), landed.rows[index])) {
+      return `the row under ${keyText(key)}`;
+    }
+  }
+  if (landed.keys !== undefined) {
+    const now = read(collection.keys);
+    let same = now.length === landed.keys.length;
+    for (let index = 0; same && index < now.length; index++) {
+      same = Object.is(now[index], landed.keys[index]);
+    }
+    if (!same) {
+      return "the key order";
+    }
+  }
+  return undefined;
+};
 
 /**
  * Applies `record` through `write`, forward (`after`) or backward
- * (`before`): boxes, then collections, then atoms. A collection whose key
- * order changed gets its whole order back through `write.replaceAll`, with
- * each unchanged key's row as `read.row` holds it now; one whose order did
- * not change gets `write.upsert` or `write.remove` per row, which keeps
- * each position.
+ * (`before`), once `assertApplicable` found the state on the record's other
+ * side: collections, then boxes, then atoms.
+ *
+ * A `Collection.onRowChange` listener registered when the record's update
+ * ended does not hear a collection's restore: the record already holds what
+ * it wrote, in the boxes and collections it lists, and those land at the
+ * record's values as they are written. A listener registered later, a
+ * view's among them, hears each row change as any write reports it, since
+ * the record holds nothing of its state. Boxes go after collections, so a
+ * recorded value wins over what a later listener wrote to the same box. A
+ * later listener that, hearing one collection's restore, changes a
+ * recorded row or a moved key order of a collection restored before it
+ * throws once every collection is written, and the update rolls back: that
+ * collection is not written again, since that would run its later
+ * listeners again.
+ *
+ * A collection whose key order changed gets its whole order back through
+ * `write.replaceAll`, with each unchanged key's row as `read.row` holds it
+ * now; one whose order did not change gets `write.upsert` or
+ * `write.remove` per row, which keeps each position.
  */
 export const applyRecord = (
   read: Read,
@@ -109,37 +327,55 @@ export const applyRecord = (
   forward: boolean,
   verb: string,
 ): void => {
+  if (!madeRecords.has(record)) {
+    throw notApplicable(
+      `${verb} takes a record Realm.onUpdate handed out, and this is not one: a copy or a record made by hand loses what the realm kept beside it, such as which listeners its update had`,
+    );
+  }
+  const heard = registrationRecords.get(record);
+  if (heard === undefined) {
+    assertApplicable(read, record, forward, verb);
+  } else {
+    assertRowsHeld(read, heard, verb);
+    if (!forward) {
+      assertApplicable(read, record, false, verb);
+      return;
+    }
+  }
+  const collections = record.collections;
+  // What each collection held once its part was written, kept only when a
+  // later collection's restore can run a listener that writes it.
+  const landed: Array<LandedCollection> | undefined =
+    collections.length > 1 ? new Array(collections.length) : undefined;
+  for (let index = 0; index < collections.length; index++) {
+    const change = collections[index] as CollectionChange;
+    const count = listenerCounts.get(change) as number;
+    const recorded = change.collection as unknown as RecordedCollection;
+    recorded.restoreHeardAfter(count, () => {
+      applyCollection(read, write, change, forward, verb);
+    });
+    if (landed !== undefined) {
+      landed[index] = landedOf(read, change);
+    }
+  }
+  if (landed !== undefined) {
+    // A listener added after the record hears a later collection's restore
+    // and may write one restored before it. A collection is not written
+    // again, since that would run its later listeners again: a change
+    // throws, and the update rolls back rather than land a value the
+    // record does not hold.
+    for (let index = 0; index < collections.length; index++) {
+      const change = collections[index] as CollectionChange;
+      const moved = movedSince(read, change, landed[index] as LandedCollection);
+      if (moved !== undefined) {
+        throw notApplicable(
+          `${verb} wrote ${moved} of ${describeCollection(change.collection)}, and a Collection.onRowChange listener added after the record changed it as it heard the restore of another collection; stop that listener first, or apply the change with Realm.update`,
+        );
+      }
+    }
+  }
   for (const change of record.boxes) {
     write(change.box, forward ? change.after : change.before);
-  }
-  for (const change of record.collections) {
-    const { collection, rows, keys } = change;
-    if (keys === undefined) {
-      for (const row of rows) {
-        const value = forward ? row.after : row.before;
-        if (value === undefined) {
-          write.remove(collection, row.key);
-        } else {
-          write.upsert(collection, value);
-        }
-      }
-      continue;
-    }
-    const target = new Map<unknown, unknown>();
-    for (const row of rows) {
-      target.set(row.key, forward ? row.after : row.before);
-    }
-    const order = forward ? keys.after : keys.before;
-    const values = new Array<unknown>(order.length);
-    for (let index = 0; index < order.length; index++) {
-      const key = order[index];
-      const value = target.has(key) ? target.get(key) : read.row(collection, key);
-      if (value === undefined) {
-        throw notApplicable(verb, collection, key);
-      }
-      values[index] = value;
-    }
-    write.replaceAll(collection, values);
   }
   for (const atom of record.atoms) {
     write.changed(atom);
@@ -234,10 +470,19 @@ export const takeRecord = (realm: ObservableRealm): void => {
   // The list holds the last recorded first.
   written.reverse();
   const changed: Array<CollectionChange> = [];
+  const registered: Array<Collection<unknown, unknown>> = [];
+  // The rows a registration at rest heard mark this update's record alone:
+  // a record a watcher or a `Realm.onUpdate` listener makes while that
+  // registration's update settles is its own.
+  const heard = realm.registrationRows;
+  realm.registrationRows = undefined;
   const collections = realm.recordedCollections;
   if (collections !== undefined) {
     realm.recordedCollections = undefined;
     for (const collection of collections) {
+      if (collection.registeredInUpdate() && heard === undefined) {
+        registered.push(collection as unknown as Collection<unknown, unknown>);
+      }
       const change = collection.takeChange(stack);
       if (change !== undefined) {
         changed.push(change);
@@ -276,6 +521,12 @@ export const takeRecord = (realm: ObservableRealm): void => {
     collections: Object.freeze(changed),
     atoms: Object.freeze(atoms === undefined ? [] : [...atoms]),
   });
+  madeRecords.add(record);
+  if (heard !== undefined) {
+    registrationRecords.set(record, heard);
+  } else if (registered.length > 0) {
+    registeredIn.set(record, registered);
+  }
   const queued: QueuedRecord = { record, listeners: taking };
   if (realm.recordQueue === undefined) {
     realm.recordQueue = [queued];

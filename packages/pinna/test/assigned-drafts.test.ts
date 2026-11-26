@@ -618,3 +618,188 @@ describe("a box's value is a tree", () => {
     expect(result.wrapper?.back).toBe(result.wrapper);
   });
 });
+
+describe("a draft copies the value it was given", () => {
+  test("a match array keeps its index, input, and groups", () => {
+    using realm = testRealm();
+    const match = /(?<letter>a)/.exec("cat") as RegExpExecArray;
+    const $result = Box.make(realm, match);
+    Realm.update(realm, (_read, write) => {
+      write.modify($result, (draft) => {
+        draft[0] = "A";
+      });
+    });
+    const edited = Realm.untracked(realm, (read) => read($result));
+    expect([edited[0], edited.index, edited.input, edited.groups?.["letter"]]).toEqual([
+      "A",
+      1,
+      "cat",
+      "a",
+    ]);
+  });
+
+  test("a null-prototype dictionary stays one, and a symbol key stays", () => {
+    using realm = testRealm();
+    const tag = Symbol("tag");
+    const original = Object.assign(Object.create(null) as Record<PropertyKey, string>, {
+      [tag]: "kept",
+    });
+    const $state = Box.make(realm, original);
+    Realm.update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft["item"] = "one";
+      });
+    });
+    const after = Realm.untracked(realm, (read) => read($state));
+    expect(Object.getPrototypeOf(after)).toBe(null);
+    expect("toString" in after).toBe(false);
+    expect([after["item"], after[tag]]).toEqual(["one", "kept"]);
+  });
+
+  test("a written outer draft assigned in an inner modify throws pinna/draft-of-another-recipe and the update is undone", () => {
+    using realm = testRealm();
+    const $outer = Box.make(realm, { row: { n: 0 } });
+    const $inner = Box.make(realm, { row: { n: 0 } });
+    const seen: Array<number> = [];
+    const stop = Realm.watch(
+      realm,
+      (read) => read($inner).row.n,
+      (value) => {
+        seen.push(value);
+      },
+    );
+    let code: unknown;
+    try {
+      Realm.update(realm, (_read, write) => {
+        write.modify($outer, (draft) => {
+          draft.row.n = 1;
+          write.modify($inner, (destination) => {
+            destination.row = draft.row;
+          });
+          draft.row.n = -1;
+        });
+      });
+    } catch (error) {
+      code = (error as { code?: unknown }).code;
+    }
+    const [outer, inner] = Realm.untracked(realm, (read) => [read($outer), read($inner)]);
+    expect([code, outer.row.n, inner.row.n, seen]).toEqual([
+      "pinna/draft-of-another-recipe",
+      0,
+      0,
+      [],
+    ]);
+    stop();
+  });
+
+  test("a plain box given a live draft by a plain write lands it, and reads after the recipe throw pinna/draft-kept", () => {
+    using realm = testRealm();
+    const $outer = Box.make(realm, { child: { n: 1 } });
+    const $plain = Box.make<{ n: number }>(realm, { n: 0 });
+    Realm.update(realm, (_read, write) => {
+      write.modify($outer, (draft) => {
+        draft.child.n = 2;
+        write($plain, draft.child);
+      });
+    });
+    let code: unknown;
+    try {
+      Realm.untracked(realm, (read) => read($plain).n);
+    } catch (error) {
+      code = (error as { code?: unknown }).code;
+    }
+    expect(code).toBe("pinna/draft-kept");
+  });
+
+  test("an unwritten outer draft assigned in an inner modify lands as the value it drafts", () => {
+    using realm = testRealm();
+    const $outer = Box.make(realm, { row: { n: 0 } });
+    const $inner = Box.make(realm, { row: { n: 5 } });
+    Realm.update(realm, (_read, write) => {
+      write.modify($outer, (draft) => {
+        write.modify($inner, (destination) => {
+          destination.row = draft.row;
+        });
+        draft.row.n = -1;
+      });
+    });
+    const [outer, inner] = Realm.untracked(realm, (read) => [read($outer), read($inner)]);
+    expect([outer.row.n, inner.row.n]).toEqual([-1, 0]);
+  });
+
+  test("an unwritten outer container assigned in an inner modify lands with the outer drafts it holds as values", () => {
+    using realm = testRealm();
+    interface Row {
+      n: number;
+    }
+    const before = { row: { n: 0 }, wrapper: undefined as { row: Row } | undefined };
+    const $outer = Box.make(realm, before);
+    const $inner = Box.make(realm, { held: undefined as { row: Row } | undefined });
+    Realm.update(realm, (_read, write) => {
+      write.modify($outer, (draft) => {
+        draft.wrapper = { row: draft.row };
+        write.modify($inner, (destination) => {
+          destination.held = draft.wrapper;
+        });
+      });
+    });
+    const inner = Realm.untracked(realm, (read) => read($inner));
+    expect(inner.held?.row).toBe(before.row);
+  });
+
+  test("an outer container holding a written outer draft, assigned in an inner modify, throws pinna/draft-of-another-recipe", () => {
+    using realm = testRealm();
+    interface Row {
+      n: number;
+    }
+    const $outer = Box.make(realm, {
+      row: { n: 0 },
+      wrapper: undefined as { row: Row } | undefined,
+    });
+    const $inner = Box.make(realm, { held: undefined as { row: Row } | undefined });
+    let code: unknown;
+    try {
+      Realm.update(realm, (_read, write) => {
+        write.modify($outer, (draft) => {
+          draft.row.n = 1;
+          draft.wrapper = { row: draft.row };
+          write.modify($inner, (destination) => {
+            destination.held = draft.wrapper;
+          });
+        });
+      });
+    } catch (error) {
+      code = (error as { code?: unknown }).code;
+    }
+    const inner = Realm.untracked(realm, (read) => read($inner));
+    expect([code, inner.held]).toEqual(["pinna/draft-of-another-recipe", undefined]);
+  });
+
+  test("an assigned array's symbol keys and match keys holding drafts finalize to values", () => {
+    using realm = testRealm();
+    const tag = Symbol("tag");
+    const before = { row: { n: 1 }, other: { n: 2 }, output: [] as Array<{ n: number }> };
+    const $state = Box.make(realm, before);
+    Realm.update(realm, (_read, write) => {
+      write.modify($state, (draft) => {
+        draft.output = Object.assign([draft.row], {
+          [tag]: draft.other,
+          index: 0,
+          input: "x",
+          groups: draft.other,
+        });
+      });
+    });
+    const output = Realm.untracked(realm, (read) => read($state)).output as unknown as Record<
+      PropertyKey,
+      unknown
+    >;
+    expect([output[0], output[tag], output["groups"], output["index"]]).toEqual([
+      before.row,
+      before.other,
+      before.other,
+      0,
+    ]);
+    expect(output[tag]).toBe(before.other);
+  });
+});

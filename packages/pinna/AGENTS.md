@@ -208,7 +208,18 @@ mind while writing code.
       as a log or an undo stack, and never on every record, which loops.
     - Undo is `write.revert(record)` inside `Realm.update`, newest first;
       replay is `write.replay(record)`, oldest first. An undo stack skips the
-      records its own reverts make.
+      records its own reverts make. A record applied to another state than
+      the one it left throws `pinna/record-not-applicable` and writes
+      nothing.
+    - A `Collection.onRowChange` listener registered before the record's
+      update ended does not run on undo or redo: the record holds what it
+      wrote. Keep its state in
+      boxes, since a plain `Map` it fills is not restored. Add a listener at
+      rest, never inside `Realm.update`: a record whose update added one
+      throws on undo. A view runs on every undo and redo and is in no
+      record. A listener added after a record that, as it hears one
+      collection's undo or redo, changes a row the record lists in another
+      collection makes that undo or redo throw and write nothing.
     - A record names boxes, never paths. Code that saves across a reload or
       syncs maps each box to a path from the shape it declared (rule 11);
       Pinna keeps no path index.
@@ -229,8 +240,9 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
 
 - `useValue($x)` for one observable, `useValues([$a, $b])` for several.
 - `useSelect((read) => read($a) + read($b))` only for view logic over
-  several observables; it costs a layout effect per render. A value several
-  components need is a `Computed.make` on the model instead.
+  several observables; it runs the function on every render, and a layout
+  effect on every render with a new function. A value several components
+  need is a `Computed.make` on the model instead.
 - In an event handler, read one value with `Source.peek($x)` and several
   inside `Realm.untracked(realm, (read) => ...)`, and write through a model
   method that calls `Realm.update`. `Source.peek` throws where reads are

@@ -97,6 +97,11 @@ not.
   collections only, is read through the view. A visible stage does not
   count, though a hidden child of one does: a view made while a guess is pending shows the guessed rows, and
   loses them when the guess drops.
+- A view is in no `Realm.onUpdate` record: its boxes and collections never
+  appear in one, and `write.revert` and `write.replay` report each row they
+  change to it, as any write does. Its state follows from the rows, so an
+  undo or a redo, in any order the records allow, leaves it in step
+  ([Change stream](./changes.md)).
 - A view made in an update that fails is disposed with that update.
 - A view is made where `Collection.onRowChange` can be called: not in a
   computed value, a watch's select, or a stage recipe. It takes a
@@ -105,7 +110,11 @@ not.
 - `View.dispose` stops the view; disposing twice does nothing. A read
   through a disposed view, such as `view.keys` or `view.range(0, 10)`,
   throws `pinna/view-disposed`. A computed value taken before disposal keeps
-  its last value. `Realm.dispose` disposes every view of the realm, and
+  the realm's confirmed value as of disposal: never an order between two
+  writes of one update, and never a stage's rows or comparator, even one a
+  handle showed before the disposal. A view disposed inside an update keeps
+  the rows that update leaves, rolled back or not, in the order its last row
+  write before the disposal built. `Realm.dispose` disposes every view of the realm, and
   `testRealm` reports a view left open as `View.ordered "<name>" still
   running`.
 

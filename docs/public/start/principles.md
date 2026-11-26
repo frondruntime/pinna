@@ -109,6 +109,39 @@ Some mistakes are not caught:
   reaches another mounted component. Refusing it
   would cost every write a check for a renderer Pinna does not know. Write
   in an event handler or an effect.
+- **A draft stored inside a `Map` or a `Set`.** `write.modify` finalizes a
+  draft held in a plain object or an array, and treats a `Map`, a `Set`, and
+  a class instance as opaque values. `draft.byKey = new Map([["a",
+  draft.row]])` stores the draft itself, and every read of it after the
+  recipe throws `pinna: a draft is used after its recipe returned`. Walking
+  into containers Pinna cannot copy would cost every `write.modify`. Put the
+  value in an object or an array, or read it with `read($box).row` first.
+- **A select nested in an update that writes through `Model.restore` or
+  `Collection.reconcile`.** `Realm.watch` called inside a `Realm.update`
+  runs its select at once, and a `Model.restore` or a `Collection.reconcile`
+  there writes, where a select outside an update throws
+  `pinna/update-in-derivation`. The nested select is not marked as a
+  derivation, and marking it would cost `Realm.update` a field on its path.
+  Start the watch outside the update.
+- **Raw `Reaction.adopt()` of `pinna-core` called from a derived value or
+  inside the reaction's own `trackPending` run.** The first is refused with
+  `pinna: ... cannot observe or release while it computes`, and the last
+  pending read is not kept for the next valid `adopt`, so a write to what
+  it read notifies nobody. The second is not refused, and a pending run
+  that throws does not keep the committed sources. `Reaction` is the raw
+  core API, which applications do not call, and keeping the last run would
+  cost every `trackPending`.
+- **Raw `Capture.changed()` of `pinna-core` over an atom nothing observes.**
+  It answers by writes alone, so it returns `false` while the atom's outside
+  value moved. `Reaction.follow` and `Reaction.activate` see the change, and
+  the hooks decide through them. A walk at each `changed` would call such an
+  atom changed every time, and a renderer's snapshot would never settle.
+- **A misuse inside a computed value's `equals`.** `Source.observe`, a write,
+  or a release in the `equals` of a named `Computed.make` throws the usual
+  error, so the misuse still fails loudly; only the label is generic,
+  "a derived value", not the computed value's name. The comparator runs with
+  no active node, so naming its owner would need a store on each recompute
+  that has an `equals`, which is not worth a weaker label on a loud error.
 - **Two copies of Pinna in one application.** A `read` or a `write` of one
   copy given an observable of the other throws `pinna/foreign-realm`, but
   `Box.make` and `Realm.autorun` of one copy accept a realm of the other.

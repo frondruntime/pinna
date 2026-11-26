@@ -41,6 +41,9 @@ the stage would land it.
   a `Model.Class` instance, which declares no fields, so put its boxes in the
   shape by name; and a plain value. A shape that holds itself throws
   `pinna/snapshot-cycle`.
+- A plain object's keys are its own enumerable keys, symbols included, as
+  the `Snapshot` type maps them. An array's empty slot is an empty slot in
+  its snapshot, and its restore takes an empty slot there.
 - A box's value is the snapshot's leaf, as held: a `Date` stays a `Date`, and
   an unchanged box gives the same object in two snapshots. A model instance
   inside a box's value is that instance, never walked. The data is as plain
@@ -76,6 +79,13 @@ the stage would land it.
   instance in the data; plain data for a `Model.Schema` row throws
   `pinna/restore-cannot-make-row`. Make the instance with `Model.decode` or
   `make`, or decode the whole input with `Model.restore`.
+- A `Collection.make` collection knows it holds `Model.Schema` rows once a
+  snapshot or a restore finds one in it or a restore adds one from its data,
+  and keeps knowing after its last model row is removed, so plain data then
+  throws `pinna/restore-cannot-make-row` too. One that a snapshot or a
+  restore has never seen hold a model row takes plain data as plain rows: its
+  rows have no schema to say otherwise. `Collection.schema` and `Model.collectionField`
+  know from their schema.
 - A restore is writes, not the model's methods: a method that does more than
   write, such as cancelling work when a tab closes, does not run. What must
   happen on a change belongs in a `Realm.watch`.

@@ -14,6 +14,7 @@ export {
 } from "./errors.ts";
 export {
   type AtomNode,
+  Capture,
   type CellNode,
   computeOf,
   type DerivedNode,

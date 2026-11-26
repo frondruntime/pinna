@@ -114,7 +114,7 @@ export function withStage<A, E, R>(
   return Effect.acquireUseRelease(
     Effect.sync(() => Stage.make(over, options)),
     (stage) =>
-      Effect.flatMap(conflictsFail(section(stage)), (value) =>
+      Effect.flatMap(conflictsFail(Effect.suspend(() => section(stage))), (value) =>
         Effect.suspend((): Effect.Effect<A, StageConflictError> => {
           try {
             Stage.apply(stage);
@@ -161,7 +161,7 @@ const withGuess = <A, E, R>(
       }
     }),
     ({ realm, shown, answer }) =>
-      Effect.flatMap(conflictsFail(section(answer)), (value) =>
+      Effect.flatMap(conflictsFail(Effect.suspend(() => section(answer))), (value) =>
         Effect.suspend((): Effect.Effect<A, StageConflictError> => {
           let failure: unknown;
           let failed = false;

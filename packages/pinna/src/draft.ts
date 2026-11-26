@@ -67,20 +67,32 @@ const isPlainObject = (value: object): boolean => {
   return prototype === Object.prototype || prototype === null;
 };
 
+/** The named properties of the arrays `RegExp.prototype.exec` and `String.prototype.match` return. */
+const matchKeys = ["index", "input", "groups"] as const;
+
 /**
- * Visits each own enumerable key, symbols too, as a draft's copy holds
- * them. Arrays by index: `Object.keys` on a large array is ten times slower
- * in JavaScriptCore.
+ * Visits each key a draft's copy holds (`copyContainer`): an object's own
+ * enumerable keys, symbols too; an array's indexes, a match array's
+ * `index`, `input`, and `groups`, and its enumerable symbol keys. Arrays by
+ * index: `Object.keys` on a large array is ten times slower in
+ * JavaScriptCore.
  */
 const forEachKey = (value: object, visit: (key: PropertyKey) => void): void => {
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index++) {
       visit(index);
     }
-    return;
-  }
-  for (const key of Object.keys(value)) {
-    visit(key);
+    if (Object.hasOwn(value, "index")) {
+      for (const key of matchKeys) {
+        if (Object.hasOwn(value, key)) {
+          visit(key);
+        }
+      }
+    }
+  } else {
+    for (const key of Object.keys(value)) {
+      visit(key);
+    }
   }
   for (const key of Object.getOwnPropertySymbols(value)) {
     if (Object.prototype.propertyIsEnumerable.call(value, key)) {
@@ -120,11 +132,39 @@ const isDraftable = (value: unknown): value is Record<PropertyKey, unknown> =>
 
 const latest = (state: DraftState): Record<PropertyKey, unknown> => state.copy ?? state.base;
 
+/**
+ * A shallow copy of an accepted array or plain object, as the value it
+ * copies: a plain object keeps its prototype, `null` included, and its
+ * enumerable symbol keys; an array keeps its elements, its enumerable symbol
+ * keys, and a match array's `index`, `input`, and `groups`. An array's other
+ * named properties are not kept: finding them costs `Object.keys` over every
+ * index, sixty times a `slice` on 10,000 elements.
+ */
+const copyContainer = (value: Record<PropertyKey, unknown>): Record<PropertyKey, unknown> => {
+  if (!Array.isArray(value)) {
+    return Object.getPrototypeOf(value) === null
+      ? Object.assign(Object.create(null) as Record<PropertyKey, unknown>, value)
+      : { ...value };
+  }
+  const copy = value.slice() as unknown as Record<PropertyKey, unknown>;
+  if (Object.hasOwn(value, "index")) {
+    for (const key of matchKeys) {
+      if (Object.hasOwn(value, key)) {
+        copy[key] = value[key];
+      }
+    }
+  }
+  for (const key of Object.getOwnPropertySymbols(value)) {
+    if (Object.prototype.propertyIsEnumerable.call(value, key)) {
+      copy[key] = value[key];
+    }
+  }
+  return copy;
+};
+
 const ensureCopy = (state: DraftState): Record<PropertyKey, unknown> => {
   if (state.copy === undefined) {
-    state.copy = Array.isArray(state.base)
-      ? (state.base.slice() as unknown as Record<PropertyKey, unknown>)
-      : { ...state.base };
+    state.copy = copyContainer(state.base);
     if (state.children !== undefined) {
       for (const [key, child] of state.children) {
         state.copy[key] = child;
@@ -435,11 +475,69 @@ const twoKeys = (): Error =>
     "pinna: write.modify left an object it wrote under two keys; a box's value is a tree, so refer to the object by a key instead",
   );
 
-const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unknown => {
+/** The `write.modify` recipes running now, across realms. */
+let openSessions = 0;
+
+/**
+ * Throws when `value`, or an array or plain object inside it, is a draft of
+ * `write.modify`: a recipe still open can change it after a check accepted
+ * it, and one already returned leaves a value every read refuses. A
+ * schema box runs it beside its check, on the parts the check reads; a
+ * recipe's own drafts are replaced with values before that, so only a draft
+ * handed to a plain `write`, or to another recipe, reaches it. With no
+ * recipe open no draft is live, and it returns at once.
+ */
+export const assertNoDraft = (value: unknown): void => {
+  if (openSessions === 0 || typeof value !== "object" || value === null) {
+    return;
+  }
+  const state = draftStateOf(value);
+  if (state !== undefined) {
+    assertDraftOpen(state);
+    throw new PinnaUsageError(
+      "pinna/draft-in-write",
+      "pinna: a checked box was given a draft of an open write.modify; the recipe can still change it after the check, so write the box inside the recipe or pass a value read with read($box)",
+    );
+  }
+  if (!Array.isArray(value) && !isPlainObject(value)) {
+    return;
+  }
+  const object = value as Record<PropertyKey, unknown>;
+  forEachKey(object, (key) => {
+    assertNoDraft(object[key]);
+  });
+};
+
+const writtenElsewhere = (): Error =>
+  new PinnaUsageError(
+    "pinna/draft-of-another-recipe",
+    "pinna: write.modify was given a draft another recipe wrote; that recipe can still change it, so read the value with read($box) or write it in that recipe",
+  );
+
+const finalize = (
+  value: unknown,
+  visited: WeakMap<object, FinalizedValue>,
+  session: DraftSession,
+): unknown => {
   if (typeof value !== "object" || value === null) {
     return value;
   }
   const state = (value as { [draftKey]?: DraftState })[draftKey];
+  if (state !== undefined && state.session !== session) {
+    // Another recipe's draft: an outer `write.modify`'s, still open, or one
+    // kept past its recipe. Unwritten, it is the value it drafts. Written,
+    // its copy is that recipe's to change after this box's check, so the
+    // value is refused rather than copied: a copy would hide the later write.
+    // A supplied one drafts a container that recipe assigned, which can hold
+    // that recipe's drafts, so its base is finalized the same way.
+    if (!state.session.open) {
+      assertDraftOpen(state);
+    }
+    if (state.modified) {
+      throw writtenElsewhere();
+    }
+    return state.supplied ? finalize(state.base, visited, session) : state.base;
+  }
   const previous = visited.get(value);
   if (previous !== undefined) {
     // A written draft at a second key, or inside itself, would make the
@@ -462,7 +560,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     for (const key of state.touched) {
       if (Object.hasOwn(copy, key) && copy[key] !== base[key]) {
         const child = copy[key];
-        copy[key] = finalize(child, visited);
+        copy[key] = finalize(child, visited, session);
         // The child may be a draft that finalized to a supplied container,
         // which copies later if one of its own children needs replacing.
         const finalized =
@@ -496,9 +594,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
         return;
       }
       if (entry.value === object && state?.modified !== true) {
-        const copy = Array.isArray(object)
-          ? (object.slice() as unknown as Record<PropertyKey, unknown>)
-          : { ...object };
+        const copy = copyContainer(object);
         copy[key] = child;
         entry.value = copy;
         for (const notify of entry.onCopy as NonNullable<FinalizedValue["onCopy"]>) {
@@ -510,7 +606,7 @@ const finalize = (value: unknown, visited: WeakMap<object, FinalizedValue>): unk
     };
     forEachKey(object, (key) => {
       const child = object[key];
-      const value = finalize(child, visited);
+      const value = finalize(child, visited, session);
       // Registered before the replace, which can copy this very container
       // when the child is a back-reference to it.
       const finalized =
@@ -540,6 +636,7 @@ export const produce = <Value>(base: Value, recipe: (draft: Draft<Value>) => und
   }
   const session: DraftSession = { open: true };
   const draft = createDraft(base, undefined, session);
+  openSessions++;
   try {
     const result: unknown = recipe(draft as Draft<Value>);
     if (result !== undefined) {
@@ -548,8 +645,9 @@ export const produce = <Value>(base: Value, recipe: (draft: Draft<Value>) => und
         "pinna: a modify recipe returns nothing; write through the draft",
       );
     }
-    return finalize(draft, new WeakMap()) as Value;
+    return finalize(draft, new WeakMap(), session) as Value;
   } finally {
     session.open = false;
+    openSessions--;
   }
 };

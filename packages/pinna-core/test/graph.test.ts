@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+  Capture,
   Graph,
+  observerCount,
   peekCell,
   peekDerived,
   placeDeriving,
   Reaction,
+  readAtom,
   readCell,
   readDerived,
   writeCell,
@@ -608,6 +611,210 @@ describe("a reaction's pending run", () => {
     expect(changes).toBe(1);
     graph.batch(() => writeCell(b, 12));
     expect(changes).toBe(2);
+    reaction.deactivate();
+    expectAtRest(graph);
+  });
+});
+
+describe("a capture and Reaction.follow", () => {
+  test("a capture observes nothing and starts no hook", () => {
+    const graph = new Graph();
+    const a = graph.cell(1);
+    const events: Array<string> = [];
+    graph.onObserved(a, () => {
+      events.push("start a");
+      return () => events.push("stop a");
+    });
+    const double = graph.derived(() => readCell(a) * 2);
+    const capture = new Capture(graph);
+
+    expect(capture.run(() => readDerived(double))).toBe(2);
+    expect(events).toEqual([]);
+    expect(observerCount(a)).toBe(0);
+    expect(observerCount(double)).toBe(0);
+  });
+
+  test("changed is false until a source it read moves, and a write to another leaves it false", () => {
+    const graph = new Graph();
+    const a = graph.cell(1);
+    const other = graph.cell(0);
+    const double = graph.derived(() => readCell(a) * 2);
+    const capture = new Capture(graph);
+    capture.run(() => readDerived(double));
+
+    expect(capture.changed()).toBe(false);
+    graph.batch(() => writeCell(other, 1));
+    expect(capture.changed()).toBe(false);
+    graph.batch(() => writeCell(a, 2));
+    expect(capture.changed()).toBe(true);
+    capture.run(() => readDerived(double));
+    expect(capture.changed()).toBe(false);
+  });
+
+  test("with nothing written, changed is false over an atom nothing observes", () => {
+    const graph = new Graph();
+    const atom = graph.atom();
+    let runs = 0;
+    const fresh = graph.derived(() => {
+      readAtom(atom);
+      runs++;
+      return {};
+    });
+    const capture = new Capture(graph);
+    capture.run(() => readDerived(fresh));
+    const ran = runs;
+
+    expect(capture.changed()).toBe(false);
+    expect(capture.changed()).toBe(false);
+    expect(runs).toBe(ran);
+  });
+
+  test("follow keeps the sources both read live and links and unlinks the rest", () => {
+    const graph = new Graph();
+    const a = graph.cell(1);
+    const b = graph.cell(10);
+    const c = graph.cell(100);
+    const events: Array<string> = [];
+    for (const [cell, name] of [
+      [a, "a"],
+      [b, "b"],
+      [c, "c"],
+    ] as const) {
+      graph.onObserved(cell, () => {
+        events.push(`start ${name}`);
+        return () => events.push(`stop ${name}`);
+      });
+    }
+    let changes = 0;
+    const reaction = new Reaction(graph, () => changes++);
+    const first = new Capture(graph);
+    first.run(() => readCell(a) + readCell(b));
+    expect(reaction.follow(first)).toBe(false);
+    reaction.activate();
+    expect(events).toEqual(["start a", "start b"]);
+
+    const second = new Capture(graph);
+    second.run(() => readCell(b) + readCell(c));
+    expect(reaction.follow(second)).toBe(false);
+    expect(events).toEqual(["start a", "start b", "start c", "stop a"]);
+    graph.batch(() => writeCell(a, 2));
+    expect(changes).toBe(0);
+    graph.batch(() => writeCell(b, 11));
+    expect(changes).toBe(1);
+    expect(second.changed()).toBe(true);
+
+    reaction.deactivate();
+    expect(events).toEqual(["start a", "start b", "start c", "stop a", "stop b", "stop c"]);
+  });
+
+  test("follow reports a write between the capture and the follow", () => {
+    const graph = new Graph();
+    const a = graph.cell(1);
+    const reaction = new Reaction(graph, () => {});
+    const first = new Capture(graph);
+    first.run(() => readCell(a));
+    reaction.follow(first);
+    reaction.activate();
+    const second = new Capture(graph);
+    second.run(() => readCell(a));
+    graph.batch(() => writeCell(a, 2));
+
+    expect(reaction.follow(second)).toBe(true);
+    reaction.deactivate();
+  });
+
+  test("a capture that throws keeps what it read", () => {
+    const graph = new Graph();
+    const a = graph.cell(1);
+    const capture = new Capture(graph);
+    expect(() =>
+      capture.run(() => {
+        readCell(a);
+        throw new Error("select");
+      }),
+    ).toThrow("select");
+    const reaction = new Reaction(graph, () => {});
+    reaction.follow(capture);
+    reaction.activate();
+
+    expect(observerCount(a)).toBe(1);
+    reaction.deactivate();
+  });
+});
+
+describe("a capture's own writes", () => {
+  // A selector place does not refuse a write: only deriving does. A capture
+  // that reads a cell and then writes it holds the version it read, so the
+  // write is a change it has not seen.
+  test("changed is true after a capture writes a cell it read", () => {
+    const graph = new Graph();
+    const a = graph.cell(1);
+    const capture = new Capture(graph);
+    capture.run(() => {
+      const value = readCell(a);
+      writeCell(a, value + 1);
+      return value;
+    });
+
+    expect(capture.changed()).toBe(true);
+    expect(capture.run(() => readCell(a))).toBe(2);
+    expect(capture.changed()).toBe(false);
+    expectAtRest(graph);
+  });
+});
+
+describe("a capture over an atom nothing observes", () => {
+  // An unobserved atom is never current: a walk gives it a new version, so
+  // every walk would call the capture changed. `changed` answers from the
+  // clock instead, and the walk that links the atom (`Reaction.follow`,
+  // `Reaction.activate`) is the one that tells: React's getSnapshot needs two
+  // calls with nothing written to agree.
+  test("changed stays false with nothing written, and the follow that links the atom reports the change", () => {
+    const graph = new Graph();
+    const atom = graph.atom();
+    let outside = 1;
+    const capture = new Capture(graph);
+    expect(
+      capture.run(() => {
+        readAtom(atom);
+        return outside;
+      }),
+    ).toBe(1);
+    outside = 2;
+
+    expect(capture.changed()).toBe(false);
+    expect(capture.changed()).toBe(false);
+    const reaction = new Reaction(graph, () => {});
+    reaction.track(() => undefined);
+    reaction.activate();
+    expect(reaction.follow(capture)).toBe(true);
+    reaction.deactivate();
+    expectAtRest(graph);
+  });
+});
+
+describe("an atom linked outside a walk, through follow", () => {
+  // As `adopt` (test/core.test.ts, "brings a derived value over it current
+  // on adopt"): the follow links the atom in a walk of its own, so the atom
+  // counts as changed and the derived value over it is checked.
+  test("brings a derived value over it current on follow", () => {
+    const graph = new Graph();
+    const atom = graph.atom();
+    let outside = 0;
+    const derived = graph.derived(() => {
+      readAtom(atom);
+      return outside;
+    });
+    readDerived(derived);
+    const reaction = new Reaction(graph, () => {});
+    reaction.track(() => undefined);
+    reaction.activate();
+    const capture = new Capture(graph);
+    capture.run(() => readDerived(derived));
+    outside = 1;
+
+    expect(reaction.follow(capture)).toBe(true);
+    expect(readDerived(derived)).toBe(1);
     reaction.deactivate();
     expectAtRest(graph);
   });

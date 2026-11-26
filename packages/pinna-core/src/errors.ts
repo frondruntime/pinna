@@ -90,6 +90,7 @@ export type PinnaUsageCode =
   | "pinna/write-while-computing"
   | "pinna/observe-while-computing"
   | "pinna/cycle"
+  | "pinna/depth-rebuilt"
   | "pinna/watchers-unsettled"
   | "pinna/hooks-unsettled"
   | "pinna/reentrant-run"
@@ -113,6 +114,8 @@ export type PinnaUsageCode =
   | "pinna/draft-kept"
   | "pinna/draft-unsupported"
   | "pinna/draft-at-two-keys"
+  | "pinna/draft-of-another-recipe"
+  | "pinna/draft-in-write"
   // Declaring and values
   | "pinna/empty-name"
   | "pinna/box-takes-schema"

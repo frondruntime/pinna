@@ -73,8 +73,8 @@ export type RestoreData<Shape> =
 
 /** One field of a `Model.Schema` instance, as its class describes it. */
 export interface ModelField {
-  /** The wire key: the key in the snapshot. */
-  readonly key: string;
+  /** The wire key: the key in the snapshot, a string or a symbol. */
+  readonly key: PropertyKey;
   /** A box or a collection for a `$` field; the plain value for any other. */
   readonly value: unknown;
   /** True for a `$` field. */
@@ -104,8 +104,13 @@ interface SnapshotCollection {
   readonly realm: ObservableRealm;
   readonly rows: Computed<ReadonlyArray<unknown>>;
   readonly keyOf: (row: unknown) => unknown;
-  /** True when the collection merges a model row, as a `Model.collectionField` does. */
-  readonly holdsModels: boolean;
+  /**
+   * True when the collection holds `Model.Schema` rows: set by pinna-effect
+   * for a collection of a model class, and here once a snapshot or a
+   * restore finds a model row in it, so a restore after its last model row
+   * was removed still refuses plain data.
+   */
+  holdsModels: boolean;
   readonly name?: string | undefined;
 }
 
@@ -127,7 +132,25 @@ const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown
   return prototype === Object.prototype || prototype === null;
 };
 
-const at = (path: string, key: string): string => `${path}.${key}`;
+const at = (path: string, key: PropertyKey): string =>
+  typeof key === "symbol" ? `${path}[${String(key)}]` : `${path}.${key}`;
+
+/**
+ * The keys a shape's plain object holds: its own enumerable string keys,
+ * then its own enumerable symbol keys, as the `Snapshot` type maps them.
+ */
+const shapeKeys = (object: object): Array<PropertyKey> => {
+  const keys: Array<PropertyKey> = Object.keys(object);
+  for (const key of Object.getOwnPropertySymbols(object)) {
+    if (Object.prototype.propertyIsEnumerable.call(object, key)) {
+      keys.push(key);
+    }
+  }
+  return keys;
+};
+
+const keyName = (key: PropertyKey): string =>
+  typeof key === "symbol" ? String(key) : `"${String(key)}"`;
 const atIndex = (path: string, index: number): string => `${path}[${index}]`;
 const atKey = (path: string, key: unknown): string =>
   `${path}[key ${typeof key === "string" ? JSON.stringify(key) : String(key)}]`;
@@ -163,12 +186,16 @@ const shapeError = (path: string, expected: string, data: unknown): Error =>
     `pinna: write.restore at ${path} takes ${expected}, and the data holds ${describe(data)}`,
   );
 
-const keysError = (path: string, missing: ReadonlyArray<string>, extra: ReadonlyArray<string>) =>
+const keysError = (
+  path: string,
+  missing: ReadonlyArray<PropertyKey>,
+  extra: ReadonlyArray<PropertyKey>,
+) =>
   new PinnaUsageError(
     "pinna/restore-shape",
     `pinna: write.restore at ${path} takes the shape's keys exactly; ${[
-      missing.length === 0 ? "" : `the data lacks ${missing.map((key) => `"${key}"`).join(", ")}`,
-      extra.length === 0 ? "" : `the data adds ${extra.map((key) => `"${key}"`).join(", ")}`,
+      missing.length === 0 ? "" : `the data lacks ${missing.map(keyName).join(", ")}`,
+      extra.length === 0 ? "" : `the data adds ${extra.map(keyName).join(", ")}`,
     ]
       .filter((part) => part !== "")
       .join(", and ")}`,
@@ -177,7 +204,7 @@ const keysError = (path: string, missing: ReadonlyArray<string>, extra: Readonly
 // Reading
 
 /** Sets an own data property: an assignment to `__proto__` would call its setter instead. */
-const setOwn = (data: Record<string, unknown>, key: string, value: unknown): void => {
+const setOwn = (data: Record<PropertyKey, unknown>, key: PropertyKey, value: unknown): void => {
   Object.defineProperty(data, key, { value, enumerable: true, writable: true, configurable: true });
 };
 
@@ -210,6 +237,7 @@ const snapshotOf = (read: Read, shape: unknown, path: string, on: Set<object>): 
       const rows = read(shape.rows);
       return rows.map((row, index) => {
         if (isShaped(row)) {
+          shape.holdsModels = true;
           return snapshotModel(read, row, atKey(path, shape.keyOf(row)), on);
         }
         if (row instanceof Model) {
@@ -225,9 +253,13 @@ const snapshotOf = (read: Read, shape: unknown, path: string, on: Set<object>): 
       return shape.map((entry, index) => snapshotOf(read, entry, atIndex(path, index), on));
     }
     if (isPlainObject(shape)) {
-      const data: Record<string, unknown> = {};
-      for (const key of Object.keys(shape)) {
-        setOwn(data, key, snapshotOf(read, shape[key], at(path, key), on));
+      const data: Record<PropertyKey, unknown> = {};
+      for (const key of shapeKeys(shape)) {
+        setOwn(
+          data,
+          key,
+          snapshotOf(read, (shape as Record<PropertyKey, unknown>)[key], at(path, key), on),
+        );
       }
       return data;
     }
@@ -246,10 +278,10 @@ export const snapshotShape = (read: Read, shape: unknown): unknown =>
 /** Checks that `data` has exactly `keys`, naming what is missing and what is added. */
 const exactKeys = (
   path: string,
-  keys: ReadonlyArray<string>,
-  data: Readonly<Record<string, unknown>>,
+  keys: ReadonlyArray<PropertyKey>,
+  data: Readonly<Record<PropertyKey, unknown>>,
 ): void => {
-  const given = Object.keys(data);
+  const given = shapeKeys(data);
   const expected = new Set(keys);
   const missing = keys.filter((key) => !Object.hasOwn(data, key));
   const extra = given.filter((key) => !expected.has(key));
@@ -258,10 +290,10 @@ const exactKeys = (
   }
 };
 
-const plainFieldError = (path: string, name: string, key: string): Error =>
+const plainFieldError = (path: string, name: string, key: PropertyKey): Error =>
   new PinnaUsageError(
     "pinna/restore-plain-field",
-    `pinna: write.restore at ${path} finds "${key}" of the ${name} held there different in the data; a plain field is never written after the model is made, so restore into a model whose plain fields match, or make a new one with Model.decode`,
+    `pinna: write.restore at ${path} finds ${keyName(key)} of the ${name} held there different in the data; a plain field is never written after the model is made, so restore into a model whose plain fields match, or make a new one with Model.decode`,
   );
 
 /**
@@ -274,7 +306,7 @@ const sourceFields = (
   shape: ModelShape,
   source: Shaped,
   path: string,
-): ReadonlyMap<string, ModelField> => {
+): ReadonlyMap<PropertyKey, ModelField> => {
   if (source.constructor !== held.constructor) {
     throw shapeError(path, `a ${shape.name} or its data`, source);
   }
@@ -362,7 +394,7 @@ const restoreModel = (
     data,
   );
   for (const field of shape.fields) {
-    const value = data[field.key];
+    const value = (data as Readonly<Record<PropertyKey, unknown>>)[field.key];
     if (!field.state) {
       if (!field.equals(field.value, value)) {
         throw plainFieldError(path, shape.name, field.key);
@@ -415,11 +447,11 @@ const restoreCollection = (
   }
   const heldRows = read(collection.rows);
   const held = new Map<unknown, unknown>();
-  let holdsModels = collection.holdsModels;
   for (const row of heldRows) {
     held.set(collection.keyOf(row), row);
-    if (isShaped(row)) holdsModels = true;
+    if (isShaped(row)) collection.holdsModels = true;
   }
+  const holdsModels = collection.holdsModels;
   const rows = data.map((row: unknown) => {
     if (row instanceof Model) {
       throw notState("write.restore", path, row);
@@ -431,6 +463,8 @@ const restoreCollection = (
       if (realm !== collection.realm) {
         throw otherRealmError("write.restore", undefined, realm, collection.realm);
       }
+      // Known from here on; this restore keeps the answer it read above.
+      collection.holdsModels = true;
       // A refetched row whose plain fields differ replaces the held one, as ruling 51 merges.
       if (isShaped(previous) && previous !== row && samePlainFields(previous, row)) {
         restoreModel(read, write, previous, row, atKey(path, key), on);
@@ -479,17 +513,31 @@ const restoreOf = (
       if (!Array.isArray(data) || data.length !== shape.length) {
         throw shapeError(path, `an array of ${shape.length}`, data);
       }
-      for (const [index, entry] of shape.entries()) {
-        restoreOf(read, write, entry, data[index], atIndex(path, index), on);
+      // A hole in the shape is a hole in its snapshot, as `map` leaves it.
+      for (let index = 0; index < shape.length; index++) {
+        if (!(index in shape)) {
+          if (index in data) {
+            throw shapeError(atIndex(path, index), "an empty slot", data[index]);
+          }
+          continue;
+        }
+        restoreOf(read, write, shape[index], data[index], atIndex(path, index), on);
       }
     } else if (isPlainObject(shape)) {
       if (!isPlainObject(data)) {
         throw shapeError(path, "an object", data);
       }
-      const keys = Object.keys(shape);
+      const keys = shapeKeys(shape);
       exactKeys(path, keys, data);
       for (const key of keys) {
-        restoreOf(read, write, shape[key], data[key], at(path, key), on);
+        restoreOf(
+          read,
+          write,
+          (shape as Record<PropertyKey, unknown>)[key],
+          (data as Record<PropertyKey, unknown>)[key],
+          at(path, key),
+          on,
+        );
       }
     } else {
       throw notState("write.restore", path, shape);

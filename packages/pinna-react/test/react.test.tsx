@@ -264,7 +264,7 @@ describe("fromStream in a component", () => {
     });
   }
 
-  test("changing a useValues source list resubscribes and resets the shared stream", async () => {
+  test("changing a useValues source list keeps the shared stream observed and its value", async () => {
     const realm = Realm.make();
     const $other = Box.schema(realm, Schema.Number, 1);
     const events: Array<string> = [];
@@ -291,9 +291,11 @@ describe("fromStream in a component", () => {
             }),
           );
           expect(view.textContent).toBe("10");
+          // The commit keeps the source both lists read, so the stream is
+          // not restarted and keeps its last element.
           act(() => root?.render(<Price extra={true} />));
-          expect(events).toEqual(["start", "stop", "start"]);
-          expect(view.textContent).toBe("0");
+          expect(events).toEqual(["start"]);
+          expect(view.textContent).toBe("10");
           yield* Effect.promise(() =>
             act(async () => {
               await Effect.runPromise(Queue.offer(queue, 20));

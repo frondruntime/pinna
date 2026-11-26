@@ -116,10 +116,15 @@ export const watchScoped = <Value>(
           if (running !== undefined) {
             yield* Fiber.interrupt(running);
           }
-          const previous = (ranWith as { readonly value: Value }).value;
-          ranWith = { value };
+          // `ranWith` moves when the effect begins, not when it is forked:
+          // a child interrupted before it began leaves the last value an
+          // effect ran with as the next one's `previous`.
           running = yield* Effect.forkChild(
-            Effect.suspend(() => effect(value, previous)).pipe(
+            Effect.suspend(() => {
+              const previous = (ranWith as { readonly value: Value }).value;
+              ranWith = { value };
+              return effect(value, previous);
+            }).pipe(
               Effect.catchDefect((defect) =>
                 Effect.logError("pinna: a watch effect died", Cause.die(defect)),
               ),

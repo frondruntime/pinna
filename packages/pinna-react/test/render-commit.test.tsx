@@ -1,14 +1,14 @@
 /**
- * A render reads its sources apart, and the commit makes them the ones the
- * component follows: the public twin of pinna-core's "a reaction's pending
- * run" tests (`trackPending` and `adopt`), which only the React hooks use.
- * A change between a render and its commit, and a render React discards,
- * are covered in `react.test.tsx`; a pending run that throws has no render
- * form and stays in pinna-core.
+ * A render captures what it read apart, and the commit makes it what the
+ * component follows: the public twin of pinna-core's "a capture and
+ * Reaction.follow" tests (`Capture` and `Reaction.follow`), which only the
+ * React hooks use. A change between a render and its commit, and a render
+ * React discards, are covered in `react.test.tsx` and `review/`; a capture
+ * that throws has no render form and stays in pinna-core.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { Box, Realm, Source } from "@frondruntime/pinna";
-import { act, type ReactNode } from "react";
+import { act, type ReactNode, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { RealmProvider, useSelect } from "../src/index.ts";
 
@@ -116,5 +116,68 @@ describe("a render and its commit", () => {
     expect(renders).toBe(1);
     expect(view.textContent).toBe("v3:2");
     expect(Source.inspect($a).observers).toBe(1);
+  });
+
+  test("a change that moves what the function reads moves the subscription, with no render", () => {
+    const realm = Realm.make();
+    const $wide = Box.make(realm, false);
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 1);
+    const log: Array<string> = [];
+    logObserved($a, "a", log);
+    logObserved($b, "b", log);
+    let renders = 0;
+    function Show(): ReactNode {
+      renders++;
+      return <p>{useSelect((read) => (read($wide) ? read($b) : read($a)))}</p>;
+    }
+    const view = mount(
+      <RealmProvider realm={realm}>
+        <Show />
+      </RealmProvider>,
+    );
+    renders = 0;
+
+    act(() => {
+      Realm.update(realm, (_read, write) => {
+        write($wide, true);
+      });
+    });
+    expect(renders).toBe(0);
+    expect(log).toEqual(["start a", "start b", "stop a"]);
+    expect([Source.inspect($a).observers, Source.inspect($b).observers]).toEqual([0, 1]);
+
+    set(realm, $a, 2);
+    expect(renders).toBe(0);
+    set(realm, $b, 2);
+    expect(renders).toBe(1);
+    expect(view.textContent).toBe("2");
+  });
+
+  test("a function that returns a new object each run gives React one snapshot", () => {
+    const realm = Realm.make();
+    const $a = Box.make(realm, 1);
+    const errors: Array<unknown> = [];
+    const original = console.error;
+    console.error = (...args: Array<unknown>) => {
+      errors.push(args[0]);
+    };
+    function Show(): ReactNode {
+      return <p>{useSelect((read) => ({ value: read($a) })).value}</p>;
+    }
+    try {
+      const view = mount(
+        <StrictMode>
+          <RealmProvider realm={realm}>
+            <Show />
+          </RealmProvider>
+        </StrictMode>,
+      );
+      set(realm, $a, 2);
+      expect(view.textContent).toBe("2");
+    } finally {
+      console.error = original;
+    }
+    expect(errors).toEqual([]);
   });
 });

@@ -488,3 +488,58 @@ describe("teardown of a deep chain", () => {
     expectRealmAtRest(realm);
   });
 });
+
+describe("a chain made anew on each compute", () => {
+  test("a computed value that makes a chain deeper than the limit on each run throws pinna/depth-rebuilt, and the realm reads on", () => {
+    const realm = Realm.make();
+    const $length = Box.make(realm, 260);
+    let runs = 0;
+    const $total = Computed.make(
+      realm,
+      (read) => {
+        runs++;
+        let step = Computed.make(realm, () => 0);
+        const count = read($length);
+        for (let index = 0; index < count; index++) {
+          const below = step;
+          step = Computed.make(realm, (readStep) => readStep(below) + 1);
+        }
+        return read(step);
+      },
+      { name: "total" },
+    );
+    expect(() => get(realm, $total)).toThrow(
+      'pinna: the computed value "total" stopped past depth 256 and ran again more than 64 times in one read, as one that makes a new chain of computed values each time it computes does; make the chain outside the computed value and read it there',
+    );
+    // The first run and 64 restarts.
+    expect(runs).toBe(65);
+    const $other = Box.make(realm, 1);
+    const $double = Computed.make(realm, (read) => read($other) * 2);
+    expect(get(realm, $double)).toBe(2);
+    // A short chain made anew on each run still reads.
+    set(realm, $length, 10);
+    expect(get(realm, $total)).toBe(10);
+    Realm.dispose(realm);
+  });
+
+  test("a chain made once and kept between runs reads past the limit", () => {
+    const realm = Realm.make();
+    const $base = Box.make(realm, 0);
+    let chain: Computed<number> | undefined;
+    const $total = Computed.make(realm, (read) => {
+      if (chain === undefined) {
+        let step = Computed.make(realm, (readBase) => readBase($base));
+        for (let index = 0; index < 600; index++) {
+          const below = step;
+          step = Computed.make(realm, (readStep) => readStep(below) + 1);
+        }
+        chain = step;
+      }
+      return read(chain);
+    });
+    expect(get(realm, $total)).toBe(600);
+    set(realm, $base, 1);
+    expect(get(realm, $total)).toBe(601);
+    Realm.dispose(realm);
+  });
+});

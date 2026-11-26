@@ -285,6 +285,15 @@ const maximumSettleRounds = 100;
 const maximumComputeDepth = 256;
 
 /**
+ * How often the bounded driver runs one value again within one outer read.
+ * A synchronous compute cannot resume where it stopped, so a chain rebuilt
+ * on every run is told from a kept one only by counting: a value that makes
+ * and keeps one deep branch per run finishes in branches + 1 runs, and one
+ * that rebuilds its chain throws past this many.
+ */
+const maximumRestarts = 64;
+
+/**
  * Thrown by a stale read past `maximumComputeDepth`, and through every compute
  * above it, even one whose compute catches it. Each discards the unfinished
  * result, retaining a cached value only for the retry's equality check.
@@ -527,8 +536,8 @@ const makeObserver = (
   effect: ((value: unknown, previous: unknown) => void) | undefined,
   equals: Equals<unknown>,
   label: string | undefined,
-): Node =>
-  ({
+): Node => {
+  const node = {
     kind,
     version: 0,
     value: undefined,
@@ -559,7 +568,9 @@ const makeObserver = (
     nextDue: undefined,
     nextInRound: undefined,
     linked: kind === WATCH,
-  }) as Node;
+  } as Node;
+  return node;
+};
 
 /* ---------------------------------------------------------------- edges */
 
@@ -1531,6 +1542,10 @@ const refreshAll = (graph: Graph, node: Node): boolean => {
 const computeBounded = (graph: Graph, node: Node): void => {
   let target = node;
   let waiting: Array<Node> | undefined;
+  // The map of restarts is made at the first restart, never here: a stale
+  // read inside a compute run by the iterative walk comes through this
+  // driver once per read, and nearly none of them restarts.
+  const outermost = graph.restarts === undefined;
   // One walk for every retry: what a retry finds stamped this walk, such as
   // a value a cycle closed on, it does not walk again.
   if (graph.walkDepth++ === 0) {
@@ -1578,18 +1593,54 @@ const computeBounded = (graph: Graph, node: Node): void => {
         return;
       }
       next.computing = false;
+      countRestart(graph, next);
       target = next;
     }
   } finally {
     graph.walkDepth--;
     graph.suspended = undefined;
+    // A restart pops a value that waited, so only a driver that made
+    // `waiting` can hold a map of restarts to drop.
     if (waiting !== undefined) {
+      if (outermost) {
+        graph.restarts = undefined;
+      }
       for (const waited of waiting) {
         waited.computing = false;
       }
     }
   }
 };
+
+/**
+ * Counts one more run of `target` within the outermost bounded driver's
+ * read, making the map at the first restart, and throws
+ * `pinna/depth-rebuilt` past `maximumRestarts`. Out of `computeBounded`, so
+ * the driver's path that never restarts holds no map and no count.
+ */
+const countRestart = (graph: Graph, target: Node): void => {
+  let restarts = graph.restarts;
+  if (restarts === undefined) {
+    restarts = new Map();
+    graph.restarts = restarts;
+  }
+  const count = (restarts.get(target) ?? 0) + 1;
+  if (count > maximumRestarts) {
+    throw rebuiltError(target);
+  }
+  restarts.set(target, count);
+};
+
+/**
+ * What the bounded driver throws when it would run `target` again more than
+ * `maximumRestarts` times in one outer read: a value that makes a new chain
+ * deeper than the limit on every run never reaches the value computed for it.
+ */
+const rebuiltError = (target: Node): Error =>
+  new PinnaUsageError(
+    "pinna/depth-rebuilt",
+    `pinna: ${target.label ?? "a computed value"} stopped past depth ${maximumComputeDepth} and ran again more than ${maximumRestarts} times in one read, as one that makes a new chain of computed values each time it computes does; make the chain outside the computed value and read it there`,
+  );
 
 /** The slow branch of a derived read: not current. Records the read on the paths that throw, so the reader follows a value that throws. */
 const refreshForRead = (graph: Graph, node: Node): void => {
@@ -1888,7 +1939,14 @@ const runWatch = (graph: Graph, watch: Node): void => {
   const previous = watch.value;
   watch.value = value;
   if (watch.status !== EMPTY) {
-    if (watch.linked && watch.effect !== undefined && !watch.equals(previous, value)) {
+    // `linked` again after `equals`: a comparator that stops the watch ends
+    // it before its effect, as a stop anywhere else in a delivery does.
+    if (
+      watch.linked &&
+      watch.effect !== undefined &&
+      !watch.equals(previous, value) &&
+      watch.linked
+    ) {
       watch.effect(value, previous);
     }
   } else {
@@ -2120,7 +2178,15 @@ const addHook = (graph: Graph, node: Node, start: Start, now: boolean): (() => v
       graph.reportAside(error);
     }
   }
+  // A remover belongs to its own registration: once it has run, it does
+  // nothing, so calling it again never ends a later registration of the
+  // same start.
+  let removed = false;
   return () => {
+    if (removed) {
+      return;
+    }
+    removed = true;
     const index = hooks.starts.indexOf(start);
     if (index !== -1) {
       hooks.starts.splice(index, 1);
@@ -2635,6 +2701,131 @@ export const lastReason = (derived: DerivedNode<unknown>): Source | undefined =>
   derived.cause as Source | undefined;
 
 /**
+ * What one run read, kept apart from every observer, with the version of
+ * each source it read: a renderer's capture of one render. `run` runs a read
+ * under the selector place into the capture's own node, which is never
+ * linked, so the run observes nothing and starts no hook. `changed` tells
+ * whether a source moved since, and `Reaction.follow` makes a reaction
+ * follow the same sources. A renderer keeps one capture per render, so a
+ * render it throws away leaves the followed sources as they were.
+ */
+export class Capture {
+  /** The graph's own: the run's edges, read by `Reaction.follow`. Never linked. */
+  readonly node: Node;
+  /**
+   * The clock before the last run, or at the last `changed` that found
+   * nothing moved: while the clock stays, nothing was written, and `changed`
+   * walks nothing. Before the run, so a write the run made is checked.
+   */
+  private checkedClock = -1;
+
+  constructor(
+    readonly graph: Graph,
+    label = "capture",
+  ) {
+    this.node = makeObserver(graph, PENDING, undefined, undefined, Object.is, label);
+  }
+
+  /**
+   * Runs `read` and records what it read, replacing the last run's record.
+   * A run that throws keeps what it read, and the sources of the last run it
+   * did not reach, as a reaction's run does.
+   */
+  run<Result>(read: (argument: never) => Result): Result {
+    const graph = this.graph;
+    const node = this.node;
+    if (node.computing) {
+      throw new PinnaUsageError(
+        "pinna/reentrant-run",
+        `pinna: ${node.label} cannot track inside its own run`,
+      );
+    }
+    const outerPlace = graph.place;
+    const outerShadowed = graph.shadowed;
+    // A compute's own kind, under the deriving bit, is set aside as
+    // `fromCompute` does, so an error inside names it.
+    const fromCompute = (outerPlace & 4) !== 0 && outerPlace >>> 12 === 3;
+    if (fromCompute) {
+      graph.shadowed = graph.active;
+    }
+    graph.depth++;
+    if (graph.walkDepth++ === 0) {
+      graph.walk++;
+    }
+    const outer = graph.active;
+    const outerRun = graph.run;
+    graph.active = node;
+    // `nextPlace` for a selector, inline: `(outer & placeConditions) | selectorWord`.
+    graph.place = (outerPlace & 4095) | 20528;
+    const run = ++graph.runs;
+    graph.run = run;
+    node.cursor = undefined;
+    node.added = false;
+    node.computing = true;
+    // The clock before the run: a selector place may write, and a cell the
+    // run read and then wrote holds a version the capture did not read.
+    const clock = graph.clock;
+    let failed = true;
+    try {
+      const result = (read as (argument: unknown) => Result)(graph.argument);
+      failed = false;
+      return result;
+    } finally {
+      node.computing = false;
+      graph.active = outer;
+      graph.place = outerPlace;
+      graph.run = outerRun;
+      if (fromCompute) {
+        graph.shadowed = outerShadowed;
+      }
+      if (failed) {
+        finishFailedRun(graph, node, run);
+        this.checkedClock = -1;
+      } else {
+        finishRun(graph, node);
+        this.checkedClock = clock;
+      }
+      graph.walkDepth--;
+      endObserving(graph, undefined, failed);
+    }
+  }
+
+  /**
+   * Whether a source the last run read changed since it read it. It brings
+   * each derived source current, unobserved, as a read would, and starts
+   * nothing. With no write since the last check it walks nothing, so two
+   * calls with nothing written agree, even over an atom nothing observes.
+   * Such an atom is never current, and a walk would call it changed every
+   * time: a renderer's snapshot read twice would then never settle. A
+   * change of what it stands for shows at the walk that links it,
+   * `Reaction.follow` or `Reaction.activate`, which reports it as a change;
+   * while a reaction follows it, the atom is observed and no longer
+   * volatile. A stated limit of the core API (an edge, ruling 67):
+   * `changed` sees writes, not an unobserved atom's outside value;
+   * `Reaction.follow` or `Reaction.activate` decide that.
+   */
+  changed(): boolean {
+    const graph = this.graph;
+    if (this.checkedClock === graph.clock) {
+      return false;
+    }
+    graph.depth++;
+    let changed = true;
+    let failed = true;
+    try {
+      changed = refreshAll(graph, this.node);
+      failed = false;
+    } finally {
+      endObserving(graph, undefined, failed);
+    }
+    if (!changed) {
+      this.checkedClock = graph.clock;
+    }
+    return changed;
+  }
+}
+
+/**
  * A renderer's observer, or a scheduled watch's. `track` runs a read and
  * follows what it read; `trackPending` runs a read apart, into a pending
  * node, and `adopt` makes the pending reads the followed ones. `activate`
@@ -2860,6 +3051,88 @@ export class Reaction {
   }
 
   /**
+   * Follows what `capture` read, in place of what the reaction followed:
+   * the reaction's edges become copies of the capture's, with the versions
+   * the capture read, and `capture` keeps its own. A source both read keeps
+   * its live edge, so its `onObserved` hook neither stops nor starts. While
+   * active, returns whether any source changed since the capture read it:
+   * a write between the capture and this call. Like `activate`, it is a
+   * walk, so an atom it links counts as changed.
+   */
+  follow(capture: Capture): boolean {
+    const graph = this.graph;
+    const node = this.node;
+    if (this.running) {
+      throw new PinnaUsageError(
+        "pinna/reentrant-run",
+        `pinna: ${node.label} cannot adopt inside its own run`,
+      );
+    }
+    if (node.linked) {
+      checkObserving(graph);
+    }
+    // The same sources in the same order: the edges stay and take the
+    // capture's versions, so a follow after each change allocates nothing.
+    let edge = node.dependenciesHead;
+    let from = capture.node.dependenciesHead;
+    while (edge !== undefined && from !== undefined && edge.source === from.source) {
+      edge.version = from.version;
+      edge = edge.nextDependency;
+      from = from.nextDependency;
+    }
+    const relinked = edge !== undefined || from !== undefined;
+    const stale = node.dependenciesHead;
+    if (relinked) {
+      let head: Edge | undefined;
+      let tail: Edge | undefined;
+      for (from = capture.node.dependenciesHead; from !== undefined; from = from.nextDependency) {
+        const copy: Edge = {
+          source: from.source,
+          observer: node,
+          version: from.version,
+          nextDependency: undefined,
+          previousObserver: undefined,
+          nextObserver: undefined,
+          linked: false,
+        };
+        if (tail === undefined) {
+          head = copy;
+        } else {
+          tail.nextDependency = copy;
+        }
+        tail = copy;
+      }
+      node.dependenciesHead = head;
+    }
+    node.status = VALUE;
+    if (!node.linked) {
+      return false;
+    }
+    graph.depth++;
+    let changed = false;
+    let failed = true;
+    // One walk, as `adopt`: an atom the reconcile links is checked by the
+    // refresh, never taken as current from an earlier walk's number.
+    if (graph.walkDepth++ === 0) {
+      graph.walk++;
+    }
+    try {
+      if (relinked) {
+        // A source both read keeps its live edge. Same reconcile as a run's end.
+        reconcile(graph, node, stale, true);
+      }
+      changed = refreshAll(graph, node);
+      graph.markFloor = graph.clock;
+      graph.lastMarked = undefined;
+      failed = false;
+    } finally {
+      graph.walkDepth--;
+      endObserving(graph, undefined, failed);
+    }
+    return node.linked && changed;
+  }
+
+  /**
    * Links to what the last run read. Returns whether any of it changed
    * since. It is a walk: an atom it links counts as changed, whatever the
    * last walk checked, since nothing reported what the atom did unobserved.
@@ -3004,6 +3277,8 @@ export class Graph {
   computeDepth = 0;
   /** The value a compute stopped at past `maximumComputeDepth`, until the outermost reads it. */
   suspended: Node | undefined = undefined;
+  /** While the outermost bounded driver runs and once it has restarted, how often each value it retried ran again. */
+  restarts: Map<Node, number> | undefined = undefined;
   /**
    * A computed value marked at or before this clock is walked again by the
    * next mark that reaches it, even if it looks marked already. Each link and

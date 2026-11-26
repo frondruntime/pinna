@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Box, Computed, Realm } from "../src/index.ts";
+import { Box, Computed, Realm, Source } from "../src/index.ts";
 import { keptRead } from "./kept.ts";
 
 /**
@@ -306,5 +306,38 @@ describe("computedFunction", () => {
     expect($double(1)).toBe($double(1));
     stop();
     expect($double(1)).not.toBe($double(1));
+  });
+});
+
+describe("two entries for the same arguments", () => {
+  test("releasing the kept entry hands the arguments to another still observed", () => {
+    const realm = Realm.make();
+    const lookup = Computed.fn(realm, (_read, key: string) => key);
+    const first = lookup("row");
+    const second = lookup("row");
+    expect(first).not.toBe(second);
+    const stopFirst = Source.observe(first);
+    const stopSecond = Source.observe(second);
+    expect(lookup("row")).toBe(first);
+    stopFirst();
+    expect(lookup("row")).toBe(second);
+    stopSecond();
+    const third = lookup("row");
+    expect(third).not.toBe(second);
+    Realm.dispose(realm);
+  });
+
+  test("releasing a spare entry first keeps the kept one", () => {
+    const realm = Realm.make();
+    const lookup = Computed.fn(realm, (_read, key: string) => key);
+    const first = lookup("row");
+    const second = lookup("row");
+    const stopFirst = Source.observe(first);
+    const stopSecond = Source.observe(second);
+    stopSecond();
+    expect(lookup("row")).toBe(first);
+    stopFirst();
+    expect(lookup("row")).not.toBe(first);
+    Realm.dispose(realm);
   });
 });

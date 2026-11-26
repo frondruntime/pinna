@@ -47,6 +47,23 @@ through `Realm.untracked`.
   a key (`selectedId`), a collection row, or a box, never by holding it
   twice: the next `write.modify` drafts each key apart, so a write through
   one key does not show at the other.
+- A draft's copy is the value it copies: a plain object keeps its
+  prototype, `null` included, and its symbol keys; an array keeps its
+  elements, its symbol keys, and a match array's `index`, `input`, and
+  `groups`. An array's other named properties are not copied, because
+  finding them costs a walk over every index; keep such data in an object.
+- An outer `write.modify`'s draft that the outer recipe wrote, assigned
+  inside an inner one, throws
+  `pinna: write.modify was given a draft another recipe wrote`, and the
+  update is undone: the outer recipe can change the draft after the inner
+  box's check, and a copy would hide that write. An unwritten one lands as
+  the value it drafts.
+- A draft handed to a plain `write` is not a value. A `Box.schema` or
+  `Model.boxField` refuses it, or a value holding it, with
+  `pinna: a checked box was given a draft of an open write.modify`, and the
+  update is undone. A plain box stores it, and every read after the recipe
+  returns throws `pinna: a draft is used after its recipe returned`: a plain
+  box runs no check, and a walk on every write would cost `write` itself.
 - A draft the recipe wrote and left at a second key, inside itself, or
   inside an object the recipe placed at two keys, throws
   `pinna: write.modify left an object it wrote under two keys`, and the
@@ -54,6 +71,10 @@ through `Realm.untracked`.
   `draft.present.count++` throws; a snapshot is read before the write, with
   `read($box).present`, which is the plain value. A draft at two keys that
   the recipe never wrote finalizes to the one object the box held.
+- A draft stored inside a `Map`, a `Set`, or a class instance is stored as
+  a draft: those are opaque values, and a read of it after the recipe
+  throws `pinna: a draft is used after its recipe returned`. Keep a drafted
+  value in a plain object or an array.
 - An update is synchronous. A recipe that returns a promise throws at once and
   is undone, because a write after an `await` would land outside the update.
   Await first, then open a new update.
@@ -301,22 +322,33 @@ and keeps the reason.
   stages above replay without it, and the update that moved the value under
   it does not fail. `Stage.update`, `Stage.read`, and `Stage.apply` throw the
   error it keeps, and `Stage.apply` also drops it. A recipe's own throw also
-  reaches the realm's `onError` once, when the stage stops, since the
-  answer-wins flow never applies the guess; a `StageConflictError` does not.
+  reaches the realm's `onError` once, after the outermost update that
+  stopped the stage ends, or after the stage call that stopped it outside an
+  update, since the answer-wins flow never applies the guess; a
+  `StageConflictError` does not. A handler that writes or drops a stage
+  runs its own update then, so every stage replays against it.
 - Under `{ conflicts: "fail" }`, a read of a value a lower guess covers
   records the confirmed version, so the upper stage conflicts when the
-  lower one applies.
+  lower one applies. A box a replay reads or writes for the first time,
+  such as through a branch a lower guess opens, joins the stage's reads at
+  its confirmed version then; a replay that throws adds none.
 - `Stage.apply` of a visible stage takes it off the stack and lands it as a
   hidden one lands; the stages above replay over the new values. Applying
-  the bottom stage notifies nobody, since it shows what it lands. A throw
+  the bottom stage notifies nobody, since it shows what it lands: a box
+  whose landing value its `equals` finds equal to the shown one keeps the
+  shown value and its version. A throw
   drops the stage and reaches the caller; the caller's update keeps its own
   writes if it catches it.
 - A box's `equals` runs while the stack settles what it shows, under the
   same guard as a recipe: one that updates or observes throws there. A
-  throw counts as unequal and goes to `onError`, so the stack never stops
-  half shown.
+  throw counts as unequal, so the stack never stops half shown, and
+  reaches `onError` once the outermost update ends, as a recipe's throw
+  does: a handler that drops a stage there is not lost under the walk.
 - An atom a visible stage marks reruns its readers when the mark starts
-  showing and when it stops, not again when the stage applies.
+  showing and when it stops, not again when the stage applies. A
+  `Stage.apply` that throws withdraws the mark as a drop does. A fail
+  stage's conflict check counts an atom's confirmed changes, so a mark
+  conflicts once its stage applies, and a dropped mark never does.
 - A child of a visible stage is a hidden savepoint; `{ visible: true }` on a
   child throws `pinna/stage-visible-option`.
 - Every stage call runs inside an update while a visible stage is open, so

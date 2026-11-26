@@ -161,6 +161,22 @@ export const checkGraph = (roots: Iterable<Node>): Array<string> => {
       }
     }
   }
+  /** Every edge in some observer's dependency list. */
+  const held = new Set<EdgeView>();
+  for (const node of nodes) {
+    if (isObserver(node)) {
+      for (let edge = dependencies(node); edge !== undefined; edge = edge.nextDependency) {
+        held.add(edge);
+      }
+    }
+  }
+  for (const edge of listed) {
+    if (!held.has(edge)) {
+      problems.push(
+        `${describe(edge.source)}: an edge in its observer list is absent from the dependencies of ${describe(edge.observer)}`,
+      );
+    }
+  }
   return problems;
 };
 

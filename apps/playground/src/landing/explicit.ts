@@ -4,8 +4,7 @@
 // `bun run typecheck` reports for the line above once its `@ts-expect-error` is removed; a
 // `// ^^^ Error: pinna: …` line marks what the line above throws when it runs. The page
 // underlines each span and labels it under the line.
-import { Computed, type Read, Realm } from "@frondruntime/pinna";
-import { Box } from "@frondruntime/pinna-effect";
+import { Box, Computed, type Read, Realm } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 
 const realm = Realm.make({ name: "app" });
@@ -23,7 +22,7 @@ function reads() {
   // A box used as its value
   // @ts-expect-error the landing page prints this error: a box is not a number
   const $broken = Computed.make(realm, () => $price * $quantity);
-  //                                    ^^^^^^ error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+  //                                         ^^^^^^ error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
   // @ts-expect-error the landing page prints this error: a computed value is not its value
   if ($total > 30) {
     //^^^^^^^^^^^ error TS2365: Operator '>' cannot be applied to types 'Computed<number>' and 'number'.
@@ -58,8 +57,8 @@ function writes() {
   // An await inside an update
   // @ts-expect-error the landing page prints this error: an update recipe is synchronous
   Realm.update(realm, async (_read, write) => {
-    //          ^^^^^^^^^^^^^^^^^^^^^^^^^ error TS2345: Argument of type '(_read: Read, write: Write) => Promise<void>' is not assignable to parameter of type '(read: Read, write: Write) => undefined'.
-    //          ^^^^^ Error: pinna: Realm.update recipes are synchronous; await outside, then Realm.update
+    //                ^^^^^^^^^^^^^^^^^^^^^^^^^ error TS2345: Argument of type '(_read: Read, write: Write) => Promise<void>' is not assignable to parameter of type '(read: Read, write: Write) => undefined'.
+    //                ^^^^^ Error: pinna: Realm.update recipes are synchronous; await outside, then Realm.update
     await save();
     write($count, 2);
   });

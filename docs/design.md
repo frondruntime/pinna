@@ -148,6 +148,27 @@ How the core runs:
   can suspend and restart for each branch. Ordinary cached freshness walks
   remain iterative, and a changed earlier source can still drop a later
   stale branch without reading it.
+  A retry can only use what the last one computed if it reads the same
+  values, and a compute that makes a new chain deeper than 256 on every run
+  never does. A synchronous compute cannot resume where it stopped, so a
+  rebuilt chain is told from a kept one only by counting: the bounded read
+  runs one value again at most 64 times within one outer read, then throws
+  `pinna/depth-rebuilt` and leaves the realm usable. A compute that makes and
+  keeps one deep branch per run finishes in branches + 1 runs, so up to 63
+  kept branches read; a chain of 260 rebuilt on every run throws after 65
+  runs, about 17,000 values made. An earlier rule refused the first retry
+  that stopped at a value it made, which refused a root that made a second
+  kept branch on its retry. The count lives in a map the bounded driver
+  makes at its first restart and drops when its read ends: nothing on
+  `read`, `write`, a normal recompute, or the making of a value. The map is
+  never made up front, because the bounded driver also runs for each stale
+  read a compute makes when no bounded read is open, which in the bench's
+  `diamond` is 1,000 reads per write; a map made on each of them made
+  `diamond` 1.48x slower on Node. One bounded driver never starts inside
+  another, so the budget is per value per outer read: the driver runs every
+  compute at a compute depth of 1 or more, and only a stale read at depth 0
+  enters it, so a stale read inside the driver nests in place
+  (`packages/pinna-core/test/depth-nesting.test.ts`).
 - A watch or reaction whose run throws keeps its old sources plus the reads it
   made before the throw. A pending render that throws leaves the last pending
   render as it was. A value between a cycle's origin and the read that closed
@@ -319,6 +340,50 @@ write's watchers run.
   wrote before its first `await`: writes after an `await` would land outside
   the update. Await outside, then update.
 
+### One owner for what an update acquires
+
+What an update acquires is released by a journal step on failure or by an
+entry of the realm's completion list at the outermost end, never by a field
+of its own. A field of its own is one more thing some exit path must
+remember to clear, and an exit path that forgets it keeps a value past its
+update: a key order's log of changes in place held removed keys (D5-1), the
+visible stack's window held a dropped stage's row computed values (D6-4),
+and a failed recipe's row patch stayed in its stage (D6-5).
+
+- **Failure: a journal step.** A step undoes the acquisition when the
+  update or stage recipe that took it throws, in the reverse of the order
+  taken. `dropPatch` in `src/stage.ts`, which takes a failed recipe's row
+  patch back out of the stage and retires it, is the pattern.
+- **The outermost end: a completion entry.** `ObservableRealm.completions`
+  is one flat array of objects with a `complete()` method. `forget`, which
+  runs when the outermost update ends, failed or not, calls each entry once,
+  in the order added, after the update's record is built, then empties the
+  array with `length = 0`. An entry is the object that acquired, so the
+  list reuses one array object and adds no wrapper objects; on Hermes
+  `length = 0` drops the array's storage (docs/performance.md), so the
+  first entry of a later update allocates it again. An entry does not
+  throw. A key order (`OrderCell` in `src/collection.ts`) adds itself on its
+  first change in place in an update, and its `complete` empties its log.
+- **Not an entry.** A field that is neither acquired by an update nor
+  released at its end stays a field: `stackReports` holds the errors that
+  stopped visible stages and is sent once the watchers ran, after `forget`,
+  or by a stage call outside any update; `scheduledRuns` counts a scheduled
+  run inside its own `try`/`finally`; `AtomCell.revision` is a count, not a
+  hold; `recordedCollections`, `recordedAtoms`, and `landedStages` are the
+  change stream's parts of the record, which `takeRecord` clears at the
+  start of `forget`.
+- **Checked.** `openParts` (`src/testing/rest.ts`), which `testRealm`
+  checks on disposal, reports a journal slot past the journal's end that
+  still holds a value and a completion list that is not empty. Both
+  fuzzers (`test/change-stream-fuzz.test.ts`,
+  `test/stage-visible-fuzz.test.ts`) assert after every step that these,
+  every order log, and `retainedKeys` beyond the rows held and shown are
+  empty (`expectNothingHeld` in `test/rest.ts`).
+
+The cost is one length compare at each outermost update's end, and nothing
+on a read, a write, or a recompute. There is no frame object and no table
+per update: the journal already owns failure, and one list owns the end.
+
 ## Stages
 
 A stage holds the writes of asynchronous work out of the realm until the
@@ -485,7 +550,16 @@ it (ruling 68).
   `packages/pinna/test/stage-visible-fuzz.test.ts` checks this against an
   oracle: at every rest point the shown values equal a scratch realm with
   each showing stage applied as a hidden one, and every script ends with
-  the same base whether its stages were visible or hidden.
+  the same base whether its stages were visible or hidden. Its scripts
+  (`test/fuzz/stage-script.ts`) hold conditional recipes, `"fail"` stages
+  with base writes between, an atom, the keys `NaN`, `0`, `-0`, and
+  objects, a box with its own `equals`, an `onError` handler that updates
+  or drops a stage, and updates that apply a stage and roll back, alone
+  or nested; autoruns on every value check that each saw the shown value,
+  ran at most once per update, and that a no-op update ran none. The
+  suite runs 200 seeds; `PINNA_STAGE_FUZZ_SEEDS=20000` ran clean on
+  2026-11-26 in 18 s on Bun 1.4.4 with the install count, and is the
+  gate of a change to `src/stack.ts`.
 - **The window.** `Realm.update` at depth 1 asks one field, `realm.stack`.
   When a stack is open, the start of the update puts the base value and
   base version back in each covered box, key cell, and collection's held
@@ -513,6 +587,18 @@ it (ruling 68).
   when a shown row moved. Stage caches are keyed by a revision counter
   shared by all stages, since a visible stage reads the overlays of the
   stages below it.
+- **The install rule.** No application code runs between the first and
+  the last raw write of a swap. `Stack.show` is two passes: a plan pass
+  makes every box `equals` call and writes nothing, and an install pass
+  makes the raw writes alone (`BoxCell.restore`, `putHeld`, `placeCell`, an
+  atom's mark), each of which only marks the graph inside the update's
+  batch. Opening the window and showing again are raw writes alone. An
+  `equals` that throws joins the stopped stages' reports, sent once the
+  outermost update ends, so `onError` never runs under the walk; before
+  this, a handler's `Stage.drop` there was lost. `Stack.installing` is true
+  for each raw pass, and `test/internal/stage-install.test.ts` counts every
+  application function the fuzz runs (recipes, `equals`, the row listener,
+  `compare`, `onError`, autoruns, a computed value) entered while it is: none.
 - **Settling.** One flow per owner of the answer. When the guess is the
   answer, the visible stage applies on success and drops on failure. When
   the server's answer wins, the guess shows in a visible stage, the work
@@ -1151,6 +1237,7 @@ after.
 | Derived | empty, computing, walking, current, stale, volatile, errored; observed or not alongside |
 | Watch | created (linked, empty), live, scheduled, disposed (terminal) |
 | Reaction | inactive or active, empty or tracked; `running` during `track`, `pendingRan` from `trackPending` to `adopt`, through any `track` in between |
+| Capture | empty, captured (its clock current, or moved), failed (a run that threw keeps what it read); never linked |
 | Scheduled watch or autorun | linked and idle, pending (the scheduler holds a `run`), running, stopped (terminal); a `run` once stopped or once the realm is not open does nothing |
 | Hook | added, beginning (a placeholder cleanup), begun, ended; a removal inside a compute ends it at the next settle |
 | Graph | idle, batched (`depth > 0`), settling; tracking, deriving, and walking alongside |
@@ -1230,6 +1317,63 @@ surprising to a reader, and a test pins each.
   kept.
 - `activate` and `adopt` are walks: an atom they link counts as changed
   once, whatever the last walk checked.
+
+## React hooks
+
+**Only a render React commits moves what a hook follows, and the value a
+component renders is the one React compares.** React may render a component
+and throw the render away, render it again while a write lands, or call a
+store's `getSnapshot` twice in a row; each case reached a wrong screen or a
+restarted source before (L2-1 to L2-4 in the 0.2.0 review).
+
+The mechanism, in `packages/pinna-react/src/index.ts`, is one protocol for
+`useValue`, `useValues`, and `useSelect`:
+
+- **The snapshot is the rendered value.** `getSnapshot` returns the
+  render's result, and the hook reads nothing else, so React's check before
+  a concurrent commit sees a write that landed during the render and renders
+  again (L2-1).
+- **Each render has its own capture.** `useSelect` runs its function into a
+  `Capture` of pinna-core: a pending node, never linked, that records each
+  source with the version it read, under the selector place, so it observes
+  nothing and starts no `Source.onObserved` hook. `useValue` and `useValues`
+  read their observables with `peek` and keep the realm's clock. While the
+  clock stays, `getSnapshot` returns the cached result; once it moved,
+  `useSelect` walks the recorded versions and runs again when one moved, and
+  `useValues` reads again and keeps its array when every value is equal
+  (L2-3, L2-4). A render that reads what the committed render read reuses
+  its capture.
+- **A committed render's layout effect adopts its capture.**
+  `Reaction.follow(capture)` copies the capture's edges into the hook's
+  reaction and reconciles them against the live ones, so a source both read
+  keeps its edge and its hook neither stops nor starts; a source that moved
+  since the capture tells React to compare. A render React throws away is
+  never adopted, so it cannot unsubscribe a mounted source or restart a
+  `Computed.fromPromise` request (L2-2).
+- **A change recaptures the committed render.** When a followed source
+  changes, the committed capture runs again and the reaction follows what
+  it read, even when the result is equal and no render follows, so a
+  `useSelect` never keeps watching sources its function stopped reading.
+
+`useValue` adopts in React's own `subscribe`, which React runs only for a
+committed render and only when the capture changed: two captures of one
+observable are one capture, so they share no source, and no `useValue`
+render runs a layout effect. `useValues` and `useSelect` keep the layout
+effect, with `[store, capture]` deps, since two of their captures can share
+a source and React unsubscribes before it subscribes, which would stop it.
+
+The cost: `useSelect` allocates a capture (a node, and an edge per source)
+on every render with a new function, where `trackPending` reused one
+pending node. On the `pinna-react` bench (Bun, happy-dom, 5 passes
+interleaved with the previous hooks, on a container other builds shared),
+`useValue` is 0.88 to 1.06x the previous minimum in every case; a first
+version with a layout effect per `useValue` render took 1.55x on 10,000
+rows all ticking. `useSelect` is 0.95 to 1.04x except mount 10,000 (1.33x)
+and 1,000 rows all ticking (1.22x), within the run-to-run noise.
+
+Decision: one protocol for every hook. Ruling 39's `useValue` still reads
+no context and subscribes when React subscribes. `Reaction.trackPending`
+and `adopt` stay in pinna-core, which no hook uses any more.
 
 ## Views
 
@@ -1564,6 +1708,60 @@ them wraps `Realm.update` or walks the state.
   included, and that replaying all of them restores the end. The
   differential fuzz runs every program again with a listener attached and
   finds every trace unchanged.
+- **Restore once** (ruling 74). A restore installs the record's values and
+  runs no listener whose writes the record already holds. Before the
+  first write, `assertApplicable` compares every recorded box, row, and
+  moved key order with the side the restore starts from, by `Object.is`,
+  and throws `pinna/record-not-applicable` on a mismatch: one pass over
+  the record. Each `Collection.onRowChange` entry carries a serial from
+  its collection's registration count; `takeChange` puts the count at the
+  update's end in `listenerCounts`, a `WeakMap` by `CollectionChange`, and
+  `restoreHeardAfter` swaps the collection's listener list for the entries
+  above that count while the collection's part is written, then puts back
+  every entry not stopped, so the write path reads the same one field it
+  always did. A view's entry has an infinite serial, so it hears every
+  restore, and its storage is out of every record: the ordered view's
+  state box is a `CollectionCell`, and the collection a grouped or totals
+  view keeps has `inRecord` false, so `takeChange` forgets its notes and
+  reports nothing. A user registration while the realm records notes its
+  collection; a record whose `Realm.update` registered one is refused, and
+  the update `Collection.onRowChange` opens at rest marks its record with
+  the rows its listener heard (`registrationRows`), so its revert writes
+  nothing and its replay reinstalls the listener's first state; the mark
+  is taken by the first record built, so a record a watcher or a
+  `Realm.onUpdate` listener makes while the registration settles is its
+  own, and a rollback of the update that registered takes back the
+  collection's registration mark. A restore takes only a record in
+  `madeRecords`, since a copy loses what is kept beside it. A record
+  that lists two or more collections keeps what each restore left
+  (`landedOf`) and, once all are written, compares it again
+  (`movedSince`), by `Object.is`; a change throws: a later listener that
+  heard one collection's restore wrote another restored before it, and
+  writing that collection again would run its later listeners again.
+  `restoreHeardAfter` also sets the collection's `merge` to `undefined`
+  and its `equals` to `Object.is` while its part is written, and puts both
+  back after, so a restore installs each recorded row by identity: a
+  `Model.Schema` row is not merged into the row held, since a restore is
+  not a refetch, and its boxes come back through the record's box
+  changes. V8 treats a field written only in the constructor as constant
+  and compiles its readers on that; the first restore that swaps `merge`
+  and `equals` on a collection deoptimizes those readers once per
+  collection. Hermes has no such tracking. The cost falls on the
+  restore's callers only. Cost: two field swaps and an
+  array per recorded collection and a second pass, on the restore's path
+  only, a
+  field test in `listen` and in `takeRecord`'s loop over recorded
+  collections, a `WeakMap` set per recorded collection, and nothing on
+  `read`, `write`, or a recompute. The limit: a listener added after some
+  records that keeps an object in a box builds a new one as it hears their
+  restore, so a later record's replay throws when no registration record
+  can put the first object back (open, test 7). The undo fuzz in
+  `change-stream-fuzz.test.ts` walks undo, redo, and out-of-order restores
+  over a listener-kept sum, a listener that writes a second collection,
+  an ordered view, a view and an object-keeping listener added at rest
+  partway, and a listener added inside an update, against a plain-data
+  model; the view fuzz in `view.test.ts` checks all three views after
+  random writes, undos, and redos.
 - **Cost.** Without a listener: one store at depth 1 for the update's
   name, one field read in `forget()`, one after `endBatch`, and one per
   row write and per atom change. A `CollectionCell` is a subclass, so a

@@ -529,3 +529,53 @@ describe("snapshot keys named like Object.prototype members", () => {
     });
   }
 });
+
+describe("symbol keys and empty slots in a shape", () => {
+  test("a symbol-keyed box is snapshotted, tracked, and restored", () => {
+    using realm = testRealm();
+    const key = Symbol("quantity");
+    const $quantity = Box.make(realm, 1);
+    const shape = { [key]: $quantity };
+    const $snapshot = Computed.make(realm, (read) => read.snapshot(shape));
+    const seen: Array<number> = [];
+    const stop = Realm.autorun(realm, (read) => {
+      seen.push(read($snapshot)[key]);
+      return undefined;
+    });
+    Realm.update(realm, (_read, write) => {
+      write($quantity, 2);
+    });
+    Realm.update(realm, (_read, write) => {
+      write.restore(shape, { [key]: 3 });
+    });
+    expect(seen).toEqual([1, 2, 3]);
+    expect(() =>
+      Realm.update(realm, (_read, write) => {
+        write.restore(shape, {} as never);
+      }),
+    ).toThrow(
+      "pinna: write.restore at shape takes the shape's keys exactly; the data lacks Symbol(quantity)",
+    );
+    stop();
+  });
+
+  test("a snapshot of an array with an empty slot restores to the same shape", () => {
+    using realm = testRealm();
+    const $quantity = Box.make(realm, 1);
+    const shape = Array<typeof $quantity>(2);
+    shape[1] = $quantity;
+    const saved = Realm.untracked(realm, (read) => read.snapshot(shape));
+    Realm.update(realm, (_read, write) => {
+      write($quantity, 2);
+    });
+    Realm.update(realm, (_read, write) => {
+      write.restore(shape, saved);
+    });
+    expect(Realm.untracked(realm, (read) => read($quantity))).toBe(1);
+    expect(() =>
+      Realm.update(realm, (_read, write) => {
+        write.restore(shape, [5, 6] as never);
+      }),
+    ).toThrow("pinna: write.restore at shape[0] takes an empty slot, and the data holds a number");
+  });
+});

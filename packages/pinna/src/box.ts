@@ -507,9 +507,11 @@ export class BoxCell<Value> implements Box<Value> {
 }
 
 /**
- * A box a collection owns: its key order, its change counter, or a row's
- * cell. Its own class, so the change stream leaves it out of a record's
- * boxes, at no cost to a box's size, and reports the collection instead.
+ * A box a collection owns (its key order, its change counter, or a row's
+ * cell) or a view keeps its state in. Its own class, so the change stream
+ * leaves it out of a record's boxes, at no cost to a box's size: a
+ * collection's part is reported as the collection, and a view's state
+ * follows the rows on every restore (ruling 74).
  */
 export class CollectionCell<Value> extends BoxCell<Value> {}
 
@@ -566,6 +568,12 @@ const argumentKey = (value: unknown): unknown =>
  */
 class ComputedFunctionEntries<Value> {
   private readonly root = new Map<unknown, unknown>();
+  /**
+   * Entries observed for the same arguments after the one kept, by the one
+   * kept: when it loses its last observer, the first of them takes its
+   * place, so a call finds the entry something still observes.
+   */
+  private readonly spares = new Map<ComputedValue<Value>, Array<ComputedValue<Value>>>();
 
   find(args: ReadonlyArray<unknown>): ComputedValue<Value> | undefined {
     let level: unknown = this.root.get(args.length);
@@ -577,7 +585,16 @@ class ComputedFunctionEntries<Value> {
 
   /** Keeps the first entry observed for `args`; another made before it was is not kept. */
   add(args: ReadonlyArray<unknown>, entry: ComputedValue<Value>): void {
-    if (this.find(args) !== undefined) {
+    const kept = this.find(args);
+    if (kept !== undefined) {
+      if (kept !== entry) {
+        const spares = this.spares.get(kept);
+        if (spares === undefined) {
+          this.spares.set(kept, [entry]);
+        } else if (!spares.includes(entry)) {
+          spares.push(entry);
+        }
+      }
       return;
     }
     let map = this.root;
@@ -606,7 +623,31 @@ class ComputedFunctionEntries<Value> {
       maps.push(next as Map<unknown, unknown>);
     }
     const last = maps.length - 1;
-    if ((maps[last] as Map<unknown, unknown>).get(keys[last]) !== entry) {
+    const kept = (maps[last] as Map<unknown, unknown>).get(keys[last]) as
+      | ComputedValue<Value>
+      | undefined;
+    if (kept === undefined) {
+      return;
+    }
+    if (kept !== entry) {
+      const spares = this.spares.get(kept);
+      const index = spares?.indexOf(entry) ?? -1;
+      if (spares !== undefined && index !== -1) {
+        spares.splice(index, 1);
+        if (spares.length === 0) {
+          this.spares.delete(kept);
+        }
+      }
+      return;
+    }
+    const spares = this.spares.get(entry);
+    if (spares !== undefined) {
+      this.spares.delete(entry);
+      const next = spares.shift() as ComputedValue<Value>;
+      (maps[last] as Map<unknown, unknown>).set(keys[last], next);
+      if (spares.length > 0) {
+        this.spares.set(next, spares);
+      }
       return;
     }
     for (let index = last; index >= 0; index--) {
@@ -623,6 +664,12 @@ export class AtomCell implements Atom {
   declare readonly [atomKind]: true;
   /** The graph node: what `read` reads. */
   readonly source: AtomNode;
+  /**
+   * Counts confirmed changes: `write.changed`, and a mark a visible stage
+   * showed once its stage is applied. A stage's conflict check compares it,
+   * never the node's version, which a mark shown or withdrawn also moves.
+   */
+  revision = 0;
 
   constructor(readonly realm: ObservableRealm) {
     this.source = realm.core.atom();
@@ -647,6 +694,7 @@ export class AtomCell implements Atom {
     if (realm.updateListeners !== undefined) {
       noteAtom(realm, this);
     }
+    this.revision++;
     touchSource(this.source);
   }
 

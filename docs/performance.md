@@ -2656,6 +2656,45 @@ stack. Getting the time back belongs to the 0.1.0 speed work.
   same read called `refresh` directly. The way back is to enter the driver
   once per compute instead of once per read, without losing the bound.
 
+### The 0.2.0 core on the graph benches (2026-11-26)
+
+The 0.2.0 core matches the 0.2.0-rc.0 core on every graph scenario on Node
+and Hermes: paired ratios 0.98 to 1.02, bytes per run identical. The
+landing page's Pinna and alien-signals cells on Node and Hermes are this
+run's 0.2.0 medians; MobX and Legend State keep the 2026-11-11 figures
+("Legend State as a third library"), measured on the same machine.
+
+`bun run bench --tier rough --library pinna,alien-signals`, three passes
+interleaved with rc.0, Apple M1 Pro, Node 26.13.1, hermes-ios
+260318099.0.5. Median ms of the per-pass medians (KB allocated by one run):
+
+| | Pinna, Node | alien-signals, Node | Pinna, Hermes | alien-signals, Hermes |
+| --- | --: | --: | --: | --: |
+| deep chain | 4.74 (10) | 3.53 (3,925) | 75.6 (14) | 41.1 (7,845) |
+| fan-out | 8.03 (10) | 5.93 (14) | 145 (14) | 102 (7,845) |
+| diamond | 6.04 (10) | 4.56 (18) | 108 (14) | 56.2 (7,852) |
+| conditional reads | 24.3 (8,190) | 16.7 (7,836) | 417 (10,957) | 259 (42,089) |
+| make and dispose | 2.42 (11,084) | 0.956 (7,390) | 27.1 (13,057) | 13.1 (11,652) |
+| write 1000 sources in one update | 7.03 (10) | 4.24 (10) | 114 (14) | 85.2 (17,983) |
+| bursty fan-out | 8.09 (0.8) | 53.4 (4.7) | 147 (3) | 494 (8,850) |
+| increment ×100k | 16.1 (9,479) | 9.88 (14,501) | 236 (10,938) | 147 (36,722) |
+| one write among 10k watched rows | 0.554 (178) | 0.374 (217) | 2.78 (191) | 1.81 (448) |
+
+- **Node increment reads 1.13 against rc.0 and is noise.** alien-signals,
+  the same code in both trees, moved 1.35 on the same cell, and one of the
+  three passes reads 0.99.
+- **Three costs past 5% come from bug-class fixes (ruling 67) and stay off
+  `read`, `write`, and a recompute.** A `Realm.onUpdate` listener costs
+  about 9% more per update on Hermes (a `WeakSet` entry per record, so
+  `write.revert` refuses a copy); React rendering 10,000 ticking rows costs
+  about 9% more on Bun (a render moves subscriptions only when React
+  commits it); the row probes at 1,000 rows read 7 to 13% more on Bun, each
+  far under its goal.
+- **Bun and the React Native app were not re-run.** The bench command line
+  runs Node and Hermes only, and the app needs the simulator. Their figures
+  are from before the 0.2 core; the core rewrite (ruling 73) measured at
+  parity with the core before it on Node.
+
 ## Spike findings
 
 The spike ran on a branch that was never merged and was deleted on
@@ -2774,6 +2813,13 @@ Other ideas:
   `js_totalAllocatedBytes`, which counts every allocation as it happens,
   and `js_numGCs` and `js_gcTime`. `bench:hermes-graph` reports bytes per
   run; they are what a gated allocation number would be built on.
+- **A claim of no cost is measured, not read off the diff.** A change that
+  says it adds nothing on `read`, `write`, or a recompute runs the command
+  line's scenarios (`bun run bench --tier rough --runtime node --library
+  pinna`) against its base before it merges. The restart map in
+  `computeBounded` made `diamond` 1.48× slower on Node (5.47 to 8.10 ms)
+  while its commit said a normal read paid nothing: the driver it sat in
+  runs once per stale read inside a compute, 1,000 times per write there.
 - **Graph scenarios.** For alien-signals and the rest of the family, the
   shared yardstick is js-reactivity-benchmark (kairo, cellx, molBench,
   dynamic graphs).

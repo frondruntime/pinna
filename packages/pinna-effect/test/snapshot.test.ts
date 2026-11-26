@@ -460,3 +460,55 @@ describe("restore edge cases", () => {
     ).toThrow("cannot key a data row: the collection's keyOf throws on it");
   });
 });
+
+describe("restoring a collection after its last model row was removed", () => {
+  class Item extends Model.Schema<Item>("Item")({
+    id: Schema.Number,
+    $count: Model.boxField(Schema.Number),
+  }) {}
+
+  test("plain data for a model row throws pinna/restore-cannot-make-row; the instance restores", () => {
+    using realm = testRealm();
+    const $rows = Collection.make(realm, { keyOf: (row: Item) => row.id });
+    const item = Item.make({ realm, id: 1, count: 8 });
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, item);
+    });
+    const saved = Realm.untracked(realm, (read) => read.snapshot($rows));
+    Realm.update(realm, (_read, write) => {
+      write.remove($rows, 1);
+    });
+    expect(
+      codeOf(() =>
+        Realm.update(realm, (_read, write) => {
+          write.restore($rows, saved);
+        }),
+      ),
+    ).toBe("pinna/restore-cannot-make-row");
+    expect(Realm.untracked(realm, (read) => read.row($rows, 1))).toBeUndefined();
+    Realm.update(realm, (_read, write) => {
+      write.restore($rows, [item]);
+    });
+    expect(Realm.untracked(realm, (read) => read.row($rows, 1))).toBe(item);
+  });
+
+  test("a collection a restore filled with a model row refuses plain data for it after it is removed", () => {
+    using realm = testRealm();
+    const $rows = Collection.make(realm, { keyOf: (row: Item) => row.id });
+    const item = Item.make({ realm, id: 1, count: 8 });
+    Realm.update(realm, (_read, write) => {
+      write.restore($rows, [item]);
+    });
+    Realm.update(realm, (_read, write) => {
+      write.remove($rows, 1);
+    });
+    expect(
+      codeOf(() =>
+        Realm.update(realm, (_read, write) => {
+          write.restore($rows, [{ id: 1, count: 8 }] as never);
+        }),
+      ),
+    ).toBe("pinna/restore-cannot-make-row");
+    expect(Realm.untracked(realm, (read) => read.row($rows, 1))).toBeUndefined();
+  });
+});

@@ -6,11 +6,22 @@
  * rows, and nothing here reaches into `Realm.update` (ruling 63).
  */
 import { PinnaUsageError } from "@frondruntime/pinna-core";
-import { box, computed, computedFunction } from "./box.ts";
+import {
+  AtomCell,
+  acceptAll,
+  type BoxCell,
+  CollectionCell,
+  type ComputedValue,
+  computed,
+  computedFunction,
+  nameSource,
+} from "./box.ts";
 import { collection, type KeyedCollection, listenRows } from "./collection.ts";
+import type { Box } from "./modules/box.ts";
 import type { Collection } from "./modules/collection.ts";
 import type { Computed } from "./modules/computed.ts";
 import { type ObservableRealm, realmStatus } from "./realm.ts";
+import { inWindow } from "./stack.ts";
 import { stageWritingCollection } from "./stage.ts";
 import type { Read, Write } from "./verbs.ts";
 import * as Tree from "./view-tree.ts";
@@ -89,9 +100,14 @@ abstract class View {
       this.label,
       () => {
         this.stopped = true;
+        this.onStopped();
       },
+      true,
     );
   }
+
+  /** Runs once, as the view stops: an ordered view keeps its committed state there. */
+  protected onStopped(): void {}
 
   get status(): ViewStatus {
     return this.stopped || realmStatus(this.realm) === "disposed" ? "disposed" : "open";
@@ -110,7 +126,10 @@ abstract class View {
   dispose(): void {
     if (this.stopped) return;
     this.stop();
-    this.stopped = true;
+    if (!this.stopped) {
+      this.stopped = true;
+      this.onStopped();
+    }
   }
 
   /** A row the view placed is not where its callbacks now put it. */
@@ -173,12 +192,24 @@ interface OrderedState<Key, Row> {
 const keyRank: Record<string, true> = { string: true, number: true, bigint: true };
 
 class OrderedViewImpl<Key, Row> extends View implements OrderedView<Key> {
-  /** What `current` last answered, kept once the view is disposed. */
-  private lastCurrent: OrderedState<Key, Row> | undefined;
+  /**
+   * The state the view held as it stopped: the realm's confirmed state box,
+   * never a value `current` answered on the way, for a listener mid-update
+   * or a stage, which read the same computed value.
+   */
+  private frozen: OrderedState<Key, Row> | undefined;
+  /**
+   * Marked as the view stops, so `current` and the handles read from it
+   * compute again and answer `frozen`, whatever they cached before.
+   */
+  private readonly stopMark: AtomCell;
+  private readonly state: Box<OrderedState<Key, Row>>;
   /** The last rebuild and the box value it started from; see `current`. */
   private lastRebuild:
     | { readonly from: OrderedState<Key, Row>; readonly result: OrderedState<Key, Row> }
     | undefined;
+  /** The comparator and the filter: a disposal at rest reads their confirmed values. */
+  private readonly config: Computed<Config<Key, Row>>;
   private readonly current: Computed<OrderedState<Key, Row>>;
   /** The source's key of a row: the trees hold rows, and a key is asked for only on a tie or a read. */
   private readonly keyOf: (row: Row) => Key;
@@ -205,11 +236,21 @@ class OrderedViewImpl<Key, Row> extends View implements OrderedView<Key> {
       (read) => (filterOption === undefined ? undefined : filterOption(read)),
       partName(name, "filter"),
     );
-    const state = box<OrderedState<Key, Row>>(
+    this.config = computed(realm, (read) => ({ compare: read(compare), filter: read(filter) }));
+    // A `CollectionCell`, so no record lists it: the view follows the rows
+    // on every restore (ruling 74).
+    const state = new CollectionCell<OrderedState<Key, Row>>(
       realm,
+      acceptAll,
       { config: undefined, order: () => 0, all: undefined, matching: undefined },
-      { ...partName(name, "state") },
+      Object.is,
     );
+    if (name !== undefined) {
+      nameSource(state.source, `${name}.state`);
+    }
+    this.state = state;
+    const stopMark = new AtomCell(realm);
+    this.stopMark = stopMark;
     // The state as of the current config: the box when its trees were built
     // with it, else a rebuild from the box's trees. A listener reads it as
     // its base, so a config change rebuilds once, and the next row change
@@ -217,10 +258,17 @@ class OrderedViewImpl<Key, Row> extends View implements OrderedView<Key> {
     this.current = computed(
       realm,
       (read) => {
+        read(stopMark);
         // A disposed view keeps its last value: a box its factories read
         // still changes, and would rebuild an order nothing keeps up to date.
-        if (this.stopped && this.lastCurrent !== undefined) {
-          return this.lastCurrent;
+        if (this.stopped) {
+          if (this.frozen !== undefined) {
+            return this.frozen;
+          }
+          // Stopped inside an update: the state box is tracked, so a rollback
+          // of a row write made before the disposal reaches the handles.
+          read(state);
+          return this.baseState();
         }
         const held = read(state);
         const now = { compare: read(compare), filter: read(filter) };
@@ -232,12 +280,10 @@ class OrderedViewImpl<Key, Row> extends View implements OrderedView<Key> {
         const base = last !== undefined && last.from === held ? last.result : held;
         const built = base.config;
         if (built !== undefined && built.compare === now.compare && built.filter === now.filter) {
-          this.lastCurrent = base;
           return base;
         }
         const result = this.rebuild(base, now);
         this.lastRebuild = { from: held, result };
-        this.lastCurrent = result;
         return result;
       },
       { ...partName(name, "current") },
@@ -292,6 +338,50 @@ class OrderedViewImpl<Key, Row> extends View implements OrderedView<Key> {
         matching: filter === undefined ? all : matching,
       });
     });
+  }
+
+  /**
+   * Keeps the confirmed state, read through the visible stack's base, with
+   * the rebuild made from it when the factories changed since its last row
+   * write. A disposed view answers it from then on.
+   */
+  protected override onStopped(): void {
+    // Inside an update the state box can still roll back, so `current`
+    // answers from the box, tracked, with the order its last row write
+    // built: the factories' values in the update can roll back too.
+    if (this.realm.updateDepth === 0) {
+      this.frozen = this.confirmedState();
+    }
+    this.stopMark.mark();
+  }
+
+  /** The state box's base value: the realm's, never a stage's or a showing stage's. */
+  private baseState(): OrderedState<Key, Row> {
+    const cell = this.state as unknown as BoxCell<OrderedState<Key, Row>>;
+    const stack = this.realm.stack;
+    return (
+      stack === undefined ? cell.peek() : stack.baseOf(cell as BoxCell<unknown>).value
+    ) as OrderedState<Key, Row>;
+  }
+
+  /**
+   * The base state, sorted and filtered by the factories' confirmed values,
+   * read where the realm's cells hold the base. A rebuild `current` made
+   * may come from a stage's values, so none is reused. A factory or a
+   * comparator that throws leaves the order its last row write built.
+   */
+  private confirmedState(): OrderedState<Key, Row> {
+    const held = this.baseState();
+    try {
+      const config = (this.config as ComputedValue<Config<Key, Row>>).source;
+      const now = inWindow(this.realm, () => this.realm.peekDerived(config));
+      const built = held.config;
+      return built !== undefined && built.compare === now.compare && built.filter === now.filter
+        ? held
+        : this.rebuild(held, now);
+    } catch {
+      return held;
+    }
   }
 
   private removeFound(
@@ -436,6 +526,8 @@ class GroupedViewImpl<Key, Row, Group> extends View implements GroupedView<Key, 
       keyOf: (entry) => entry.group,
       ...partName(name, "groups"),
     });
+    // Left out of every record: the view follows the rows on every restore.
+    (held as KeyedCollection<Group, unknown>).inRecord = false;
     this.held = held;
     this.groupOf = computedFunction(
       realm,
@@ -559,6 +651,8 @@ class TotalsViewImpl<Key, Row, Group, Total> extends View implements TotalsView<
       keyOf: (entry) => entry.group,
       ...partName(name, "groups"),
     });
+    // Left out of every record: the view follows the rows on every restore.
+    (held as KeyedCollection<Group, unknown>).inRecord = false;
     this.held = held;
     const none: GroupTotal<Total> = Object.freeze({ count: 0, total: zero });
     this.groupOf = computedFunction(

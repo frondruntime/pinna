@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { Collection, Computed, type Read, Realm, Source, type Write } from "../src/index.ts";
+import {
+  Collection,
+  Computed,
+  type Read,
+  Realm,
+  Source,
+  Stage,
+  View,
+  type Write,
+} from "../src/index.ts";
+import { retainedKeys } from "../src/testing/index.ts";
 import { keptRead, keptWrite } from "./kept.ts";
 import { expectRealmAtRest } from "./rest.ts";
 
@@ -853,5 +863,83 @@ describe("prototype-named keys", () => {
     expect(seen).toEqual([9]);
     stop();
     expectRealmAtRest(realm);
+  });
+});
+
+describe("a key stored as the Map stores it", () => {
+  test("keys, a view, a row listener, and a record hand out 0 for a row keyed -0, base or staged", () => {
+    const realm = Realm.make();
+    const $rows = Collection.make(realm, { keyOf: (row: { id: number; value: number }) => row.id });
+    const view = View.ordered($rows, { compare: () => (left, right) => left.value - right.value });
+    const heard: Array<unknown> = [];
+    const recorded: Array<unknown> = [];
+    Collection.onRowChange($rows, (change) => {
+      heard.push(change.key);
+    });
+    Realm.onUpdate(realm, (record) => {
+      for (const change of record.collections)
+        for (const row of change.rows) recorded.push(row.key);
+    });
+    const keysNow = () =>
+      Realm.untracked(realm, (read) => [...read($rows.keys), ...read(view.keys)]);
+    Realm.update(realm, (_read, write) => write.upsert($rows, { id: -0, value: 1 }));
+    Realm.update(realm, (_read, write) => write.upsert($rows, { id: 0, value: 2 }));
+    Realm.update(realm, (_read, write) => write.upsert($rows, { id: -0, value: 3 }));
+    expect(keysNow().every((key) => Object.is(key, 0))).toBe(true);
+    const guess = Stage.make(realm, { visible: true });
+    Stage.update(guess, (_read, write) => write.upsert($rows, { id: -0, value: 4 }));
+    expect(keysNow().every((key) => Object.is(key, 0))).toBe(true);
+    Stage.apply(guess);
+    Realm.update(realm, (_read, write) => write.remove($rows, -0));
+    expect(heard.length).toBeGreaterThan(4);
+    expect(heard.every((key) => Object.is(key, 0))).toBe(true);
+    expect(recorded.every((key) => Object.is(key, 0))).toBe(true);
+    expect(keysNow()).toEqual([]);
+    View.dispose(view);
+    Realm.dispose(realm);
+  });
+});
+
+describe("what a collection keeps past an update", () => {
+  test("an order changed in place after a copy keeps no removed key once the update ends", () => {
+    const realm = Realm.make();
+    const $rows = Collection.make(realm, { keyOf: (row: object) => row });
+    const removed: Array<object> = [];
+    for (let round = 0; round < 12; round++) {
+      Realm.update(realm, (read, write) => {
+        // The read makes the first write copy the order; the rest change it in place.
+        read($rows.keys);
+        const first = {};
+        const second = {};
+        removed.push(first, second);
+        write.upsert($rows, first);
+        write.upsert($rows, second);
+        write.remove($rows, second);
+        write.remove($rows, first);
+        expect(retainedKeys($rows).size).toBeGreaterThan(0);
+      });
+      expect(retainedKeys($rows).size).toBe(0);
+    }
+    expect(Source.peek($rows.keys)).toEqual([]);
+    Realm.dispose(realm);
+  });
+
+  test("a rolled-back remove by an equal key puts back the key the order held, stored as the Map stores it", () => {
+    const realm = Realm.make();
+    const $rows = Collection.make(realm, { keyOf: (value: number) => value });
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, -0);
+    });
+    expect(() =>
+      Realm.update(realm, (_read, write) => {
+        write.remove($rows, 0);
+        throw new Error("cancel");
+      }),
+    ).toThrow("cancel");
+    // `-0` is stored as `0`, as the Map stores it; the row keeps its own `-0`.
+    const [key] = Source.peek($rows.keys);
+    expect(Object.is(key, 0)).toBe(true);
+    expect(Object.is(Source.peek($rows.row(0)), -0)).toBe(true);
+    Realm.dispose(realm);
   });
 });

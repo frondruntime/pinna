@@ -285,12 +285,12 @@ export class OrderPatch<Key> {
       } else if (change.operation === "end") {
         ends.push(key);
       } else {
-        const atStart = starts.lastIndexOf(key);
+        const atStart = lastIndexOfKey(starts, key);
         if (atStart !== -1) {
           starts.splice(atStart, 1);
           continue;
         }
-        const atEnd = ends.lastIndexOf(key);
+        const atEnd = lastIndexOfKey(ends, key);
         if (atEnd !== -1) {
           ends.splice(atEnd, 1);
           continue;
@@ -315,6 +315,18 @@ export class OrderPatch<Key> {
     return result;
   }
 }
+
+/**
+ * The last index of `key` in `keys` by the collection's key equality, a
+ * `Map`'s: `lastIndexOf` misses `NaN`, which a collection takes as a key.
+ */
+const lastIndexOfKey = <Key>(keys: ReadonlyArray<Key>, key: Key): number => {
+  if (typeof key !== "number" || !Number.isNaN(key)) return keys.lastIndexOf(key);
+  for (let index = keys.length - 1; index >= 0; index--) {
+    if (Number.isNaN(keys[index])) return index;
+  }
+  return -1;
+};
 
 /** The array an order box holds in a stage: built from its patch when it holds one. */
 export const orderValue = (value: unknown): unknown =>

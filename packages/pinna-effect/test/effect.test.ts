@@ -277,25 +277,23 @@ describe("watchScoped", () => {
     await run(
       Effect.scoped(
         Effect.gen(function* () {
-          const runs = yield* Queue.unbounded<readonly [number, number]>();
           yield* Program.watchScoped(
             realm,
             (read) => read($count),
-            (value, previous) => Queue.offer(runs, [value, previous] as const),
+            (value, previous) =>
+              Effect.sync(() => {
+                seen.push([value, previous]);
+              }),
           );
           // The latest wins: 1 and 4 are replaced before the effect sees them.
-          // Each step waits for the run it starts, not for a time: a sleep let
-          // the scope close before the last run under load.
           write(1);
           write(2);
-          seen.push(yield* Queue.take(runs));
+          yield* settle;
           write(3);
-          seen.push(yield* Queue.take(runs));
+          yield* settle;
           write(4);
           write(5);
-          seen.push(yield* Queue.take(runs));
           yield* settle;
-          expect(yield* Queue.size(runs)).toBe(0);
         }),
       ),
       realm,
@@ -1246,5 +1244,59 @@ describe("observeScoped", () => {
     );
 
     expect(events).toEqual(["start", "inside", "stop"]);
+  });
+});
+
+describe("Program.watchScoped's previous across an interruption", () => {
+  test("an effect interrupted before it began leaves previous at the last value an effect ran with", async () => {
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
+    const seen: Array<readonly [number, number]> = [];
+    const change = (value: number) =>
+      Realm.update(realm, (_read, write) => {
+        write($count, value);
+      });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          const cleaning = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const finished = yield* Deferred.make<void>();
+          yield* Program.watchScoped(
+            realm,
+            (read) => read($count),
+            (value, previous) => {
+              seen.push([value, previous]);
+              if (value === 1) {
+                return Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(cleaning, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                    ),
+                  ),
+                );
+              }
+              return value === 3
+                ? Deferred.succeed(finished, undefined).pipe(Effect.asVoid)
+                : Effect.void;
+            },
+          );
+          change(1);
+          yield* Deferred.await(started);
+          change(2);
+          yield* Deferred.await(cleaning);
+          change(3);
+          yield* Deferred.succeed(release, undefined);
+          yield* Deferred.await(finished);
+        }),
+      ).pipe(Effect.provideService(RealmService, realm)),
+    );
+    expect(seen).toEqual([
+      [1, 0],
+      [3, 1],
+    ]);
+    Realm.dispose(realm);
   });
 });

@@ -297,7 +297,24 @@ const noRealm = SchemaTransformation.transformEffect<
   encode: Effect.succeed,
 });
 
-const isBoxKey = (key: string): boolean => key.startsWith("$");
+const isBoxKey = (key: PropertyKey): key is string =>
+  typeof key === "string" && key.startsWith("$");
+
+/** A field key as an error names it. */
+const fieldName = (key: PropertyKey): string => String(key);
+
+/**
+ * The keys of a model's fields: its own enumerable string keys, then its
+ * own enumerable symbol keys, as `Schema.Struct.Fields` declares them. A
+ * symbol key is a plain field's: a box field is named by a `$` string.
+ */
+const fieldKeys = (fields: object): Array<PropertyKey> => {
+  const keys: Array<PropertyKey> = Object.keys(fields);
+  for (const key of Object.getOwnPropertySymbols(fields)) {
+    if (Object.prototype.propertyIsEnumerable.call(fields, key)) keys.push(key);
+  }
+  return keys;
+};
 
 /**
  * An instance that defines `[Equal.symbol]` decides its own equality; one
@@ -315,16 +332,18 @@ const ownEqualOr =
 export const SchemaModel =
   <Self = never>(identifier: string) =>
   <const Fields extends Schema.Struct.Fields>(fields: Fields) => {
-    const keys = Object.keys(fields);
-    const wireKeys = keys.map((key) => (isBoxKey(key) ? key.slice(1) : key));
+    const keys = fieldKeys(fields);
+    const fieldOf = (key: PropertyKey): Schema.Top =>
+      (fields as unknown as Readonly<Record<PropertyKey, Schema.Top>>)[key] as Schema.Top;
+    const wireKeys: Array<PropertyKey> = keys.map((key) => (isBoxKey(key) ? key.slice(1) : key));
     // Each field reads its own wire key: two on one key would leave one field's schema unchecked.
-    const fieldOfWireKey = new Map<string, string>();
+    const fieldOfWireKey = new Map<PropertyKey, PropertyKey>();
     for (const [index, key] of keys.entries()) {
-      const wireKey = wireKeys[index] as string;
+      const wireKey = wireKeys[index] as PropertyKey;
       if (wireKey === "realm") {
         throw new PinnaUsageError(
           "pinna-effect/field-named-realm",
-          `pinna: ${identifier}.${key} reads "realm", the realm the instance belongs to; rename the field`,
+          `pinna: ${identifier}.${fieldName(key)} reads "realm", the realm the instance belongs to; rename the field`,
         );
       }
       // A plain own property named `__proto__` cannot be set by assignment: the
@@ -339,11 +358,11 @@ export const SchemaModel =
       if (other !== undefined) {
         throw new PinnaUsageError(
           "pinna-effect/wire-key-twice",
-          `pinna: ${identifier}.${other} and ${identifier}.${key} both read "${wireKey}"; rename one`,
+          `pinna: ${identifier}.${fieldName(other)} and ${identifier}.${fieldName(key)} both read "${fieldName(wireKey)}"; rename one`,
         );
       }
       fieldOfWireKey.set(wireKey, key);
-      const holdsBox = fieldCodecs.has(fields[key] as Schema.Top);
+      const holdsBox = fieldCodecs.has(fieldOf(key));
       if (isBoxKey(key) && !holdsBox) {
         throw new PinnaUsageError(
           "pinna-effect/box-field-undeclared",
@@ -353,7 +372,7 @@ export const SchemaModel =
       if (!isBoxKey(key) && holdsBox) {
         throw new PinnaUsageError(
           "pinna-effect/box-field-unprefixed",
-          `pinna: ${identifier}.${key} holds a box; name it $${key}`,
+          `pinna: ${identifier}.${fieldName(key)} holds a box; name it $${fieldName(key)}`,
         );
       }
     }
@@ -420,7 +439,9 @@ export const SchemaModel =
         return Effect.succeed(wire);
       },
     });
-    const heldKeys = keys.filter((_key, index) => codecOf[index] !== undefined);
+    const heldKeys = keys.filter(
+      (key, index): key is string => codecOf[index] !== undefined && isBoxKey(key),
+    );
     const heldWireKeys = heldKeys.map((key) => key.slice(1));
     const heldCodecs = codecOf.filter((codec) => codec !== undefined);
     // What `make` checks before it builds the boxes: each `$` field's value under its wire key, and the realm.
@@ -430,10 +451,10 @@ export const SchemaModel =
     }
     const madeValues = Schema.Struct(madeValueFields);
     // What a merge compares: the plain fields alone, not the boxes or the realm.
-    const plainFields: Record<string, Schema.Top> = {};
+    const plainFields: Record<PropertyKey, Schema.Top> = {};
     for (const [index, key] of keys.entries()) {
       if (codecOf[index] === undefined) {
-        plainFields[key] = fields[key] as Schema.Top;
+        plainFields[key] = fieldOf(key);
       }
     }
     // A `Model.context` field holds the caller's service: never in a snapshot.
@@ -445,7 +466,7 @@ export const SchemaModel =
         : (_self: unknown, _that: unknown) => true,
     );
     const samePlainFields: (self: unknown, that: unknown) => boolean =
-      Object.keys(plainFields).length === 0 ? () => true : equalsOf(Schema.Struct(plainFields));
+      Reflect.ownKeys(plainFields).length === 0 ? () => true : equalsOf(Schema.Struct(plainFields));
     const allFields = { ...fields, realm: realmField };
     // The fields' equivalence compares the struct type, and Self extends it.
     const baseFields = Schema.Struct(allFields);
@@ -554,8 +575,8 @@ export const SchemaModel =
         let writes: Array<() => void> | undefined;
         for (const [index, key] of heldKeys.entries()) {
           const fieldWrites = (heldCodecs[index] as FieldCodec).merge(
-            this[key],
-            (fresh as Record<string, unknown>)[key],
+            (this as unknown as Record<PropertyKey, unknown>)[key],
+            (fresh as Record<PropertyKey, unknown>)[key],
             read,
             write,
           );
@@ -584,8 +605,8 @@ export const SchemaModel =
         for (const [index, key] of keys.entries()) {
           if (Object.hasOwn(this, key) && !isContextField[index]) {
             held.push({
-              key: wireKeys[index] as string,
-              value: this[key],
+              key: wireKeys[index] as PropertyKey,
+              value: (this as unknown as Record<PropertyKey, unknown>)[key],
               state: codecOf[index] !== undefined,
               equals: equalsOfField[index] as ModelField["equals"],
             });

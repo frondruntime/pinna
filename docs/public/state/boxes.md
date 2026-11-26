@@ -49,7 +49,10 @@ calls `Realm.update`.
   it holds no links, and a read checks its sources first.
 - A `Computed.fn` compares arguments by identity, one per position.
   While nothing observes an entry, it is dropped, and the next call makes a
-  new one.
+  new one. Two entries made for the same arguments before either was
+  observed are both kept while observed: a call returns the first, and once
+  it is released, the second, so a call never returns a new entry while one
+  for its arguments is observed.
 - A model with no schema extends `Model`, from `@frondruntime/pinna`. With
   Effect, a model is a `Model.Schema`: see [Classes](../effect/classes.md).
   There is no third form, such as a function that returns boxes: a draft

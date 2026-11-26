@@ -54,7 +54,7 @@ import {
   type StagedRows,
 } from "./collection.ts";
 import { type Draft, produce } from "./draft.ts";
-import { deleteMember, Journal, missing, restoreEntry } from "./journal.ts";
+import { deleteMember, Journal, missing, restoreEntry, type UndoTarget } from "./journal.ts";
 import type { Stage } from "./modules/stage.ts";
 import { OrderPatch, orderValue, type RowLayer, RowPatch, removedRow } from "./patch.ts";
 import {
@@ -381,7 +381,7 @@ const close = (state: StageState, status: "applied" | "dropped"): void => {
   }
   openStages.get(state.realm)?.delete(state);
   if (state.visible) {
-    (state.realm.stack as Stack | undefined)?.leave(state, false);
+    (state.realm.stack as Stack | undefined)?.leave(state);
     state.showing = false;
     state.below = undefined;
     state.inputs = undefined;
@@ -406,6 +406,21 @@ const close = (state: StageState, status: "applied" | "dropped"): void => {
   release?.();
 };
 
+/**
+ * A journal step that takes a patch a recipe made back out of the stage's
+ * patches and retires it: a recipe that throws keeps no row it replaced.
+ * No child reads through it, since a recipe makes no child stage.
+ */
+const dropPatch: UndoTarget = {
+  undo(a, b) {
+    const patches = a as Array<RowPatch<unknown, unknown>>;
+    const patch = b as RowPatch<unknown, unknown>;
+    const index = patches.lastIndexOf(patch);
+    if (index !== -1) patches.splice(index, 1);
+    patch.retire();
+  },
+};
+
 /** Lets go of every patch the stage made: each leaves the rows beneath once nothing reads through it. */
 const retirePatches = (state: StageState): void => {
   for (const patch of state.patches) patch.retire();
@@ -414,12 +429,20 @@ const retirePatches = (state: StageState): void => {
 
 // Reading through the chain of overlays
 
+/**
+ * The version a conflict check compares: a box's node version, an atom's
+ * confirmed revision, which a visible stage's mark leaves alone until the
+ * stage is applied.
+ */
+export const readVersion = (cell: ReadCell): number =>
+  cell instanceof AtomCell ? cell.revision : cell.source.version;
+
 /** Records a read of the realm's box or atom, when the stage's root checks conflicts. */
 const recordRead = (
   state: StageState,
   box: ReadCell,
   observable: object,
-  version = box.source.version,
+  version = readVersion(box),
 ): void => {
   const reads = state.reads;
   const held = reads?.get(box);
@@ -699,6 +722,7 @@ const stagedRows = <Key, Value>(
     if (rows === undefined) {
       rows = new RowPatch<Key, Value>(layerBeneath(state, collection));
       state.patches.push(rows as RowPatch<unknown, unknown>);
+      session.journal.step(dropPatch, state.patches, rows, undefined);
       let ancestor = beneath(state);
       let below = state.parent === undefined;
       while (ancestor !== undefined && !ancestor.rows.has(key)) {
@@ -841,6 +865,7 @@ const stagedRows = <Key, Value>(
         rows as ReadonlyMap<unknown, unknown>,
       );
       state.patches.push(whole);
+      session.journal.step(dropPatch, state.patches, whole, undefined);
       state.rows.set(key, whole);
       state.provenance.delete(key);
       setBox(state, session, orderCell, order);
@@ -1133,6 +1158,14 @@ const prepareLanding = (state: StageState, stack?: Stack): (() => void) => {
     } else if (box.source.equals(current, value)) {
       return current;
     }
+    if (version === undefined && stack !== undefined) {
+      const shown = stack.shownMatch(box as BoxCell<unknown>, value);
+      if (shown !== undefined) {
+        value = shown.value as Value;
+        version = shown.version;
+      }
+    }
+    const landing = value;
     boxes.push(() => {
       const realm = box.realm;
       if (box.nextRecorded === undefined) {
@@ -1142,12 +1175,7 @@ const prepareLanding = (state: StageState, stack?: Stack): (() => void) => {
       }
       // A value a visible stage shows now lands with the version readers
       // already hold, so applying the stage that shows it reruns nobody.
-      box.restore(
-        value,
-        version ??
-          stack?.shownVersion(box as BoxCell<unknown>, value) ??
-          realm.core.nextCellVersion(),
-      );
+      box.restore(landing, version ?? realm.core.nextCellVersion());
     });
     return value;
   };
@@ -1168,7 +1196,10 @@ const prepareLanding = (state: StageState, stack?: Stack): (() => void) => {
       // A mark a visible stage showed reran its readers when it showed; the
       // change stream records it as landed all the same.
       if (stack?.showsAtom(atom) !== true) atom.change();
-      else noteAtom(atom.realm, atom);
+      else {
+        atom.revision++;
+        noteAtom(atom.realm, atom);
+      }
     }
   };
 };
@@ -1180,7 +1211,7 @@ export const findConflict = (state: StageState): StageConflictError | undefined 
   const changed: Array<string> = [];
   const observables: Array<object> = [];
   for (const [box, read] of reads) {
-    if (box.source.version !== read.version && !observables.includes(read.observable)) {
+    if (readVersion(box) !== read.version && !observables.includes(read.observable)) {
       observables.push(read.observable);
       changed.push(describeRead(read.observable, box));
     }
@@ -1499,7 +1530,7 @@ const applyIn = (state: StageState): void => {
       throw failure;
     }
     // Off the stack first: the stage replays over the base alone.
-    stack?.leave(state, true);
+    stack?.leave(state);
   }
   const conflict = findConflict(state);
   if (conflict !== undefined) {
@@ -1521,6 +1552,7 @@ const applyIn = (state: StageState): void => {
     close(state, "dropped");
     throw error;
   }
+  if (state.visible) stack?.keepMarks(state);
   close(state, "applied");
   try {
     update(realm, () => {

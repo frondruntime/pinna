@@ -107,6 +107,10 @@ export const benchTables: ReadonlyArray<BenchTable> = [
       },
     ],
   },
+  // Pinna and alien-signals on Node and Hermes: Pinna 0.2.0, the median of three interleaved
+  // `bun run bench --tier rough` passes on an Apple M1 Pro, Node 26.13.1 and hermes-ios
+  // 260318099.0.5 (`docs/performance.md`, "The 0.2.0 core on the graph benches"). MobX and Legend
+  // State on Node and Hermes, and every library on Bun, are the 2026-11-11 runs on the same machine.
   {
     title: "The graph alone",
     runtimes: runtimesOf("bun", "node", "hermes"),
@@ -116,49 +120,49 @@ export const benchTables: ReadonlyArray<BenchTable> = [
         unit: "ms",
         rows: [
           graphRow("Deep chain", {
-            node: [4.46, 3.56, overflow, 15.1],
+            node: [4.74, 3.53, overflow, 15.1],
             bun: [4.01, 2.76, 257, 17.8],
-            hermes: [75.6, 42, overflow, 204],
+            hermes: [75.6, 41.1, overflow, 204],
           }),
           graphRow("Fan-out", {
-            node: [8.44, 5.85, 242, 27.8],
+            node: [8.03, 5.93, 242, 27.8],
             bun: [8.41, 5.91, 269, 28.5],
-            hermes: [140, 103, 1836, 507],
+            hermes: [145, 102, 1836, 507],
           }),
           graphRow("Diamond", {
-            node: [5.83, 4.53, 219, 14],
+            node: [6.04, 4.56, 219, 14],
             bun: [6.26, 4.97, 227, 15.8],
-            hermes: [92, 57.4, 1585, 230],
+            hermes: [108, 56.2, 1585, 230],
           }),
           graphRow("Conditional reads", {
-            node: [25.9, 16.9, 546, 62.6],
+            node: [24.3, 16.7, 546, 62.6],
             bun: [21.8, 17.7, 621, 66],
-            hermes: [411, 264, 3416, 1164],
+            hermes: [417, 259, 3416, 1164],
           }),
           graphRow("Make and dispose", {
-            node: [2.27, 0.958, 69.8, 21.5],
+            node: [2.42, 0.956, 69.8, 21.5],
             bun: [2.04, 1.09, 46.8, 13.6],
-            hermes: [24.4, 13.1, 291, 71.1],
+            hermes: [27.1, 13.1, 291, 71.1],
           }),
           graphRow("Write 1,000 sources", {
-            node: [6.92, 4.29, 96.5, 18.4],
+            node: [7.03, 4.24, 96.5, 18.4],
             bun: [6.79, 5.29, 108, 18.6],
-            hermes: [114, 85.8, 710, 291],
+            hermes: [114, 85.2, 710, 291],
           }),
           graphRow("Bursty fan-out", {
-            node: [8.85, 90.3, 1081, 27.3],
+            node: [8.09, 53.4, 1081, 27.3],
             bun: [9.29, 60.7, 729, 28.1],
-            hermes: [141, 488, 4192, 494],
+            hermes: [147, 494, 4192, 494],
           }),
           graphRow("Increment ×100,000", {
-            node: [15.1, 6.93, 317, 38],
+            node: [16.1, 9.88, 317, 38],
             bun: [12.1, 9.13, 356, 38.1],
-            hermes: [223, 147, 1948, 579],
+            hermes: [236, 147, 1948, 579],
           }),
           graphRow("One write among 10,000", {
-            node: [0.603, 0.422, 10.2, 1.37],
+            node: [0.554, 0.374, 10.2, 1.37],
             bun: [1.17, 0.89, 6.1, 1.94],
-            hermes: [2.61, 1.81, 24.9, 6.57],
+            hermes: [2.78, 1.81, 24.9, 6.57],
           }),
         ],
       },
@@ -179,24 +183,24 @@ export const benchTables: ReadonlyArray<BenchTable> = [
             hermes: [14, 7852, 652397, 32979],
           }),
           graphRow("Conditional reads", {
-            node: [7989, 7836, 898539, 176559],
-            hermes: [10959, 42089, 1462496, 178300],
+            node: [8190, 7836, 898539, 176559],
+            hermes: [10957, 42089, 1462496, 178300],
           }),
           graphRow("Make and dispose", {
             node: [11084, 7390, 118060, 48743],
-            hermes: [12746, 11652, 156914, 31116],
+            hermes: [13057, 11652, 156914, 31116],
           }),
           graphRow("Write 1,000 sources", {
             node: [10, 10, 244663, 51471],
             hermes: [14, 17983, 389152, 64935],
           }),
           graphRow("Bursty fan-out", {
-            node: [342, 164, 878987, 76333],
-            hermes: [14, 8850, 1753886, 88380],
+            node: [0.8, 4.7, 878987, 76333],
+            hermes: [3, 8850, 1753886, 88380],
           }),
           graphRow("Increment ×100,000", {
-            node: [9578, 14501, 742693, 125035],
-            hermes: [10941, 36722, 1145927, 128911],
+            node: [9479, 14501, 742693, 125035],
+            hermes: [10938, 36722, 1145927, 128911],
           }),
           graphRow("One write among 10,000", {
             node: [178, 217, 8687, 1163],

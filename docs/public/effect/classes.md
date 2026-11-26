@@ -43,6 +43,8 @@ for every Effect program.
 
 ## Rules
 
+- A field key is a string or a symbol. A symbol key is a plain field, the
+  same on the wire and in a snapshot; a box field is a `$` string key.
 - Make instances with `Model.decode(realm, Todo)(json)`. Every instance has a
   `realm` field, never on the wire: `Model.decode` fills it, and field initializers
   use `this.realm`.

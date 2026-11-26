@@ -953,3 +953,37 @@ describe("scheduled reactions, edge cases from review", () => {
     expect(Realm.untracked(realm, (read) => read($a))).toBe(2);
   });
 });
+
+describe("a watch its comparator stops", () => {
+  for (const scheduled of [false, true]) {
+    test(`runs no effect once its equals stops it (scheduled: ${scheduled})`, () => {
+      const realm = Realm.make();
+      const $source = Box.make(realm, 0);
+      const seen: Array<number> = [];
+      let stop = (): void => {};
+      stop = Realm.watch(
+        realm,
+        (read) => read($source),
+        (value) => {
+          seen.push(value);
+        },
+        {
+          equals: (previous, next) => {
+            stop();
+            return previous === next;
+          },
+          ...(scheduled ? { scheduler: ((run: () => void) => run()) as Scheduler } : {}),
+        },
+      );
+      Realm.update(realm, (_read, write) => {
+        write($source, 1);
+      });
+      Realm.update(realm, (_read, write) => {
+        write($source, 2);
+      });
+      expect(seen).toEqual([]);
+      stop();
+      Realm.dispose(realm);
+    });
+  }
+});

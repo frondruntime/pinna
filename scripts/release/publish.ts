@@ -43,6 +43,16 @@ const PackageManifest = Schema.Struct({
 type PackageManifest = typeof PackageManifest.Type;
 
 /**
+ * The dist-tag a version is published under. A prerelease (`0.2.0-rc.1`)
+ * goes to `next`, so `npm install` without a tag keeps resolving the last
+ * release; any other version goes to `latest`. Build metadata after `+`
+ * may hold a hyphen and marks no prerelease. Without `--tag`, npm 10
+ * puts a prerelease on `latest`.
+ */
+export const distTagOf = (version: string): string =>
+  version.split("+")[0]?.includes("-") ? "next" : "latest";
+
+/**
  * `npm whoami`, and `npm login` on this terminal when it fails. Publishing
  * runs from a terminal only, so a session without one stops here; a dry run
  * goes on signed out, and says so.
@@ -155,14 +165,6 @@ const isPublished = (
     return yield* new ReleaseError({ step, message: result.stderr.trim() });
   });
 
-/**
- * The dist-tag a version goes out under. A prerelease (`0.2.0-rc.2`) goes to
- * `next`, so `npm install @frondruntime/pinna` keeps resolving the last
- * release; only a release moves `latest`.
- */
-export const distTagOf = (version: string): "latest" | "next" =>
-  version.includes("-") ? "next" : "latest";
-
 /** The published files come from `packages`, so a change there must be committed first. */
 const checkCleanPackages = (
   root: string,
@@ -210,9 +212,8 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
         message: `every package is already published at ${version}`,
       });
     }
-    const distTag = distTagOf(version);
     yield* Console.log(
-      `to publish at ${version} under the ${distTag} tag: ${pending.map((published) => published.name).join(", ")}`,
+      `to publish at ${version}: ${pending.map((published) => published.name).join(", ")}`,
     );
     yield* checkCleanPackages(root, dryRun);
 
@@ -239,6 +240,8 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
         const tarballs = yield* packAndSmoke(work);
 
         yield* section(dryRun ? "publish, dry run" : "publish");
+        const tag = distTagOf(version);
+        yield* Console.log(`dist-tag ${tag}`);
         for (const [published, tarball] of tarballs) {
           if (!pending.includes(published)) {
             continue;
@@ -252,7 +255,7 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
               "--access",
               "public",
               "--tag",
-              distTag,
+              tag,
               ...(dryRun ? ["--dry-run"] : []),
             ],
             root,
@@ -264,6 +267,6 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
     yield* Console.log(
       dryRun
         ? `\ndry run done; nothing was published`
-        : `\npublished ${pending.map((published) => `${published.name}@${version}`).join(", ")} under the ${distTag} tag`,
+        : `\npublished ${pending.map((published) => `${published.name}@${version}`).join(", ")}`,
     );
   });

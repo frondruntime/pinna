@@ -66,6 +66,13 @@ and rolls back with the row.
   collections, even when the schema accepts `undefined`.
 - `upsert` replaces a held key's row in place and puts a new key first, or
   last with `{ at: "end" }`. `remove` of a missing key changes nothing.
+- Keys are equal as a `Map`'s are: `NaN` matches `NaN`, and `0` matches
+  `-0`. A key is stored as the `Map` stores it, so a row keyed `-0` is held
+  under `0`, and `keys`, a view's keys, a row listener's `key`, and a
+  record's row `key` hand out `0` on every path, base or staged. Without
+  this, `keys` kept the sign of the first write and a view or a listener
+  the sign of the latest row, so one row had two keys `Object.is` told
+  apart.
 - Adding or removing a key copies the key order, so its cost grows with the
   collection: about 15 µs at 1,000 rows and 120 µs at 10,000 on Hermes.
   Replacing the row of a held key costs the same at any size. The order is
@@ -97,6 +104,10 @@ and rolls back with the row.
   replaces, or removes, `replaceAll` a row at a time, with the row `before`
   and `after` the write; one is `undefined` for an add or a removal. A write
   that keeps a row reports nothing.
+- `write.revert` and `write.replay` report a row only to a listener added
+  after the record's update, and to every view: the record already holds
+  what an older listener wrote, and restores it as written
+  ([Change stream](./changes.md)).
 - A listener first hears each row the collection holds, in key order, as
   added, so what it keeps starts in step with the rows. A throw there adds
   no listener and reaches the caller of `Collection.onRowChange`. If settling watchers
@@ -140,7 +151,7 @@ and rolls back with the row.
 | `write.upsert($items, row, { at? })` | Replaces the row under its key, or adds it first, or last with `{ at: "end" }`. |
 | `write.remove($items, key)` | Removes the row under `key`. |
 | `write.replaceAll($items, rows)` | Makes `rows` the collection's rows, in their order, keeping each one that is unchanged. |
-| `Collection.onRowChange($items, (change, read, write) => ...)` | Calls the listener for each row a write adds, replaces, or removes, inside that write's update; `change` holds `key`, `before`, and `after`. Returns the function that removes the listener. |
+| `Collection.onRowChange($items, (change, read, write) => ...)` | Calls the listener for each row a write adds, replaces, or removes, inside that write's update, except a `write.revert` or `write.replay` of a record made after the listener was added; `change` holds `key`, `before`, and `after`. Returns the function that removes the listener. |
 
 ## Row selection
 

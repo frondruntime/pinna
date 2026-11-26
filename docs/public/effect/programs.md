@@ -115,7 +115,7 @@ Each of them stops when its scope closes.
 
 | Call | Answers |
 | --- | --- |
-| `Program.watchScoped(realm, (read) => ..., (value, previous) => effect, { equals?, name? })` | An effect that starts the watch in the caller's scope. A result equal under `equals`, `Object.is` by default, is no change, so it neither runs nor interrupts the effect. `name` names the watch in its errors. Disposing the realm interrupts the effect it is running. |
+| `Program.watchScoped(realm, (read) => ..., (value, previous) => effect, { equals?, name? })` | An effect that starts the watch in the caller's scope. A result equal under `equals`, `Object.is` by default, is no change, so it neither runs nor interrupts the effect. `previous` is the value the last effect that began ran with: an effect interrupted before it began is skipped, and moves nothing. `name` names the watch in its errors. Disposing the realm interrupts the effect it is running. |
 | `Program.changes($x)` | A stream of `$x`'s current value, then each change; a slow consumer skips to the newest. Takes a box or a computed value, not an atom. It ends when its realm is disposed. |
 | `Program.updates(realm)` | A stream of each record `Realm.onUpdate` hands out, from the next update on; a slow consumer gets every record, since the buffer is unbounded. It ends when the realm is disposed ([Change stream](../state/changes.md)). |
 | `Source.observeScoped($x)` | An effect that holds `$x`, a box, a computed value, or an atom, observed until the scope closes. |
@@ -276,7 +276,8 @@ the settled value once; a failure or an interruption drops both.
   child stage shows nothing.
 - A `StageConflictError` from any call on the section's stage fails the
   effect, as the one from `Stage.apply` does: a visible `"fail"` stage
-  stopped mid-section throws it from the section's next `Stage.update`.
+  stopped mid-section throws it from the section's next `Stage.update`,
+  also when that call runs before the section returns its Effect.
 
 ## See also
 

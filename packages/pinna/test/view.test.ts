@@ -7,6 +7,7 @@ import {
   type Read,
   Realm,
   Stage,
+  type UpdateRecord,
   View,
 } from "../src/index.ts";
 import { held, record, testRealm } from "../src/testing/index.ts";
@@ -288,11 +289,16 @@ describe("View.ordered", () => {
     expect(Realm.untracked(realm, (read) => read(view.keys))).toEqual(["b", "a"]);
   });
 
-  test("matches a sort of the rows after random writes", () => {
+  test("matches a sort of the rows after random writes, reverts, and replays", () => {
     using realm = testRealm();
     const $orders = orders(realm);
     const $threshold = Box.make(realm, 50);
     const $descending = Box.make(realm, false);
+    const records: Array<UpdateRecord> = [];
+    const stopRecords = Realm.onUpdate(realm, (landed) => {
+      records.push(landed);
+    });
+    using _records = held(stopRecords);
     const view = View.ordered($orders, {
       compare: (read) => {
         const sign = read($descending) ? -1 : 1;
@@ -304,36 +310,80 @@ describe("View.ordered", () => {
       },
     });
     using _ = held(() => View.dispose(view));
+    const groups = View.grouped($orders, { groupOf: (row) => row.amount % 3 });
+    using _groups = held(() => View.dispose(groups));
+    const totals = View.totals($orders, {
+      project: (row) => ({ group: row.amount % 3, value: row.amount }),
+      arithmetic: integers,
+    });
+    using _totals = held(() => View.dispose(totals));
     let seed = 7;
     const next = (limit: number) => {
       seed = (seed * 1103515245 + 12345) % 2147483648;
       return Math.floor((seed / 2147483648) * limit);
     };
-    for (let step = 0; step < 400; step++) {
-      Realm.update(realm, (read, write) => {
-        const choice = next(11);
-        if (choice === 10) write($descending, !read($descending));
-        if (choice < 5) write.upsert($orders, order(`k${next(40)}`, "x", next(100)));
-        else if (choice < 8) write.remove($orders, `k${next(40)}`);
-        else if (choice < 9) write($threshold, next(100));
-        else if (choice === 9)
-          write.replaceAll(
-            $orders,
-            Array.from({ length: next(20) }, () => order(`k${next(40)}`, "x", next(100))).filter(
-              (row, index, rows) => rows.findIndex((other) => other.id === row.id) === index,
-            ),
-          );
+    // The records of the updates below, undone ones past `cursor`.
+    const history: Array<UpdateRecord> = [];
+    let cursor = 0;
+    let restores = 0;
+    for (let step = 0; step < 600; step++) {
+      const choice = next(14);
+      if (choice >= 11) {
+        // An undo or a redo, in order; the view hears it as any write.
+        if (choice < 13 && cursor > 0) {
+          cursor--;
+          Realm.update(realm, (_read, write) => write.revert(history[cursor] as UpdateRecord));
+          restores++;
+        } else if (choice === 13 && cursor < history.length) {
+          Realm.update(realm, (_read, write) => write.replay(history[cursor] as UpdateRecord));
+          cursor++;
+          restores++;
+        }
+      } else {
+        const count = records.length;
+        Realm.update(realm, (read, write) => {
+          if (choice === 10) write($descending, !read($descending));
+          if (choice < 5) write.upsert($orders, order(`k${next(40)}`, "x", next(100)));
+          else if (choice < 8) write.remove($orders, `k${next(40)}`);
+          else if (choice < 9) write($threshold, next(100));
+          else if (choice === 9)
+            write.replaceAll(
+              $orders,
+              Array.from({ length: next(20) }, () => order(`k${next(40)}`, "x", next(100))).filter(
+                (row, index, rows) => rows.findIndex((other) => other.id === row.id) === index,
+              ),
+            );
+        });
+        if (records.length > count) {
+          history.splice(cursor);
+          history.push(records[records.length - 1] as UpdateRecord);
+          cursor = history.length;
+        }
+      }
+      Realm.untracked(realm, (read) => {
         const threshold = read($threshold);
         const sign = read($descending) ? -1 : 1;
-        const expected = [...read($orders.rows)]
+        const rows = read($orders.rows);
+        const expected = [...rows]
           .filter((row) => row.amount < threshold)
           .sort(
             (left, right) => sign * (left.amount - right.amount) || (left.id < right.id ? -1 : 1),
           )
           .map((row) => row.id);
         expect(read(view.keys)).toEqual(expected);
+        for (let group = 0; group < 3; group++) {
+          const members = rows.filter((row) => row.amount % 3 === group);
+          expect([...read(groups.group(group))].sort()).toEqual(
+            members.map((row) => row.id).sort(),
+          );
+          expect(read(totals.group(group))).toEqual({
+            count: members.length,
+            total: members.reduce((sum, row) => sum + row.amount, 0),
+          });
+        }
       });
     }
+    expect(restores).toBeGreaterThan(50);
   });
 
   test("disposes once, reports its status, and throws on a later read", () => {
@@ -414,6 +464,116 @@ describe("view review cases", () => {
     Realm.update(realm, (_read, write) => write($descending, true));
     expect(keys.count).toBe(1);
     expect(Realm.untracked(realm, (read) => read($keys))).toEqual(["a", "b"]);
+  });
+
+  describe("a disposed view keeps the realm's confirmed order", () => {
+    const setup = (realm: Realm) => {
+      const $rows = Collection.make(realm, { keyOf: (value: number) => value });
+      const $descending = Box.make(realm, false);
+      const view = View.ordered($rows, {
+        compare: (read) =>
+          read($descending) ? (left, right) => right - left : (left, right) => left - right,
+      });
+      return { $rows, $descending, view, $keys: view.keys };
+    };
+
+    test("a handle read under a visible stage drops the stage's rows at disposal", () => {
+      using realm = testRealm();
+      const { $rows, view, $keys } = setup(realm);
+      Realm.update(realm, (_read, write) => write.upsert($rows, 1));
+      const guess = Stage.make(realm, { visible: true });
+      Stage.update(guess, (_read, write) => write.upsert($rows, 2));
+      using keys = follow(realm, (read) => read($keys));
+      expect(keys.last).toEqual([1, 2]);
+      View.dispose(view);
+      expect(keys.last).toEqual([1]);
+      Stage.drop(guess);
+      expect(Realm.untracked(realm, (read) => read($keys))).toEqual([1]);
+    });
+
+    test("a comparator a visible stage shows is not frozen", () => {
+      using realm = testRealm();
+      const { $rows, $descending, view, $keys } = setup(realm);
+      Realm.update(realm, (_read, write) => {
+        write.upsert($rows, 1);
+        write.upsert($rows, 2);
+      });
+      const guess = Stage.make(realm, { visible: true });
+      Stage.update(guess, (_read, write) => write($descending, true));
+      expect(Realm.untracked(realm, (read) => read($keys))).toEqual([2, 1]);
+      View.dispose(view);
+      Stage.drop(guess);
+      expect(Realm.untracked(realm, (read) => read($keys))).toEqual([1, 2]);
+    });
+
+    test("a comparator a hidden stage read is not frozen", () => {
+      using realm = testRealm();
+      const { $rows, $descending, view, $keys } = setup(realm);
+      Realm.update(realm, (_read, write) => {
+        write.upsert($rows, 1);
+        write.upsert($rows, 2);
+      });
+      expect(Realm.untracked(realm, (read) => read($keys))).toEqual([1, 2]);
+      const hidden = Stage.make(realm);
+      Stage.update(hidden, (_read, write) => write($descending, true));
+      expect(Stage.read(hidden, (read) => read($keys))).toEqual([2, 1]);
+      Stage.drop(hidden);
+      View.dispose(view);
+      Realm.update(realm, (_read, write) => write($descending, true));
+      expect(Realm.untracked(realm, (read) => read($keys))).toEqual([1, 2]);
+    });
+
+    test("a confirmed comparator change with no row write since is kept, a visible stage open or not", () => {
+      for (const visible of [false, true]) {
+        using realm = testRealm();
+        const { $rows, $descending, view, $keys } = setup(realm);
+        Realm.update(realm, (_read, write) => {
+          write.upsert($rows, 1);
+          write.upsert($rows, 2);
+        });
+        Realm.update(realm, (_read, write) => write($descending, true));
+        const guess = visible ? Stage.make(realm, { visible: true }) : undefined;
+        if (guess !== undefined) {
+          Stage.update(guess, (_read, write) => write($descending, false));
+        }
+        View.dispose(view);
+        if (guess !== undefined) Stage.drop(guess);
+        Realm.update(realm, (_read, write) => write($descending, false));
+        expect(Realm.untracked(realm, (read) => read($keys))).toEqual([2, 1]);
+      }
+    });
+
+    test("a disposal inside an update that throws keeps the rows the rollback restored", () => {
+      using realm = testRealm();
+      const { $rows, $descending, view, $keys } = setup(realm);
+      Realm.update(realm, (_read, write) => write.upsert($rows, 1));
+      using keys = follow(realm, (read) => read($keys));
+      expect(() =>
+        Realm.update(realm, (_read, write) => {
+          write.upsert($rows, 2);
+          View.dispose(view);
+          throw new Error("cancel");
+        }),
+      ).toThrow("cancel");
+      Realm.update(realm, (_read, write) => write($descending, true));
+      expect(keys.last).toEqual([1]);
+      expect(Realm.untracked(realm, (read) => read($keys))).toEqual([1]);
+    });
+
+    test("a disposal inside an update that lands keeps the update's rows", () => {
+      using realm = testRealm();
+      const { $rows, $descending, view, $keys } = setup(realm);
+      Realm.update(realm, (_read, write) => {
+        write.upsert($rows, 1);
+        write.upsert($rows, 2);
+        View.dispose(view);
+      });
+      Realm.update(realm, (_read, write) => {
+        write($descending, true);
+        write.upsert($rows, 3);
+      });
+      expect(Realm.untracked(realm, (read) => read($keys))).toEqual([1, 2]);
+    });
   });
 
   test("NaN keys sort after every other number on a tie", () => {
@@ -955,5 +1115,52 @@ describe("random-write oracles", () => {
     const fifths = (amount: number) => amount % 5 === 0;
     expect(totalsMismatch(thirds, thirds, 300)).toBeUndefined();
     expect(totalsMismatch(fifths, thirds, 300)).toBeNumber();
+  });
+});
+
+describe("a disposed ordered view keeps the confirmed order", () => {
+  test("after an update that wrote two rows, not the order between them", () => {
+    using realm = testRealm();
+    const $rows = Collection.make(realm, { keyOf: (value: number) => value });
+    const view = View.ordered($rows, { compare: () => (left, right) => left - right });
+    const keys = view.keys;
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, 1);
+    });
+    expect(Realm.untracked(realm, (read) => read(keys))).toEqual([1]);
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, 2);
+      write.upsert($rows, 3);
+    });
+    View.dispose(view);
+    expect(Realm.untracked(realm, (read) => read(keys))).toEqual([1, 2, 3]);
+  });
+
+  test("never a dropped stage's rows, after its factories change", () => {
+    using realm = testRealm();
+    const $rows = Collection.make(realm, { keyOf: (value: number) => value });
+    const $direction = Box.make(realm, 1);
+    const view = View.ordered($rows, {
+      compare: (read) => {
+        const sign = read($direction);
+        return (left, right) => sign * (left - right);
+      },
+    });
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, 1);
+    });
+    const keys = view.keys;
+    expect(Realm.untracked(realm, (read) => read(keys))).toEqual([1]);
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => {
+      write.upsert($rows, 2);
+    });
+    expect(Stage.read(stage, (read) => read(keys))).toEqual([1, 2]);
+    Stage.drop(stage);
+    View.dispose(view);
+    Realm.update(realm, (_read, write) => {
+      write($direction, -1);
+    });
+    expect(Realm.untracked(realm, (read) => read(keys))).toEqual([1]);
   });
 });

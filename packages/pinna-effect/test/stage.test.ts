@@ -823,3 +823,30 @@ test("schema checks run for staged writes and replay, without an extra check on 
   expect(checks).toBe(5);
   expect(Realm.untracked(realm, (read) => read(value))).toBe(2);
 });
+
+describe("Stage.scoped and a conflict thrown before the section returns its Effect", () => {
+  test("fails with StageConflictError, recoverable by tag", async () => {
+    const realm = Realm.make();
+    const $count = Box.make(realm, 10);
+    const recovered = await Effect.runPromise(
+      Stage.scoped(
+        realm,
+        (stage) => {
+          Stage.update(stage, (read, write) => {
+            write($count, read($count) + 1);
+          });
+          Realm.update(realm, (_read, write) => {
+            write($count, 20);
+          });
+          // The stage stopped on the conflict: this call throws it, before an Effect exists.
+          Stage.update(stage, () => undefined);
+          return Effect.succeed("done");
+        },
+        { visible: true, conflicts: "fail" },
+      ).pipe(Effect.catchTag("StageConflictError", () => Effect.succeed("recovered"))),
+    );
+    expect(recovered).toBe("recovered");
+    expect(Realm.untracked(realm, (read) => read($count))).toBe(20);
+    Realm.dispose(realm);
+  });
+});

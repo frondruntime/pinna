@@ -8,16 +8,33 @@
  *   `useSelect((read) => read(portfolio.$response).items.length)`. The function
  *   runs in the realm a `RealmProvider` above the component gives.
  *
- * The component rerenders when the result changes (`Object.is`).
- * A render only reads, so a render React throws away, a first one or a later
+ * The component rerenders when the result changes (`Object.is`). Every hook
+ * keeps one protocol, so a render React throws away, a first one or a later
  * one, holds nothing and changes nothing the mounted component follows:
  *
- * - `useValue` and `useValues` know what they read before the render. The
- *   render reads it untracked, and the subscription React keeps follows it.
- * - `useSelect` learns what it reads by running the function, so a render
- *   records the reads apart, and a layout effect links them once React keeps
- *   the render. That effect runs on every render: it is the price of a read
- *   whose sources are not known before it runs.
+ * 1. What `useSyncExternalStore` returns is what the component renders: the
+ *    render's `getSnapshot` returns its capture's result, and the hook reads
+ *    nothing else. React's own checks, before a concurrent commit and after
+ *    one, then compare the value shown.
+ * 2. Each render has its own capture: the result and what it read, taken
+ *    with no observation and no `onObserved` hook started. `useValue` and
+ *    `useValues` read their observables untracked, and a render that reads
+ *    the committed observables reuses the committed capture; `useSelect`
+ *    runs the function into a `Capture` of pinna-core, which records each
+ *    source's version. `getSnapshot` returns the cached result until a source
+ *    moved, so two calls with nothing written return the same reference.
+ * 3. Only a committed render moves the subscriptions. Its layout effect
+ *    adopts its capture: the hook's reaction follows what it read, keeps the
+ *    sources both captures read, and tells React when one moved between the
+ *    render and the adopt. A render React throws away is never adopted.
+ *    `useValue` adopts in React's own `subscribe` instead, which React runs
+ *    only for a committed render: two captures of one observable are one
+ *    capture, so none shares a source with another, and no render of it
+ *    runs a layout effect. `useValues` and `useSelect` keep the effect,
+ *    since two of their captures can share a source.
+ * 4. When a followed source changes, the committed capture runs again and
+ *    the reaction follows what that run read, even when the result is equal
+ *    and no render follows.
  *
  * A write replaces a box's value rather than changing it in place, so a
  * memoized child or the React Compiler sees a new identity exactly when the
@@ -31,7 +48,7 @@ import {
   realmOf,
   realmsOf,
 } from "@frondruntime/pinna/internal";
-import { type Graph, PinnaUsageError, Reaction } from "@frondruntime/pinna-core";
+import { Capture, type Graph, PinnaUsageError, Reaction } from "@frondruntime/pinna-core";
 import {
   createContext,
   createElement,
@@ -78,118 +95,296 @@ const graphOf = (realm: Realm): Graph => {
   return realmGraph(realm);
 };
 
-const unset: unique symbol = Symbol("unset");
+/**
+ * One render's capture: the result the render shows and what it read,
+ * taken with no observation and no hook started. `getSnapshot` is the
+ * render's own: it returns the cached result while nothing the capture read
+ * moved, and captures again when something did, so React's checks before and
+ * after a commit compare the value the render showed.
+ */
+interface HookCapture<Result> {
+  /** The graph of the realm it read, `undefined` for a list of no observables. */
+  readonly graph: Graph | undefined;
+  readonly getSnapshot: () => Result;
+  /** Captures again, after a change the reaction found; a throw is kept for `getSnapshot`. */
+  refresh(): void;
+  /**
+   * Makes `reaction` follow what the capture read. Returns whether a source
+   * moved since the capture read it.
+   */
+  follow(reaction: Reaction): boolean;
+}
 
-/** The store of `useSelect`: what a render read is linked once React keeps the render. */
-class SelectStore<Result> {
-  private version = 0;
-  private listener: (() => void) | undefined;
-  /** The read and the result of the render React kept last. */
-  private read: (read: Read) => Result;
-  private result: Result | typeof unset = unset;
-  /** Numbers each render; the reaction holds the last one's run pending. */
-  private renders = 0;
-  private keptRender = 0;
-  readonly reaction: Reaction;
+/** The capture of `useSelect`: the function's result, and the graph's record of what it read. */
+class SelectCapture<Result> implements HookCapture<Result> {
+  private readonly capture: Capture;
+  private result: Result;
+  /** The last run threw: `getSnapshot` runs again, and throws to the render. */
+  private failed = false;
 
   constructor(
     readonly graph: Graph,
-    read: (read: Read) => Result,
+    readonly select: (read: Read) => Result,
   ) {
-    this.read = read;
-    this.reaction = new Reaction(
-      graph,
-      () => {
-        let changed: boolean;
-        try {
-          changed = this.keepResult(this.reaction.track(this.run));
-        } catch {
-          // A render is the read's caller: the render reads again and throws
-          // the error to the component's error boundary.
-          this.result = unset;
-          changed = true;
-        }
-        if (changed) {
-          this.notify();
-        }
-      },
-      "useSelect",
-    );
+    this.capture = new Capture(graph, "useSelect");
+    this.result = this.capture.run(select);
   }
 
-  private readonly run = (read: Read): Result => this.read(read);
+  readonly getSnapshot = (): Result => {
+    if (this.failed || this.capture.changed()) {
+      this.runAgain();
+    }
+    return this.result;
+  };
 
-  private notify(): void {
-    this.version++;
-    this.listener?.();
+  /** Runs the function again; an equal result (`Object.is`) keeps the cached one. */
+  private runAgain(): void {
+    let next: Result;
+    try {
+      next = this.capture.run(this.select);
+    } catch (error) {
+      this.failed = true;
+      throw error;
+    }
+    this.failed = false;
+    if (!Object.is(this.result, next)) {
+      this.result = next;
+    }
   }
 
-  /** Stores `next` unless it equals the current result; returns whether it changed. */
-  private keepResult(next: Result): boolean {
-    if (this.result !== unset && Object.is(this.result, next)) {
+  refresh(): void {
+    try {
+      this.runAgain();
+    } catch {
+      // The render runs the function again and throws the error to the
+      // component's error boundary.
+    }
+  }
+
+  follow(reaction: Reaction): boolean {
+    return reaction.follow(this.capture);
+  }
+}
+
+/**
+ * The capture of `useValue` and `useValues`: the values of observables known
+ * before the render, read untracked. While the realm's clock stays, nothing
+ * was written and the cached result stands; once it moved, every value is
+ * read again, and a result whose values all equal the cached ones
+ * (`Object.is`) keeps the cached one.
+ */
+class SourceCapture<Result> implements HookCapture<Result> {
+  readonly graph: Graph | undefined;
+  /** `useValue`'s subscribe, which adopts this capture: set once, by the render that made it. */
+  subscribe: ((listener: () => void) => () => void) | undefined = undefined;
+  /** The clock the result was read at, -1 once a read threw. */
+  private clock = -1;
+  private result: Result;
+
+  constructor(
+    readonly observables: ReadonlyArray<Computed<unknown>>,
+    /**
+     * Reads the values through `get`: `peek` in a render, the reaction's
+     * tracked `read` in `follow`. Returns `previous` when every value equals
+     * its own.
+     */
+    private readonly read: (get: Get, previous: Result | typeof unset) => Result,
+    previous: Result | typeof unset,
+  ) {
+    const first = observables[0];
+    if (first === undefined) {
+      this.graph = undefined;
+    } else {
+      const realm = realmOf(first);
+      // The reaction follows the first one's realm, whose `read` takes nothing of another.
+      for (let index = 1; index < observables.length; index++) {
+        const theirs = realmOf(observables[index] as Computed<unknown>);
+        if (theirs !== realm) {
+          throw new PinnaUsageError(
+            "pinna-react/mixed-realms",
+            `pinna: useValues takes observables of one realm${realmsOf(theirs, realm)}`,
+          );
+        }
+      }
+      this.graph = realmGraph(realm);
+    }
+    this.result = read(peek, previous);
+    this.clock = this.graph === undefined ? 0 : this.graph.clock;
+  }
+
+  /** The result last read, without reading again. */
+  get cached(): Result {
+    return this.result;
+  }
+
+  readonly getSnapshot = (): Result => {
+    const graph = this.graph;
+    if (graph !== undefined && graph.clock !== this.clock) {
+      this.clock = -1;
+      this.result = this.read(peek, this.result);
+      this.clock = graph.clock;
+    }
+    return this.result;
+  };
+
+  /** Nothing: `follow` reads the values again, tracked, and keeps them. */
+  refresh(): void {}
+
+  private readonly track = (read: Read): Result => this.read(read, this.result);
+
+  /**
+   * Reads the values again, tracked, and keeps what that read: a value over
+   * an atom nothing observed can change with no write, so the clock alone
+   * would keep the render's value.
+   */
+  follow(reaction: Reaction): boolean {
+    let next: Result;
+    try {
+      next = reaction.track(this.track);
+    } catch {
+      // React reads the result again and throws the error to the
+      // component's error boundary.
+      this.clock = -1;
+      return true;
+    }
+    const graph = this.graph;
+    this.clock = graph === undefined ? 0 : graph.clock;
+    if (next === this.result) {
       return false;
     }
     this.result = next;
     return true;
   }
+}
+
+const unset: unique symbol = Symbol("unset");
+
+/** How a capture reads one observable: `peek`, or a tracked `read`. */
+type Get = (observable: Computed<unknown>) => unknown;
+
+/**
+ * The store of one hook. It owns the subscriptions, and only the capture of
+ * a render React committed moves them: a layout effect adopts it, so a
+ * render React throws away never unsubscribes what the mounted component
+ * follows.
+ */
+class HookStore<Result> {
+  /** The capture of the render React committed last. */
+  committed: HookCapture<Result> | undefined = undefined;
+  private reaction: Reaction | undefined = undefined;
+  private listener: (() => void) | undefined = undefined;
+
+  constructor(private readonly label: string) {}
 
   /**
-   * Runs `read` for a render, apart from what the kept render follows, and
-   * returns the kept result when the new one equals it.
+   * A source the committed capture read changed: it captures again and
+   * follows what that read, even when the result is equal and no render
+   * follows, then tells React, which compares the result.
    */
-  render(read: (read: Read) => Result): Result {
-    const next = this.reaction.trackPending(read);
-    this.renders++;
-    const result = this.result;
-    return result !== unset && Object.is(result, next) ? result : next;
-  }
-
-  /** The number of the last render. */
-  get lastRender(): number {
-    return this.renders;
-  }
-
-  /**
-   * Follows what render `rendered` read, once React keeps it. When a later
-   * render that React threw away replaced its pending run, the read runs
-   * again here.
-   */
-  keep(rendered: number, read: (read: Read) => Result, value: Result): void {
-    if (rendered === this.keptRender) {
+  private readonly changed = (): void => {
+    const committed = this.committed;
+    const reaction = this.reaction;
+    if (committed === undefined || reaction === undefined) {
       return;
     }
-    this.keptRender = rendered;
-    this.read = read;
-    this.result = value;
-    let changed: boolean;
-    if (rendered === this.renders) {
-      changed = this.reaction.adopt();
-    } else {
-      try {
-        changed = this.keepResult(this.reaction.track(this.run));
-      } catch {
-        this.result = unset;
-        changed = true;
-      }
+    committed.refresh();
+    try {
+      committed.follow(reaction);
+    } catch {
+      // The render reads again and throws the error to the component's
+      // error boundary.
     }
-    if (changed) {
-      this.notify();
+    this.listener?.();
+  };
+
+  /**
+   * Adopts the capture of the render React committed: the reaction follows
+   * what it read, keeping the sources both captures read, and a source that
+   * moved since the render tells React to read again.
+   */
+  adopt(capture: HookCapture<Result>): void {
+    if (capture === this.committed) {
+      return;
+    }
+    this.committed = capture;
+    const graph = capture.graph;
+    let reaction = this.reaction;
+    if (reaction !== undefined && reaction.graph !== graph) {
+      // Another realm: nothing is shared, and the old reaction lets go.
+      reaction.deactivate();
+      reaction = undefined;
+      this.reaction = undefined;
+    }
+    if (graph === undefined) {
+      return;
+    }
+    let moved: boolean;
+    if (reaction === undefined) {
+      reaction = new Reaction(graph, this.changed, this.label);
+      this.reaction = reaction;
+      moved = capture.follow(reaction);
+      if (this.listener !== undefined && reaction.activate()) {
+        moved = true;
+      }
+    } else {
+      moved = capture.follow(reaction);
+    }
+    if (moved) {
+      this.changed();
     }
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listener = listener;
-    if (this.reaction.activate()) {
-      this.notify();
+    // A hook that activating starts may write what was just read. React
+    // compares the result once it subscribes, so a write between the render
+    // and here needs no notice.
+    if (this.reaction?.activate() === true) {
+      this.changed();
     }
     return () => {
       this.listener = undefined;
-      this.reaction.deactivate();
+      this.reaction?.deactivate();
     };
   };
 
-  readonly getSnapshot = (): number => this.version;
+  /**
+   * `subscribe` for a capture whose sources no other capture of this hook
+   * shares, as `useValue`'s one observable: React subscribes only for a
+   * render it commits, and unsubscribes the last capture first, so the
+   * capture is adopted here and the render needs no layout effect.
+   */
+  subscribeTo(capture: HookCapture<Result>, listener: () => void): () => void {
+    this.adopt(capture);
+    return this.subscribe(listener);
+  }
 }
+
+/** The store of a hook, made by its first render. */
+const useStore = <Result>(label: string): HookStore<Result> => {
+  const store = useRef<HookStore<Result> | null>(null);
+  let current = store.current;
+  if (current === null) {
+    // A first render React throws away throws its store away with it.
+    current = new HookStore<Result>(label);
+    store.current = current;
+  }
+  return current;
+};
+
+/**
+ * The hook's protocol, once the render has its capture: React reads the
+ * capture's result, and the layout effect of a committed render adopts it.
+ * A layout effect runs before the subscription's passive one, so a first
+ * render's sources are in place when the reaction activates.
+ */
+const useCapture = <Result>(store: HookStore<Result>, capture: HookCapture<Result>): Result => {
+  const value = useSyncExternalStore(store.subscribe, capture.getSnapshot, capture.getSnapshot);
+  useLayoutEffect(() => {
+    store.adopt(capture);
+  }, [store, capture]);
+  return value;
+};
 
 /**
  * Runs `select`, tracked, in the realm the nearest `RealmProvider` gives,
@@ -198,108 +393,30 @@ class SelectStore<Result> {
  */
 export function useSelect<Value>(select: (read: Read) => Value): Value {
   const graph = graphOf(useRealm());
-  const store = useRef<SelectStore<Value> | null>(null);
-  // A new graph means a new realm: React drops the old store's subscription
-  // when it sees the new `subscribe`.
-  if (store.current === null || store.current.graph !== graph) {
-    store.current = new SelectStore(graph, select);
-  }
-  const current = store.current;
-  useSyncExternalStore(current.subscribe, current.getSnapshot, current.getSnapshot);
-  const value = current.render(select);
-  const rendered = current.lastRender;
-  // A layout effect runs before the subscription's passive one, so a first
-  // render's sources are in place when the reaction activates.
-  useLayoutEffect(() => {
-    current.keep(rendered, select, value);
-  });
-  return value;
+  const store = useStore<Value>("useSelect");
+  const committed = store.committed as SelectCapture<Value> | undefined;
+  // A render runs the function again unless it is the committed one, in
+  // the committed realm: a new function may read what the last did not.
+  const capture =
+    committed !== undefined && committed.select === select && committed.graph === graph
+      ? committed
+      : new SelectCapture(graph, select);
+  return useCapture(store, capture);
 }
 
 /**
- * The store of `useValue` and `useValues`, for one list of observables known
- * before the render. The render and React read the result untracked; the
- * reaction follows the observables while React keeps the subscription.
+ * Whether `capture` reads exactly `observables`, in the same order. An
+ * indexed loop, since every render asks and a callback is a closure on Hermes.
  */
-class SourceStore<Result> {
-  private listener: (() => void) | undefined;
-  private readonly reaction: Reaction | undefined;
-
-  constructor(
-    readonly observables: ReadonlyArray<Computed<unknown>>,
-    private readonly read: () => Result,
-    private readonly track: (read: Read) => unknown,
-  ) {
-    const first = observables[0];
-    if (first === undefined) {
-      this.reaction = undefined;
-      return;
-    }
-    const realm = realmOf(first);
-    // The reaction follows the first one's realm, whose `read` takes nothing of another.
-    for (const observable of observables) {
-      const theirs = realmOf(observable);
-      if (theirs !== realm) {
-        throw new PinnaUsageError(
-          "pinna-react/mixed-realms",
-          `pinna: useValues takes observables of one realm${realmsOf(theirs, realm)}`,
-        );
-      }
-    }
-    this.reaction = new Reaction(realmGraph(realm), () => this.follow(), "useValue");
-  }
-
-  /** Reads again, tracked, so the reaction stays linked to what changed, and tells React. */
-  private follow(): void {
-    try {
-      this.reaction?.track(this.track);
-    } catch {
-      // React reads the result again and throws the error to the
-      // component's error boundary.
-    }
-    this.listener?.();
-  }
-
-  readonly subscribe = (listener: () => void): (() => void) => {
-    const reaction = this.reaction;
-    if (reaction === undefined) {
-      return () => {};
-    }
-    this.listener = listener;
-    let failed = false;
-    try {
-      reaction.track(this.track);
-    } catch {
-      failed = true;
-    }
-    // React compares the result with the rendered one once it subscribes, so
-    // a write between the render and here needs no notice. A hook that
-    // activating starts may write what was just read, and that one does.
-    if (reaction.activate() || failed) {
-      listener();
-    }
-    return () => {
-      this.listener = undefined;
-      reaction.deactivate();
-    };
-  };
-
-  readonly getSnapshot = (): Result => this.read();
-}
-
-/**
- * Whether `store` follows exactly `observables`, in the same order. An indexed
- * loop, since every render asks and a callback is a closure on Hermes.
- */
-const follows = (
-  store: SourceStore<unknown> | null,
+const reads = (
+  capture: SourceCapture<ReadonlyArray<unknown>> | undefined,
   observables: ReadonlyArray<Computed<unknown>>,
-): store is SourceStore<unknown> => {
-  if (store === null || store.observables.length !== observables.length) {
+): boolean => {
+  if (capture === undefined || capture.observables.length !== observables.length) {
     return false;
   }
   for (let index = 0; index < observables.length; index++) {
-    if (store.observables[index] !== observables[index]) {
+    if (capture.observables[index] !== observables[index]) {
       return false;
     }
   }
@@ -309,71 +426,79 @@ const follows = (
 /**
  * Reads `observable` and rerenders when its value changes (`Object.is`).
  *
- * A render that reads another observable makes a new store; the subscription
- * moves to it only when React keeps that render.
+ * A render that reads another observable makes a new capture; the
+ * subscription moves to it only when React commits that render.
  */
 export function useValue<Value>(observable: Computed<Value>): Value {
-  const store = useRef<SourceStore<Value> | null>(null);
-  let current = store.current;
-  if (current === null || current.observables[0] !== observable) {
-    current = new SourceStore(
-      [observable],
-      () => peek(observable),
-      (read) => read(observable),
-    );
-    store.current = current;
+  const store = useStore<Value>("useValue");
+  const committed = store.committed as SourceCapture<Value> | undefined;
+  let capture: SourceCapture<Value>;
+  if (committed !== undefined && committed.observables[0] === observable) {
+    capture = committed;
+  } else {
+    capture = new SourceCapture<Value>([observable], (get) => get(observable) as Value, unset);
+    capture.subscribe = (listener) => store.subscribeTo(capture, listener);
   }
-  return useSyncExternalStore(current.subscribe, current.getSnapshot, current.getSnapshot);
+  // Two captures of one observable are one capture, so no source is shared
+  // between them and React's own subscribe adopts the committed one: no
+  // layout effect on any render.
+  return useSyncExternalStore(
+    capture.subscribe as (listener: () => void) => () => void,
+    capture.getSnapshot,
+    capture.getSnapshot,
+  );
 }
 
 type ValueOf<Observable> = Observable extends Computed<infer Value> ? Value : never;
 
 /**
+ * The values of `sources`, read untracked: `previous` when every value equals
+ * its own (`Object.is`), so a read where nothing changed allocates nothing.
+ */
+const readValues = (
+  get: Get,
+  sources: ReadonlyArray<Computed<unknown>>,
+  previous: ReadonlyArray<unknown> | typeof unset,
+): ReadonlyArray<unknown> => {
+  let next: Array<unknown> | undefined;
+  const kept = previous !== unset && previous.length === sources.length ? previous : undefined;
+  for (let index = 0; index < sources.length; index++) {
+    const value = get(sources[index] as Computed<unknown>);
+    if (next === undefined) {
+      if (kept !== undefined && Object.is(kept[index], value)) {
+        continue;
+      }
+      next = kept === undefined ? [] : kept.slice(0, index);
+    }
+    next.push(value);
+  }
+  return next ?? kept ?? [];
+};
+
+/**
  * Reads each observable, in the realm of the first, and rerenders when any
- * value changes. The array keeps its identity until an element changes.
+ * value changes. The array keeps its identity until an element changes,
+ * also when equal values move to other observables.
  */
 export function useValues<const Observables extends ReadonlyArray<Computed<unknown>>>(
   observables: Observables,
 ): { readonly [Index in keyof Observables]: ValueOf<Observables[Index]> } {
-  const store = useRef<SourceStore<ReadonlyArray<unknown>> | null>(null);
-  let current = store.current;
-  if (!follows(current, observables)) {
-    // Own the list so a caller's mutation cannot change what this store reads
-    // while its subscription still follows the previous observables.
+  const store = useStore<ReadonlyArray<unknown>>("useValue");
+  const committed = store.committed as SourceCapture<ReadonlyArray<unknown>> | undefined;
+  let capture: SourceCapture<ReadonlyArray<unknown>>;
+  if (committed !== undefined && reads(committed, observables)) {
+    capture = committed;
+  } else {
+    // Own the list so a caller's mutation cannot change what this capture
+    // reads while the committed one still follows the previous observables.
     const sources = observables.slice();
-    let values: ReadonlyArray<unknown> = [];
-    current = new SourceStore(
+    capture = new SourceCapture<ReadonlyArray<unknown>>(
       sources,
-      // Every value is read; a new array starts only at the first that differs
-      // (`Object.is`), so a read where nothing changed allocates nothing.
-      () => {
-        let next: Array<unknown> | undefined;
-        for (let index = 0; index < sources.length; index++) {
-          const value = peek(sources[index] as Computed<unknown>);
-          if (next === undefined) {
-            if (index < values.length && Object.is(values[index], value)) {
-              continue;
-            }
-            next = values.slice(0, index);
-          }
-          next.push(value);
-        }
-        if (next !== undefined) {
-          values = next;
-        }
-        return values;
-      },
-      (read) => {
-        for (let index = 0; index < sources.length; index++) {
-          read(sources[index] as Computed<unknown>);
-        }
-      },
+      (get, previous) => readValues(get, sources, previous),
+      committed === undefined ? unset : committed.cached,
     );
-    store.current = current;
   }
-  return useSyncExternalStore(
-    current.subscribe,
-    current.getSnapshot,
-    current.getSnapshot,
-  ) as unknown as { readonly [Index in keyof Observables]: ValueOf<Observables[Index]> };
+  return useCapture(store, capture) as unknown as {
+    readonly [Index in keyof Observables]: ValueOf<Observables[Index]>;
+  };
 }

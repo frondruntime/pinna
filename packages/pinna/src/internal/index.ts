@@ -35,7 +35,7 @@ export {
   realmOf,
 } from "../box.ts";
 export { KeyedCollection, type Merge, repeatedKey, repeatedKeyMessage } from "../collection.ts";
-export type { ClassInstance } from "../draft.ts";
+export { assertNoDraft, type ClassInstance } from "../draft.ts";
 export { equalKey, hashKey, identityHash, schemaKey } from "../identity.ts";
 export {
   currentPlace,

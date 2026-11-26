@@ -41,7 +41,7 @@ the contract bucket, and the internals test stays.
 | Realm disposal | `dispose`, `errors` | |
 | Collections, row listeners, reconcile, prototype-named keys | `collection`, `row-change`, `reconcile` | |
 | Stages | `stage*` | `internal/stage`, `internal/stage-reads`, `internal/stage-replay` |
-| Visible stages: the window, the stack, stopping, collections and views under a guess, `Stage.scoped`'s `visible` and `guess`; a differential fuzz against hidden stages | `stage-visible`, `stage-visible-rows`, `stage-visible-fuzz`, `pinna-effect/test/stage-visible` | `internal/stage-visible` (`baseOf`) |
+| Visible stages: the window, the stack, stopping, collections and views under a guess, `Stage.scoped`'s `visible` and `guess`; a differential fuzz against hidden stages | `stage-visible`, `stage-visible-rows`, `stage-visible-fuzz`, `pinna-effect/test/stage-visible` | `internal/stage-visible` (`baseOf`), `internal/stage-install` (`Stack.installing`) |
 | `Computed.fn` | `computed-function`, `settle` | |
 | Views: order, groups, totals, work per row write, random-write oracles calibrated against planted bugs | `view` | |
 | Snapshot and restore: shapes, isolation, one rerun per restore, prototype-named keys | `snapshot`, `pinna-effect/test/snapshot` | |

@@ -9,6 +9,7 @@ import {
   Source,
   Stage,
   type UpdateRecord,
+  View,
   type Write,
 } from "../src/index.ts";
 import { testRealm } from "../src/testing/index.ts";
@@ -668,7 +669,7 @@ describe("write.replay and write.revert", () => {
     stop();
   });
 
-  test("throws outside an update, and for another realm's box, putting back what it wrote", () => {
+  test("throws outside an update, and for another realm's record, writing nothing", () => {
     using realm = testRealm();
     using other = testRealm();
     const $mine = Box.make(realm, 1);
@@ -677,20 +678,19 @@ describe("write.replay and write.revert", () => {
     const { records: otherRecords, stop: stopOther } = listening(other);
     Realm.update(other, (_read, write) => write($theirs, 2));
     Realm.update(realm, (_read, write) => write($mine, 2));
-    const mixed: UpdateRecord = {
-      ...(records[0] as UpdateRecord),
-      boxes: [...(records[0] as UpdateRecord).boxes, ...(otherRecords[0] as UpdateRecord).boxes],
-    };
     expect(() =>
       Realm.update(realm, (_read, write) => {
+        write($mine, 3);
         try {
-          write.revert(mixed);
+          write.revert(otherRecords[0] as UpdateRecord);
         } catch (error) {
-          Realm.untracked(realm, (read) => expect(read($mine)).toBe(2));
+          Realm.untracked(realm, (read) => expect(read($mine)).toBe(3));
           throw error;
         }
       }),
     ).toThrow("of another realm");
+    Realm.untracked(realm, (read) => expect(read($mine)).toBe(2));
+    Realm.untracked(other, (read) => expect(read($theirs)).toBe(2));
     let kept: Write | undefined;
     Realm.update(realm, (_read, write) => {
       kept = write;
@@ -702,7 +702,7 @@ describe("write.replay and write.revert", () => {
     stopOther();
   });
 
-  test("throws pinna/record-not-applicable when a row the order needs is gone", () => {
+  test("throws pinna/record-not-applicable when the key order moved since", () => {
     using realm = testRealm();
     const { $rows } = scene(realm);
     const { records, stop } = listening(realm);
@@ -719,7 +719,7 @@ describe("write.replay and write.revert", () => {
     expect(isPinnaError(thrown, "PinnaUsageError")).toBe(true);
     expect((thrown as { code: string }).code).toBe("pinna/record-not-applicable");
     expect((thrown as Error).message).toBe(
-      'pinna: write.revert needs the row under "a" of the collection "rows", which neither the record nor the collection holds; apply records in the order they landed, each to the state the previous one left',
+      'pinna: write.revert needs the key order of the collection "rows" to be the record\'s after, and it changed since; apply records in the order they landed, each to the state the previous one left',
     );
     expect(keysOf(realm, $rows)).toEqual(["c"]);
     stop();
@@ -904,5 +904,79 @@ describe("Realm.onUpdate and other writes", () => {
     }
     release();
     stop();
+  });
+});
+
+describe("revert and replay with row listeners", () => {
+  const setUp = () => {
+    const realm = Realm.make();
+    const $rows = Collection.make(realm, { keyOf: (row: number) => row });
+    const $count = Box.make(realm, 0);
+    const $index = Collection.make(realm, { keyOf: (row: { readonly key: number }) => row.key });
+    Collection.onRowChange($rows, (change, read, write) => {
+      write(
+        $count,
+        read($count) + Number(change.after !== undefined) - Number(change.before !== undefined),
+      );
+      if (change.after === undefined) {
+        write.remove($index, change.key);
+      } else {
+        write.upsert($index, { key: change.key });
+      }
+    });
+    const ordered = View.ordered($rows, { compare: () => (a, b) => a - b });
+    const records: Array<UpdateRecord> = [];
+    Realm.onUpdate(realm, (record) => {
+      records.push(record);
+    });
+    const state = () =>
+      Realm.untracked(realm, (read) => ({
+        keys: read($rows.keys),
+        count: read($count),
+        index: read($index.keys),
+        ordered: read(ordered.keys),
+      }));
+    return { realm, $rows, records, state };
+  };
+
+  test("a count and a collection a listener keeps land at the record's values, and a view follows", () => {
+    const { realm, $rows, records, state } = setUp();
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, 2);
+    });
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, 1);
+    });
+    const [first, second] = records as [UpdateRecord, UpdateRecord];
+    expect(state()).toEqual({ keys: [1, 2], count: 2, index: [1, 2], ordered: [1, 2] });
+    Realm.update(realm, (_read, write) => {
+      write.revert(second);
+    });
+    expect(state()).toEqual({ keys: [2], count: 1, index: [2], ordered: [2] });
+    Realm.update(realm, (_read, write) => {
+      write.revert(first);
+    });
+    expect(state()).toEqual({ keys: [], count: 0, index: [], ordered: [] });
+    Realm.update(realm, (_read, write) => {
+      write.replay(first);
+      write.replay(second);
+    });
+    expect(state()).toEqual({ keys: [1, 2], count: 2, index: [1, 2], ordered: [1, 2] });
+    Realm.dispose(realm);
+  });
+
+  test("a stage recipe reverts and replays the same way", () => {
+    const { realm, $rows, records, state } = setUp();
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, 1);
+    });
+    const [record] = records as [UpdateRecord];
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => {
+      write.revert(record);
+    });
+    Stage.apply(stage);
+    expect(state()).toEqual({ keys: [], count: 0, index: [], ordered: [] });
+    Realm.dispose(realm);
   });
 });
