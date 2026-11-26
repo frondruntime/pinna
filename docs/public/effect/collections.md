@@ -1,6 +1,6 @@
 ---
 title: Collection fields
-description: Read when a model holds rows by key. Declare a CollectionField, decode it from a plain array, write a refetch that keeps rows equal under the schema, and reconcile a schema-checked box of an array.
+description: Read when a model holds rows by key. Declare a Model.collectionField, decode it from a plain array, write a refetch that keeps rows equal under the schema, and reconcile a schema-checked box of an array.
 ---
 
 The Effect pages are for applications that already use Effect: see

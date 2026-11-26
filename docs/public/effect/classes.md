@@ -1,6 +1,6 @@
 ---
 title: Classes
-description: Read when modeling domain data. Declare a SchemaModel with box fields, derive values on it, write from its methods, decode it from the wire, and hand it the caller's own values, in a decode or an Effect program.
+description: Read when modeling domain data. Declare a Model.Schema with box fields, derive values on it, write from its methods, decode it from the wire, and hand it the caller's own values, in a decode or an Effect program.
 ---
 
 The Effect pages are for applications that already use Effect: see

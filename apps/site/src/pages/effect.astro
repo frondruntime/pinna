@@ -31,12 +31,12 @@ const modelPoints: ReadonlyArray<Point> = [
   },
   {
     title: "Every write is checked.",
-    body: "A write the field's schema refuses throws to the caller, with the `Schema.SchemaError` as its cause, and the whole `Realm.update` is undone.",
+    body: "A write the field's schema refuses throws `ValueRejectedError` to the caller, with the `Schema.SchemaError` as its cause, and the whole `Realm.update` is undone.",
     test: "packages/pinna-effect/test/box.test.ts",
   },
   {
     title: "The wire is the schema.",
-    body: "`Model.decode` takes JSON to a model in a realm and throws `Schema.SchemaError` on input that does not fit; `Schema.encodeSync` takes the model back to JSON with the boxes' current values.",
+    body: "`Model.decode` takes JSON to a model in a realm and throws `DecodeError`, whose cause is the `Schema.SchemaError`, on input that does not fit; `Schema.encodeSync` takes the model back to JSON with the boxes' current values.",
     test: "packages/pinna-effect/test/mix.test.ts",
   },
 ];

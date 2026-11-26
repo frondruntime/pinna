@@ -20,9 +20,21 @@ if (collect === undefined) {
   throw new Error("pinna-bench: run Node with --expose-gc");
 }
 
+/**
+ * `getHeapStatistics().total_allocated_bytes` is reported by Node 26 and
+ * declared by `@types/node` 26, but not by Node 22 or `@types/node` 24, which
+ * a workspace can resolve beside 26. Read through this type, the worker
+ * compiles against either; asked at run time, a Node without it reports no
+ * bytes instead of a difference of two `undefined`s.
+ */
+type AllocatedCount = { readonly total_allocated_bytes?: number };
+
+const allocatedBytes = (): number | undefined =>
+  (getHeapStatistics() as unknown as AllocatedCount).total_allocated_bytes;
+
 const node: Host = {
   now: () => performance.now(),
-  allocated: () => getHeapStatistics().total_allocated_bytes,
+  ...(allocatedBytes() === undefined ? {} : { allocated: () => allocatedBytes() ?? 0 }),
   collect,
 };
 
