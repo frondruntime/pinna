@@ -76,6 +76,8 @@ export const flashPhosphor = (target: HTMLElement, delay = 0): void => {
     });
   }
   // The last frame leaves the color out, so the flash ends on the text's live color: a color that
-  // still moves, as a new row's fading lime does, is met where it is, not where it was.
-  target.animate(keyframes, { duration, delay, fill: "backwards" });
+  // still moves, as a new row's fading lime does, is met where it is, not where it was. No fill:
+  // a backwards fill held the first, brightest frame through the delay, so a label due 400 ms
+  // after the write lit with it and the text lost the order the graph shows.
+  target.animate(keyframes, { duration, delay });
 };
