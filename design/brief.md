@@ -51,11 +51,12 @@ that are still literals are listed after the alpha table.
   64rem, 16px under 40rem), `--header-h` 4rem, and `--grid`, the
   background grid's 64px pitch. The docs count space in `--u`, 0.25rem.
 
-A frame, a line, or a fill in the lit color takes one of eight alphas:
+A frame, a line, or a fill in the lit color takes one of nine alphas:
 
 | Token | Alpha | Use |
 | --- | --- | --- |
-| `--lit-hairline` | 0.28 | Underlines of prose and supporting links, the text selection |
+| `--lit-hairline` | 0.28 | The text selection, the footer's top rule |
+| `--link-underline` | 0.5 | Underlines of prose and supporting links |
 | `--lit-line-soft` | 0.6 | A beam frame that marks a state, the sidebar's current page and the add() panel |
 | `--lit-line` | 0.7 | A beam frame that invites a click; the mark's frame; the square that caps the docs' pagination rule |
 | `--lit-line-hover` | 0.9 | That frame under the pointer |
@@ -234,31 +235,11 @@ property names, and punctuation, live in the theme alone.
   5% lit fill over `--panel`, and a docs table row a 4% one, lighting in
   0.12s and fading in 0.6s like a control, so one row reads across twelve
   columns. A best cell keeps its own fill.
-- **A suite case reads across the libraries.** Hovering or tapping a
-  square in the conformance grid rings that case in all three rows with a
-  1px `--accent` outline 1px out, inside the 3px gap, and dims every other
-  square to 0.45 in 0.12s; leaving the card fades both back in 0.6s, like
-  a control. The dim is on the three rows' containers and the ring is one
-  marker per row, a copy of the case's square moved by transform: a dim
-  on each square started 483 opacity transitions as the pointer entered
-  the card, 16 to 19 ms of style work on an M1 Pro against 2 ms now,
-  and a case under the pointer costs 1.2 ms.
-- **The suite's legend and its readout share one slot.** At rest the
-  slot under the rows holds the legend (pass, differs from the suite,
-  skip) and "Hover or tap a square for its case."; a case replaces it
-  with the case (`#id` and title), each library's result in the legend's
-  colors, and the reason recorded for a miss, from the suite's
-  `expected.ts`. Leaving the card brings the legend back; a tap has no
-  leave, so a tapped case stays until a tap outside the card. The case
-  replaces the native `title` tooltip, which appeared only after the
-  browser's delay and spoke for one library's square. A resting case
-  (#154, the one Pinna differs on) was dropped: it repeated the note
-  under the grid and read as a case the pointer had left behind. A hidden
-  copy of the case with the most text (#154, by 37 characters) shares the
-  slot's grid cell, so the card keeps its height at every width. A glow on the
-  hovered square was dropped: it marks no live state or failure
-  (frond-look LOOK-04), and it lit one library where the question is how
-  all three answer.
+- **The suite grid takes no hover.** The conformance card shows the three
+  rows of squares and the legend under them (pass, differs from the suite,
+  skip). A readout that ringed a hovered case in every row, dimmed the
+  rest, and named each library's result and reason was removed on the
+  owner's call; the reasons stay in the suite's `expected.ts`.
 - **A section's trace draws as it scrolls in.** Where `animation-timeline:
   view()` runs and motion is not reduced, the trace leaving a landing
   section's pad grows from the pad as the section enters, tied to the
@@ -270,8 +251,27 @@ property names, and punctuation, live in the theme alone.
   flash in the order the change reaches them: the box that was written,
   the computed value it invalidates, then the row that renders it, 100 ms
   from the write to the computed value and 200 ms to the render. Each
-  flash fades in 700 ms. Under reduced motion the graph changes color at
-  once, with no flash.
+  flash is a P7 phosphor's: a white strike for 60 ms, cyan that fades in
+  700 ms, and a lime afterglow at half strength that settles into the
+  part's own color over 1,600 ms.
+  The afterglow passes a part that is not done through lime on its way
+  back to gray, as a tube's persistence does. A label's text takes the same
+  curve on the same steps without the strike: cyan at 70% decaying with a
+  110 ms constant over lime at 35% that settles in 800 ms, mixed in oklab
+  over 32 keyframes, with a text shadow of up to 5px in its own color
+  (`lib/phosphor.ts`). Under reduced motion the graph
+  changes color at once, with no flash.
+- **A todo just added stays lime for a while.** Its row starts at 70%
+  lime and settles to `--prose` over 8 s, fast at first and slow at the
+  end, so the newest row reads apart from the rest. A todo drawn on load
+  does not take it, and under reduced motion no row does.
+- **A current link holds a glow that persists.** The header's current
+  link, the sidebar's current page, and the TOC's section in view are lit
+  by `--glow`, from 0 to 1: lime text, a text shadow or a soft wash from
+  the left edge. The glow rises in 220 ms and fades in 900 ms on a curve
+  that falls fast and then lingers, so the section scrolled past stays
+  faintly lit behind the new one. A link current on arrival plays the
+  rise once. Under reduced motion it is set at once.
 - **A press on a part that holds no todo explains it and changes
   nothing.** The totals, `$todos`, the stem (the realm), and the tip are
   not controls: the pointer stays an arrow over them, and their name
@@ -291,17 +291,19 @@ property names, and punctuation, live in the theme alone.
   the docs, and the docs' "Next" link carry their text alone. Arrows that
   belong to the content, such as the edges in the hero graph's caption,
   stay.
-- **Prose and supporting links are underlined in the lit color.** The
-  underline is `--lit-hairline` (0.28), whatever the link's text color,
-  and turns to the full lit color with the text on hover ("A link's
-  underline brightens in place", under Motion). A link laid out as a flex
-  box, such as the hero's secondary action, carries it along its bottom
-  edge. An underline that followed the text's color read gray under muted
-  text and green under a section link, so two links side by side looked
-  like two kinds. Docs prose links take the same underline over `--ink`
-  text, a step brighter than the prose's `--prose`. frond-look colors docs
-  prose links cyan; on this site cyan means a value that just changed
-  (Color, above), and a cyan link was a third kind of link.
+- **Prose and supporting links are lit at rest.** A link's text is
+  `--link`, the accent mixed 40% into `--ink` in oklab, and its underline
+  is `--link-underline` (0.5); both turn to the full lit color on hover
+  ("A link's underline brightens in place", under Motion). Links in gray
+  or `--ink` read as text until the pointer found them, and a 0.28
+  underline vanished on `--bg`. One color for every link, the section
+  links to the docs, the bench notes, and the suite's files among them,
+  keeps two links side by side from looking like two kinds. A link laid
+  out as a flex box, such as the hero's secondary action, carries the
+  underline along its bottom edge; that action keeps `--muted` text, so it
+  stays second to the primary one. frond-look colors docs prose links
+  cyan; on this site cyan means a value that just changed (Color, above),
+  and a cyan link was a third kind of link.
 - **No rules beside labels.** Code panel labels, the docs sidebar's group
   labels, and the table of contents label stand alone, with no hairline
   running from them.
@@ -351,7 +353,10 @@ screen-reader utility's 1px.
   and the pads are wireframes: a cube for a box and a row, an octahedron
   for a computed value. Pads are hollow, and nothing on the graph glows
   at rest; frond-look fills a lit pad and gives it a glow. Only a flash
-  glows. The page background has no color wash; its graticule, its
+  glows. The beam dwells where it stops: a pad's stroke is lifted 20%
+  toward white over its edges, and each joint where a leaf meets the stem
+  is a 3px point in the leaf's color, so the drawing is brightest where it
+  has structure without a glow rule. The page background has no color wash; its graticule, its
   vignette, and the grid it lights under the pointer are under "Vector
   display".
 - **The hero graph has the brand mark's shape.** It is a frond: the stem

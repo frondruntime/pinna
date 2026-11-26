@@ -167,11 +167,20 @@ ol {
   box-shadow: inset 0 0 0 1px var(--line-bright);
 }
 
+/* The current page's text glows in its own lime, at full strength once --glow reaches 1. */
 .nav-link.active {
+  --glow: 1;
   color: var(--accent);
   background: var(--beam-corners);
   background-color: var(--lit-fill);
   box-shadow: inset 0 0 0 1px var(--lit-line-soft);
+  text-shadow: 0 0 calc(var(--glow) * 6px) rgb(var(--accent-rgb) / calc(var(--glow) * 0.35));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .nav-link.active {
+    animation: glow-rise var(--duration-glow-rise) ease-out;
+  }
 }
 
 /* ─── Content ────────────────────────────────────────────────────── */
@@ -210,11 +219,20 @@ ol {
   padding-left: calc(var(--u) * 3);
 }
 
+/* The section in view glows from the marker square into its link: lime text and a soft lime
+   wash from the left edge, both scaled by --glow. A section the reader scrolls past keeps a fading
+   glow for --duration-glow-decay, so the last two sections read as a trail. */
 .toc-link {
+  --glow: 0;
   display: block;
   padding: calc(var(--u) * 1) 0 calc(var(--u) * 1) calc(var(--u) * 3);
   font-size: 0.75rem;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--accent) calc(var(--glow) * 100%), var(--muted));
+  background: radial-gradient(
+    ellipse 60% 90% at 0 50%,
+    rgb(var(--accent-rgb) / calc(var(--glow) * 0.1)),
+    transparent
+  );
   transition: color var(--duration-beam);
 }
 
@@ -223,7 +241,21 @@ ol {
 }
 
 .toc-link[aria-current="true"] {
-  color: var(--accent);
+  --glow: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toc-link {
+    transition:
+      color var(--duration-beam),
+      --glow var(--duration-glow-decay) var(--ease-decay);
+  }
+
+  .toc-link[aria-current="true"] {
+    transition:
+      color var(--duration-beam),
+      --glow var(--duration-glow-rise) ease-out;
+  }
 }
 
 /* The section in view is marked by one lit square, like the header's current page, centered on its
@@ -447,7 +479,7 @@ ol {
 /* Underlined by the beam underline (design-system.css); the text is a step brighter than the prose
    around it. */
 .prose a {
-  color: var(--ink);
+  color: var(--link);
 }
 
 /* The resting color above outranks any rule in :where(), so the lit color under the pointer is set
