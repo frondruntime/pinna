@@ -123,7 +123,7 @@ const follow = Effect.fn("follow")(function* (board: QuoteBoard) {
 const realm = Realm.make();
 const RealmLive = Layer.succeed(RealmService, realm);
 
-// Throws the SchemaError when the saved board does not fit.
+// Throws a DecodeError, holding the SchemaError, when the saved board does not fit.
 const board = Model.decode(realm, QuoteBoard)({ watchlist: ["ACME", "GLOBEX"] });
 
 // The socket is open while the fiber runs.

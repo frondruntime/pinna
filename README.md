@@ -143,5 +143,5 @@ release-please and publishes nothing.
 
 ## Status
 
-Pinna 0.2.0 is a release before 1.0: any release before 1.0 may change the
+Pinna is before 1.0: any release before 1.0 may change the
 API, and none promises compatibility with the one before.

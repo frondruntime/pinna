@@ -150,7 +150,7 @@ const receiveQuotes = (json: unknown) => {
 // #endregion
 
 // #region standalone
-// The collection a CollectionField holds, with no model around it.
+// The collection a Model.collectionField holds, with no model around it.
 const $quotes = Collection.schema(realm, Quote, { keyOf: (quote) => quote.symbol });
 
 const receiveQuote = (json: unknown) => {
