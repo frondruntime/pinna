@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.1](https://github.com/frondruntime/pinna/compare/pinna-v0.2.0...pinna-v0.2.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* typecheck the bench's Node worker against @types/node 24 and 26 ([#11](https://github.com/frondruntime/pinna/issues/11)) ([7525dd8](https://github.com/frondruntime/pinna/commit/7525dd869757af0d8367a4adc93613f11526badf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @frondruntime/pinna-core bumped from 0.2.0 to 0.2.1
+  * devDependencies
+    * @frondruntime/pinna-core bumped to 0.2.1
+
 ## [0.2.0](https://github.com/frondruntime/pinna/compare/pinna-v0.1.0...pinna-v0.2.0) (2026-11-26)
 
 

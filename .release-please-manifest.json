@@ -1,6 +1,6 @@
 {
-  "packages/pinna-core": "0.2.0",
-  "packages/pinna": "0.2.0",
-  "packages/pinna-effect": "0.2.0",
-  "packages/pinna-react": "0.2.0"
+  "packages/pinna-core": "0.2.1",
+  "packages/pinna": "0.2.1",
+  "packages/pinna-effect": "0.2.1",
+  "packages/pinna-react": "0.2.1"
 }

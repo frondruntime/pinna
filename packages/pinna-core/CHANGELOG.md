@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/frondruntime/pinna/compare/pinna-core-v0.2.0...pinna-core-v0.2.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* typecheck the bench's Node worker against @types/node 24 and 26 ([#11](https://github.com/frondruntime/pinna/issues/11)) ([7525dd8](https://github.com/frondruntime/pinna/commit/7525dd869757af0d8367a4adc93613f11526badf))
+
 ## [0.2.0](https://github.com/frondruntime/pinna/compare/pinna-core-v0.1.0...pinna-core-v0.2.0) (2026-11-26)
 
 
