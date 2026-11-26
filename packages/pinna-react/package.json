@@ -1,6 +1,6 @@
 {
   "name": "@frondruntime/pinna-react",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "React hooks for Pinna: useValue, useValues, useSelect, and a realm provider.",
   "license": "MIT",
   "author": {
@@ -53,10 +53,10 @@
     "bench": "bun --conditions=source bench/render.tsx"
   },
   "dependencies": {
-    "@frondruntime/pinna-core": "0.1.0"
+    "@frondruntime/pinna-core": "0.2.0"
   },
   "peerDependencies": {
-    "@frondruntime/pinna": "0.1.0",
+    "@frondruntime/pinna": "0.2.0",
     "react": ">=19"
   },
   "devDependencies": {

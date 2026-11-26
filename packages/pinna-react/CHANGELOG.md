@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.0](https://github.com/frondruntime/pinna/compare/pinna-react-v0.1.0...pinna-react-v0.2.0) (2026-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* the flat exports of 0.1 (`box`, `computed`, `update`, `schemaBox`, `watchScoped`, and the rest) are replaced by members of their type's module, and errors match by `_tag` or `code`, not by class or message.
+
+### Features
+
+* Pinna 0.2.0, every call on its type's module, and a rewritten core ([#8](https://github.com/frondruntime/pinna/issues/8)) ([3d88919](https://github.com/frondruntime/pinna/commit/3d8891932905534a85e18f5990f1a74ad4be93f3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @frondruntime/pinna-core bumped from 0.1.0 to 0.2.0
+  * devDependencies
+    * @frondruntime/pinna bumped to 0.2.0
+    * @frondruntime/pinna-core bumped to 0.2.0
+    * @frondruntime/pinna-effect bumped to 0.2.0
+  * peerDependencies
+    * @frondruntime/pinna bumped from 0.1.0 to 0.2.0
+
 ## [0.1.0](https://github.com/frondruntime/pinna/compare/pinna-react-v0.0.1...pinna-react-v0.1.0) (2026-11-21)
 
 
