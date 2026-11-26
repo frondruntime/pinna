@@ -1,6 +1,6 @@
 {
   "name": "@frondruntime/pinna-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pinna's glitch-free reactive graph, with no runtime dependencies.",
   "license": "MIT",
   "author": {
