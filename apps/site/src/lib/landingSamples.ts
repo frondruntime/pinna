@@ -47,6 +47,8 @@ interface MarkedError {
   readonly message: string;
   /** `type` for a mark that starts `error TS`, `throw` for one that starts `Error: `. */
   readonly kind: "type" | "throw";
+  /** The short label under the span: the compiler's code for a type error, "throws" for a throw. */
+  readonly label: string;
 }
 
 // `//      ^^^^^ error TS2540: …` under a line: the carets sit under the span the compiler
@@ -68,12 +70,17 @@ function takeErrorMarks(code: string): {
       lines.push(line);
       continue;
     }
+    const kind = message.startsWith("Error: ") ? "throw" : "type";
     errors.push({
       line: lines.length - 1,
       column: line.indexOf("^"),
       length: carets.length,
       message,
-      kind: message.startsWith("Error: ") ? "throw" : "type",
+      kind,
+      label:
+        kind === "throw"
+          ? "throws"
+          : `type error ${/^error (TS\d+)/.exec(message)?.[1] ?? ""}`.trimEnd(),
     });
   }
   return { code: lines.join("\n"), errors };
@@ -81,12 +88,6 @@ function takeErrorMarks(code: string): {
 
 /** What the note under a marked span prints: the whole message, or a short label. */
 type SampleNotes = "message" | "label";
-
-/** The label under a marked span: the compiler's code for a type error, "throws" for a throw. */
-const errorLabel = (error: MarkedError): string =>
-  error.kind === "throw"
-    ? "throws"
-    : `type error ${/^error (TS\d+)/.exec(error.message)?.[1] ?? ""}`.trimEnd();
 
 /**
  * Prints each marked error as its own line under the code it marks: carets, then its message, or
@@ -130,12 +131,36 @@ const errorNotes = (errors: ReadonlyArray<MarkedError>, notes: SampleNotes): Shi
             properties: { class: "code-error-carets" },
             children: [{ type: "text", value: "^".repeat(error.length) }],
           },
-          { type: "text", value: ` ${notes === "label" ? errorLabel(error) : error.message}` },
+          { type: "text", value: ` ${notes === "label" ? error.label : error.message}` },
         ],
       });
     }
   },
 });
+
+/**
+ * The errors of one line as one mark: the span from the first error's start to the last one's end,
+ * labeled with each label in order, so a line that fails to compile and also throws, such as an
+ * `async` recipe, takes one note under it, not two.
+ */
+const oneMarkPerLine = (errors: ReadonlyArray<MarkedError>): ReadonlyArray<MarkedError> => {
+  const lines = new Map<number, Array<MarkedError>>();
+  for (const error of errors) {
+    lines.set(error.line, [...(lines.get(error.line) ?? []), error]);
+  }
+  return [...lines].map(([line, marks]) => {
+    const column = Math.min(...marks.map((mark) => mark.column));
+    const end = Math.max(...marks.map((mark) => mark.column + mark.length));
+    return {
+      line,
+      column,
+      length: end - column,
+      message: marks.map((mark) => mark.message).join("\n"),
+      kind: marks.some((mark) => mark.kind === "type") ? "type" : "throw",
+      label: marks.map((mark) => mark.label).join(", "),
+    };
+  });
+};
 
 /** A sample region as highlighted HTML, its marked errors underlined and printed under their lines. */
 export function highlightSample(
@@ -143,7 +168,9 @@ export function highlightSample(
   name: string,
   notes: SampleNotes = "message",
 ): Promise<string> {
-  const { code, errors } = takeErrorMarks(sampleRegion(source, name));
+  const taken = takeErrorMarks(sampleRegion(source, name));
+  const code = taken.code;
+  const errors = notes === "label" ? oneMarkPerLine(taken.errors) : taken.errors;
   const decorations = errors.map(
     (error): DecorationItem => ({
       start: { line: error.line, character: error.column },

@@ -69,6 +69,11 @@
      --lit-line, brightening to --lit-line-hover; a frame that marks a state rather than
      inviting a click takes --lit-line-soft. */
   --lit-hairline: rgb(var(--accent-rgb) / 0.28);
+  /* A link at rest: the accent mixed into --ink, so a link reads as one at a glance, brighter than
+     the text around it, and still steps up to --accent under the pointer. Its underline rests at
+     0.5, where --lit-hairline's 0.28 read as no underline on --bg. */
+  --link: color-mix(in oklab, var(--accent) 40%, var(--ink));
+  --link-underline: rgb(var(--accent-rgb) / 0.5);
   --lit-line-soft: rgb(var(--accent-rgb) / 0.6);
   --lit-line: rgb(var(--accent-rgb) / 0.7);
   --lit-line-hover: rgb(var(--accent-rgb) / 0.9);
@@ -105,6 +110,24 @@
      --duration-link-decay. */
   --duration-link: 0.08s;
   --duration-link-decay: 0.3s;
+  /* A current link holds a glow that persists after it, as phosphor does: the glow rises in
+     --duration-glow-rise and fades in --duration-glow-decay on --ease-decay, which falls fast and
+     then lingers, so a section the reader scrolled past stays faintly lit for a moment. */
+  --duration-glow-rise: 0.22s;
+  --duration-glow-decay: 0.9s;
+  --ease-decay: linear(
+    0,
+    0.39 10%,
+    0.63 20%,
+    0.78 30%,
+    0.86 40%,
+    0.92 50%,
+    0.95 60%,
+    0.97 70%,
+    0.985 80%,
+    0.995 90%,
+    1
+  );
 
   /* Bloom: the halo a vector display's beam leaves around a bright line. The primary action's
      beam frame blooms under the pointer or focus. */
@@ -316,7 +339,7 @@ html {
     .section-doclink,
     .btn-secondary
   ) {
-  --underline: var(--lit-hairline);
+  --underline: var(--link-underline);
   --duration-beam: var(--duration-link-decay);
   background: linear-gradient(var(--underline) 0 0) left bottom / 100% 1px no-repeat;
   text-decoration: none;
@@ -340,6 +363,24 @@ html {
   ):where(:hover, :focus-visible) {
   --underline: var(--accent);
   --duration-beam: var(--duration-link);
+}
+
+/* ─── Current glow ─── */
+/* --glow is how lit a current link is, from 0 to 1. It is a registered number, because a value
+   that only feeds color-mix() and calc() cannot transition otherwise. A link that becomes current
+   in place, as a TOC entry does while the page scrolls, transitions it; a link that is current on
+   arrival, as the header and sidebar links are after a navigation swaps them in, plays
+   glow-rise once. Under reduced motion it is set at once. */
+@property --glow {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@keyframes glow-rise {
+  from {
+    --glow: 0;
+  }
 }
 
 /* ─── Corner dots ─── */
@@ -645,22 +686,35 @@ body > :where(:not(.site-background)) {
   cursor: default;
 }
 
+.nav-link-action.is-current {
+  --glow: 1;
+}
+
 .nav-link-action.is-current::before {
   width: 6px;
   height: 6px;
   margin-right: 8px;
   border-radius: 0;
   background: var(--accent);
-  box-shadow: 0 0 12px rgb(var(--accent-rgb) / 0.42);
+  box-shadow: 0 0 calc(var(--glow) * 12px) rgb(var(--accent-rgb) / calc(var(--glow) * 0.42));
   content: "";
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .nav-link-action.is-current {
+    animation: glow-rise var(--duration-glow-rise) ease-out;
+  }
 }
 
 /* ─── Shared footer ─── */
 /* The footer's rule is the garden's ground line: small lime trees stand on it, a few tipped in
-   cyan, so the page ends on ground, as the frond in the hero grows from a root. */
+   cyan, so the page ends on ground, as the frond in the hero grows from a root. The footer is
+   filled with --panel down to the page's end, so the ground is solid; over the page's own
+   background and grid the trees stood on a line drawn over nothing. */
 .site-footer {
   margin-top: 16px;
   border-top: 1px solid var(--lit-hairline);
+  background: var(--panel);
 }
 
 .site-footer::before {
@@ -701,7 +755,7 @@ body > :where(:not(.site-background)) {
 }
 
 .site-footer-meta a {
-  color: var(--ink);
+  color: var(--link);
 }
 
 /* The resting color above outranks any rule in :where(), so the lit color under the pointer is set

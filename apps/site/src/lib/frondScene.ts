@@ -9,9 +9,12 @@
 // text stays crisp and the controls stay buttons.
 //
 // The frond is drawn like a vector display: thin traces, and pads as wireframes. Nothing glows
-// at rest. A value that just changed flashes cyan and fades to its own color, the lime of a done
-// todo or the gray of one not done, and the flash runs from the write to what it reached, one
-// step every 100 ms, so an update reads in order: `$done`, then `$label`, then `<Row>`.
+// at rest. Pads and the joints where branches leave the stem are a step brighter than the traces
+// between them, as a beam that dwells on a vertex draws it. A value that just changed flashes as
+// a P7 tube's phosphor does: a white strike, cyan, then a lime afterglow that settles into its
+// own color, the lime of a done todo or the gray of one not done. The flash runs from the write
+// to what it reached, one step every 100 ms, so an update reads in order: `$done`, then
+// `$label`, then `<Row>`.
 //
 // A press on a part that holds no todo, a total, `$todos`, the stem (the realm), or the tip,
 // changes nothing: the part pops and brightens toward white for a moment, never cyan, since nothing was written,
@@ -34,6 +37,7 @@ import {
   frondTotalLeaves,
   frondTotalNames,
 } from "./frondGraph";
+import { flashPhosphor } from "./phosphor";
 
 /** What an action wrote and which rows it reached, so the update can travel the frond. */
 export interface FrondSignal {
@@ -89,6 +93,17 @@ const moveDuration = 450;
 const growDuration = 380;
 /** How long a flash takes to fade from cyan to the part's own color. */
 const flashDuration = 700;
+/** How long a write's white strike lasts before its cyan shows. */
+const strikeDuration = 60;
+/** How far the strike lifts a part toward white. */
+const strikeWhiteness = 0.8;
+/** How long the lime afterglow takes to settle into the part's own color, and how lime it starts. */
+const afterglowDuration = 1600;
+const afterglowStrength = 0.5;
+/** A joint's square, in CSS pixels, three times a trace's width. */
+const jointSize = 3;
+/** How far a pad and a joint are lifted toward white over their trace: the beam dwells there. */
+const dwell = 0.2;
 /**
  * From one part of a branch to the next, a read and then the value it reaches, so 100 ms from a
  * write to its recompute and again to the render: slower, and the steps blur into one flash.
@@ -145,7 +160,7 @@ class Tween {
   }
 }
 
-/** A flash: full when it starts, after a delay, then fading fast and slowing, like phosphor. */
+/** A press's pop: full when it starts, after a delay, then fading fast and slowing. */
 class Flash {
   private start = Number.NEGATIVE_INFINITY;
 
@@ -162,6 +177,46 @@ class Flash {
 
   settled(now: number): boolean {
     return now >= this.start + this.duration;
+  }
+}
+
+/**
+ * A write's flash, shaped like a P7 tube's phosphor: a white strike for 60 ms, cyan that fades
+ * in 700 ms, and a lime afterglow that settles in 1.6 s. Each layer is full when the flash
+ * starts, after a delay, then fades fast and slows.
+ */
+class Phosphor {
+  private start = Number.NEGATIVE_INFINITY;
+
+  private fade(now: number, duration: number): number {
+    const elapsed = now - this.start;
+    return elapsed < 0 || elapsed >= duration ? 0 : (1 - elapsed / duration) ** 2;
+  }
+
+  /** How far the part still shows the cyan of a value that just changed. */
+  cyan(now: number): number {
+    return this.fade(now, flashDuration);
+  }
+
+  strike(now: number): number {
+    return this.fade(now, strikeDuration);
+  }
+
+  afterglow(now: number): number {
+    return this.fade(now, afterglowDuration) * afterglowStrength;
+  }
+
+  /** How strongly the flash's cyan glow shows: the strike adds to the cyan. */
+  glow(now: number): number {
+    return Math.min(1, this.cyan(now) + this.strike(now));
+  }
+
+  fire(now: number, delay = 0): void {
+    this.start = now + delay;
+  }
+
+  settled(now: number): boolean {
+    return now >= this.start + afterglowDuration;
   }
 }
 
@@ -244,7 +299,39 @@ void main() {
     discard;
   }
   float fog = smoothstep(uFogNear, uFogFar, vDepth) * 0.7;
-  color = vec4(mix(uStroke, uBackground, fog) * edge, edge);
+  vec3 dwelt = mix(uStroke, vec3(1.0), ${dwell.toFixed(2)});
+  color = vec4(mix(dwelt, uBackground, fog) * edge, edge);
+}`;
+
+// Joints: a square where a branch leaves the stem, in its trace's color lifted toward white, as a
+// beam that dwells on a vertex draws it brighter. Premultiplied, so a joint fades with its branch.
+const jointVertex = /* glsl */ `#version 300 es
+in vec3 position;
+in vec4 tint;
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+uniform float uPixelRatio;
+uniform float uFogNear;
+uniform float uFogFar;
+out vec4 vTint;
+out float vFog;
+void main() {
+  vec4 viewed = modelViewMatrix * vec4(position, 1.0);
+  vTint = tint;
+  vFog = smoothstep(uFogNear, uFogFar, -viewed.z) * 0.7;
+  gl_PointSize = ${jointSize.toFixed(1)} * uPixelRatio;
+  gl_Position = projectionMatrix * viewed;
+}`;
+
+const jointFragment = /* glsl */ `#version 300 es
+precision highp float;
+in vec4 vTint;
+in float vFog;
+uniform vec3 uBackground;
+out vec4 color;
+void main() {
+  vec3 dwelt = mix(vTint.rgb, vec3(1.0), ${dwell.toFixed(2)});
+  color = vec4(mix(dwelt, uBackground, vFog) * vTint.a, vTint.a);
 }`;
 
 // Traces: OGL's polyline, which keeps a line `uThickness` pixels wide at any depth, with fog.
@@ -406,8 +493,8 @@ interface Branch {
   readonly grow: Tween;
   /** How lit each part is, from the stem out: `$done`, a read, `$label`, a read, `<Row>`. */
   readonly lit: readonly [Tween, Tween, Tween, Tween, Tween];
-  /** How far each part, in the same order, still shows the cyan of a value that just changed. */
-  readonly flash: readonly [Flash, Flash, Flash, Flash, Flash];
+  /** Each part's flash, in the same order, after a value changed. */
+  readonly flash: readonly [Phosphor, Phosphor, Phosphor, Phosphor, Phosphor];
   /** How far the branch is raised while the pointer is over it. */
   readonly hover: Tween;
   readonly points: {
@@ -480,7 +567,6 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
   context.clearColor(0, 0, 0, 0);
 
   const palette = readPalette(host);
-  const cssCyan = `rgb(${palette.cyan.map((channel) => Math.round(channel * 255)).join(" ")})`;
   host.append(root);
   svg.style.display = "none";
 
@@ -578,15 +664,52 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
     glowCount++;
   };
 
-  /** `into` set to `color`, raised toward cyan as far as `flash` still shows. */
-  const flashed = (into: Float32Array, color: Rgb | Float32Array, flash: Flash): Float32Array =>
-    mix(into, color, palette.cyan, flash.value(clock));
+  // The joints share one buffer too, refilled just before they draw, once the traces they sit on
+  // have taken this frame's colors.
+  const jointCapacity = 48;
+  const jointPositions = new Float32Array(jointCapacity * 3);
+  const jointTints = new Float32Array(jointCapacity * 4);
+  const jointShape = new Geometry(context, {
+    position: { size: 3, data: jointPositions },
+    tint: { size: 4, data: jointTints },
+  });
+  const jointProgram = new Program(context, {
+    vertex: jointVertex,
+    fragment: jointFragment,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      uBackground: background,
+      uPixelRatio: { value: renderer.dpr },
+      uFogNear: fogNear,
+      uFogFar: fogFar,
+    },
+  });
+  const joints = new Mesh(context, {
+    geometry: jointShape,
+    program: jointProgram,
+    mode: context.POINTS,
+    frustumCulled: false,
+  });
+  joints.setParent(world);
+
+  /** `into` set to `color`, then lit by `flash`: lime afterglow, cyan, and the strike's white. */
+  const flashed = (
+    into: Float32Array,
+    color: Rgb | Float32Array,
+    flash: Phosphor,
+  ): Float32Array => {
+    mix(into, color, palette.accent, flash.afterglow(clock));
+    mix(into, into, palette.cyan, flash.cyan(clock));
+    return mix(into, into, palette.ink, flash.strike(clock) * strikeWhiteness);
+  };
 
   // The stem, its tip, and its root, `$todos`.
   const stemLit = new Tween(0);
   const tipLit = new Tween(0);
-  const stemFlash = new Flash();
-  const tipFlash = new Flash();
+  const stemFlash = new Phosphor();
+  const tipFlash = new Phosphor();
   const rootY = new Tween(0);
   const stemRoot = new Vec3();
   const stemTip = new Vec3();
@@ -613,7 +736,7 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
   const totalLeaves = frondTotalNames.map((name) => {
     const foot = new Vec3();
     const end = new Vec3();
-    const flash = new Flash();
+    const flash = new Phosphor();
     const press = new Flash(pressDuration);
     const stroke = new Float32Array(3);
     const leafOverlay = element("div", "frond-scene-branch frond-scene-total");
@@ -644,6 +767,32 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
   let height = 0;
   let count = 0;
 
+  // A joint sits where each branch and each total leaves the stem, in its trace's color. The
+  // traces draw first, as opaque meshes, so their colors are this frame's.
+  joints.onBeforeRender(() => {
+    let jointCount = 0;
+    const joint = (at: Vec3, color: ArrayLike<number>, alpha: number): void => {
+      if (alpha <= 0.002 || jointCount >= jointCapacity) {
+        return;
+      }
+      at.toArray(jointPositions, jointCount * 3);
+      jointTints.set([color[0]!, color[1]!, color[2]!, Math.min(alpha, 1)], jointCount * 4);
+      jointCount++;
+    };
+    if (totalsShown) {
+      for (const leaf of totalLeaves) {
+        joint(leaf.foot, stemColor, leaf.length.value(clock) / 8);
+      }
+    }
+    for (const branch of branches.values()) {
+      const color = branch.traces.base.program.uniforms["uColor"]!.value as Float32Array;
+      joint(branch.points.foot, color, branch.grow.value(clock));
+    }
+    jointShape.attributes["position"]!.needsUpdate = true;
+    jointShape.attributes["tint"]!.needsUpdate = true;
+    jointShape.setDrawRange(0, jointCount);
+  });
+
   const makeBranch = (id: string, y: number, now: number, grown: boolean): Branch => {
     const points = {
       foot: new Vec3(),
@@ -655,7 +804,13 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
       text: new Vec3(),
     };
     const lit = [new Tween(0), new Tween(0), new Tween(0), new Tween(0), new Tween(0)] as const;
-    const flash = [new Flash(), new Flash(), new Flash(), new Flash(), new Flash()] as const;
+    const flash = [
+      new Phosphor(),
+      new Phosphor(),
+      new Phosphor(),
+      new Phosphor(),
+      new Phosphor(),
+    ] as const;
     const hover = new Tween(0);
     // A part's color: gray, raised toward `hovered` while the pointer is over the branch, lit
     // toward the accent as far as the part holds a done todo, then raised toward cyan as far as
@@ -944,10 +1099,10 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
 
     // Only a flash glows.
     glowCount = 0;
-    glow(stemRoot, 30, stemFlash.value(now) * 0.6);
-    glow(stemTip, 30, tipFlash.value(now) * 0.6);
+    glow(stemRoot, 30, stemFlash.glow(now) * 0.6);
+    glow(stemTip, 30, tipFlash.glow(now) * 0.6);
     for (const leaf of totalLeaves) {
-      glow(leaf.end, 30, leaf.flash.value(now) * 0.6);
+      glow(leaf.end, 30, leaf.flash.glow(now) * 0.6);
     }
 
     for (const branch of [...branches.values()]) {
@@ -966,9 +1121,9 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
       }
       moving ||= !settled;
       const grow = branch.grow.value(now);
-      glow(branch.points.done, 26, branch.flash[0].value(now) * 0.6 * grow);
-      glow(branch.points.label, 30, branch.flash[2].value(now) * 0.6 * grow);
-      glow(branch.points.row, 34, branch.flash[4].value(now) * 0.6 * grow);
+      glow(branch.points.done, 26, branch.flash[0].glow(now) * 0.6 * grow);
+      glow(branch.points.label, 30, branch.flash[2].glow(now) * 0.6 * grow);
+      glow(branch.points.row, 34, branch.flash[4].glow(now) * 0.6 * grow);
     }
 
     glowShape.attributes["position"]!.needsUpdate = true;
@@ -1252,6 +1407,8 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
       if (branch === undefined) {
         branch = makeBranch(todo.id, layout.y, now, !animate);
         branches.set(todo.id, branch);
+        // A todo added by a write, not one drawn on load, holds a fading lime (`landing.css`).
+        branch.overlay.classList.toggle("is-new", animate);
         branch.length.set(layout.length, now, 0);
         branch.angle.set(angle, now, 0);
       }
@@ -1304,15 +1461,11 @@ export const createFrondScene = (host: HTMLElement, svg: SVGSVGElement): FrondSc
     zoom.set(fitZoom(), now, move);
 
     if (animate) {
-      // The parts a write changed flash cyan a step apart, as the write, the computed values it
+      // The parts a write changed flash a step apart, as the write, the computed values it
       // invalidated, and the rows that re-rendered each take it.
       const flashText = (elements: ReadonlyArray<HTMLElement>, delay: number): void => {
         for (const target of elements) {
-          target.animate([{ color: cssCyan, offset: 0 }], {
-            duration: flashDuration,
-            delay,
-            easing: "ease-out",
-          });
+          flashPhosphor(target, delay);
         }
       };
       if (signal.from === "root") {
