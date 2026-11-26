@@ -115,7 +115,7 @@ p {
   justify-self: start;
   align-items: center;
   padding: 4px 0;
-  color: var(--muted);
+  color: var(--link);
   font-size: 0.78rem;
   letter-spacing: 0.02em;
 }
@@ -324,7 +324,6 @@ p {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  border: 1px solid var(--line-bright);
   background: var(--panel);
   min-width: 1280px;
   table-layout: fixed;
@@ -489,7 +488,7 @@ p {
   justify-self: start;
   max-width: 100%;
   overflow-wrap: anywhere;
-  color: var(--muted);
+  color: var(--link);
   font-family: var(--font-mono);
   font-size: 0.72rem;
 }
@@ -509,7 +508,7 @@ p {
 }
 
 .suite-grid a {
-  color: inherit;
+  color: var(--link);
 }
 
 .suite-grid h3 {
@@ -526,7 +525,6 @@ p {
 }
 
 .suite-row {
-  position: relative;
   display: grid;
   gap: 8px;
 }
@@ -574,97 +572,6 @@ p {
 
 .suite-cell.is-skip {
   background: var(--dim);
-}
-
-/* A case under the pointer or a tap is ringed in every row, and the rest of each row dims, so one
-   case reads across the libraries. The dim is on the three rows' containers and the ring is one
-   marker per row moved by transform over the case's square, a copy of it in its color, so entering
-   the card starts three opacity transitions and not one per square (design/brief.md). The ring
-   sits in the 3px gap, and the dim lights at once and decays, like a control. */
-.suite-cells {
-  transition: opacity var(--duration-beam);
-  will-change: opacity;
-}
-
-.suite-grid[data-case] .suite-cells {
-  --duration-beam: var(--duration-control);
-  opacity: 0.45;
-}
-
-.suite-mark {
-  position: absolute;
-  top: 0;
-  left: 0;
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--duration-beam);
-}
-
-.suite-grid[data-case] .suite-mark {
-  --duration-beam: var(--duration-control);
-  opacity: 1;
-}
-
-/* The readout shows the legend at rest and names one case under the pointer or a tap: its id and
-   title, each library's result, and the reason recorded for a miss. The legend, the case, and a
-   hidden copy of the case with the most text share one cell, so the card keeps its height at
-   every width. */
-.suite-readout {
-  display: grid;
-  color: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.6;
-}
-
-.suite-readout-rest,
-.suite-readout-live,
-.suite-readout-ghost {
-  display: grid;
-  grid-area: 1 / 1;
-  align-content: start;
-  gap: 2px;
-}
-
-.suite-readout-rest {
-  gap: 4px;
-}
-
-.suite-readout-live,
-.suite-readout-ghost,
-.suite-grid[data-case] .suite-readout-rest {
-  visibility: hidden;
-}
-
-.suite-grid[data-case] .suite-readout-live {
-  visibility: visible;
-}
-
-.suite-readout p {
-  margin: 0;
-}
-
-.suite-readout-title {
-  color: var(--ink-bright);
-}
-
-.suite-readout-results {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 16px;
-}
-
-.suite-readout-result.is-pass b {
-  color: var(--accent);
-}
-
-.suite-readout-result.is-differs b {
-  color: var(--amber);
-}
-
-.suite-readout-reasons span {
-  display: block;
 }
 
 .info-card .suite-legend {
@@ -715,7 +622,7 @@ p {
 
 .suite-figure-files a {
   overflow-wrap: anywhere;
-  color: var(--muted);
+  color: var(--link);
   font-family: var(--font-mono);
   font-size: 0.72rem;
 }
@@ -726,8 +633,15 @@ p {
   }
 }
 
+/* The frame, not the table, carries the outer border, so the border stays put while a table wider
+   than the page scrolls; on the table, its left edge scrolled away with the first column and its
+   right edge showed only at the end. The docs' .table-frame does the same. */
 .pinna-bench-scroll {
+  border: 1px solid var(--line-bright);
+  background: var(--panel);
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-bright) transparent;
 }
 
 .pinna-bench-block {
@@ -889,8 +803,9 @@ p {
   white-space: nowrap;
 }
 
-.pinna-bench-notes-row a {
-  color: var(--ink-bright);
+.pinna-bench-notes-row a,
+.section-header > p a {
+  color: var(--link);
 }
 
 /* Each beam-underlined link's resting color, set above or by the base `a { color: inherit }`,
@@ -1370,19 +1285,15 @@ p {
    ERRORS IN SAMPLES
    A sample marks under a line the type error it reports or the error it throws
    (lib/landingSamples.ts): the span is marked, and a note under it starts with carets at the
-   span's column, then wraps to the block's edge. A type error is underlined; a throw is shaded, so
-   the two read apart in a block that has both.
+   span's column, then wraps to the block's edge. Every error is underlined, never filled, so the
+   code under it keeps its own colors; the label under the line says whether it is a type error or
+   a throw, and a line that is both takes one note naming both.
    ═══════════════════════════════════════════════════════════ */
 
 .code-error-span {
   text-decoration: underline wavy var(--red);
   text-decoration-skip-ink: none;
   text-underline-offset: 3px;
-}
-
-.code-error-span.is-throw {
-  background: rgb(var(--red-rgb) / 0.14);
-  text-decoration: none;
 }
 
 .code-error-note {
@@ -1877,8 +1788,10 @@ p {
   pointer-events: auto;
 }
 
+/* A row just added starts lime and settles to --prose over 8 s, as the branch's --glow falls
+   (`.frond-scene-branch.is-new` below), so the newest todo reads apart from the rest for a while. */
 .frond-scene-row {
-  color: var(--prose);
+  color: color-mix(in oklab, var(--accent) calc(var(--glow) * 70%), var(--prose));
   font-size: 13px;
   line-height: 1;
   transform: translate(4px, 14px);
@@ -1957,6 +1870,29 @@ p {
   .frond-scene-name,
   .frond-scene-row {
     transition: color var(--duration-graph) ease-out;
+  }
+
+  .frond-scene-branch.is-new {
+    animation: row-mature 8s linear;
+  }
+}
+
+/* Fast at first and slow at the end, so the row is plainly new for its first seconds. */
+@keyframes row-mature {
+  0% {
+    --glow: 1;
+  }
+
+  25% {
+    --glow: 0.8;
+  }
+
+  60% {
+    --glow: 0.35;
+  }
+
+  100% {
+    --glow: 0;
   }
 }
 

@@ -4,8 +4,15 @@
 // `bun run typecheck` reports for the line above once its `@ts-expect-error` is removed; a
 // `// ^^^ Error: pinna: …` line marks what the line above throws when it runs. The page
 // underlines each span and labels it under the line.
-import { box, computed, createRealm, type Read, untracked, update } from "@frondruntime/pinna";
-import { schemaBox } from "@frondruntime/pinna-effect";
+import {
+  box,
+  computed,
+  createRealm,
+  type Read,
+  schemaBox,
+  untracked,
+  update,
+} from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 
 const realm = createRealm({ name: "app" });
