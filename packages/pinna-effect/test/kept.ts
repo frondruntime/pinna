@@ -1,5 +1,5 @@
-import type { Read, Realm, Write } from "@frondruntime/pinna";
-import { untracked, update } from "@frondruntime/pinna";
+import type { Read, Write } from "@frondruntime/pinna";
+import { Realm } from "@frondruntime/pinna";
 
 /**
  * Verbs kept past their place, as a closure or a variable keeps one by
@@ -8,13 +8,13 @@ import { untracked, update } from "@frondruntime/pinna";
  * place's own verb does.
  */
 
-/** The read `untracked` hands out, kept. */
-export const keptRead = (realm: Realm): Read => untracked(realm, (read) => read);
+/** The read `Realm.untracked` hands out, kept. */
+export const keptRead = (realm: Realm): Read => Realm.untracked(realm, (read) => read);
 
 /** The write an update hands out, kept. */
 export const keptWrite = (realm: Realm): Write => {
   const kept: Array<Write> = [];
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     kept.push(write);
   });
   const [write] = kept;

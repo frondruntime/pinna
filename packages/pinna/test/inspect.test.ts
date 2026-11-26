@@ -1,15 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  atom,
-  box,
-  computed,
-  computedFunction,
-  createRealm,
-  inspect,
-  untracked,
-  update,
-  watch,
-} from "../src/index.ts";
+import { Atom, Box, Computed, Realm, Source } from "../src/index.ts";
 import { keptWrite } from "./kept.ts";
 
 /**
@@ -19,113 +9,114 @@ import { keptWrite } from "./kept.ts";
 
 describe("Pinna.inspect", () => {
   test("a named box reports its name and no dependencies", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2, { name: "price" });
-    expect(inspect($price)).toEqual({
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2, { name: "price" });
+    expect(Source.inspect($price)).toEqual({
       name: "price",
       realm: undefined,
       dependencies: [],
       observers: 0,
       lastReason: undefined,
+      stages: [],
     });
   });
 
   test("a value reports the name of its realm, when the realm has one", () => {
-    const realm = createRealm({ name: "quotes" });
-    expect(inspect(box(realm, 2)).realm).toBe("quotes");
-    expect(inspect(computed(realm, () => 1)).realm).toBe("quotes");
-    expect(inspect(atom(realm)).realm).toBe("quotes");
+    const realm = Realm.make({ name: "quotes" });
+    expect(Source.inspect(Box.make(realm, 2)).realm).toBe("quotes");
+    expect(Source.inspect(Computed.make(realm, () => 1)).realm).toBe("quotes");
+    expect(Source.inspect(Atom.make(realm)).realm).toBe("quotes");
   });
 
   test("a realm's name is a non-empty string", () => {
-    expect(() => createRealm({ name: "" })).toThrow("pinna: a name is a non-empty string");
+    expect(() => Realm.make({ name: "" })).toThrow("pinna: a name is a non-empty string");
   });
 
   test("an unnamed value has no name and records no reason", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2);
-    const $double = computed(realm, (read) => read($price) * 2);
-    untracked(realm, (read) => read($double));
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2);
+    const $double = Computed.make(realm, (read) => read($price) * 2);
+    Realm.untracked(realm, (read) => read($double));
+    Realm.update(realm, (_read, write) => {
       write($price, 3);
     });
-    untracked(realm, (read) => read($double));
-    expect(inspect($price).name).toBeUndefined();
-    expect(inspect($double).name).toBeUndefined();
-    expect(inspect($double).lastReason).toBeUndefined();
+    Realm.untracked(realm, (read) => read($double));
+    expect(Source.inspect($price).name).toBeUndefined();
+    expect(Source.inspect($double).name).toBeUndefined();
+    expect(Source.inspect($double).lastReason).toBeUndefined();
   });
 
   test("dependencies are what the last run read, each once, in read order", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2, { name: "price" });
-    const $count = box(realm, 3);
-    const $total = computed(realm, (read) => read($price) * read($count) + read($price), {
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2, { name: "price" });
+    const $count = Box.make(realm, 3);
+    const $total = Computed.make(realm, (read) => read($price) * read($count) + read($price), {
       name: "total",
     });
-    untracked(realm, (read) => read($total));
-    expect(inspect($total).dependencies).toEqual(["price", "<anonymous>"]);
+    Realm.untracked(realm, (read) => read($total));
+    expect(Source.inspect($total).dependencies).toEqual(["price", "<anonymous>"]);
   });
 
   test("a named computed value records why it last recomputed", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2, { name: "price" });
-    const $count = box(realm, 3);
-    const $total = computed(realm, (read) => read($price) * read($count), { name: "total" });
-    expect(inspect($total).lastReason).toBeUndefined();
-    untracked(realm, (read) => read($total));
-    expect(inspect($total).lastReason).toBe("the first run");
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2, { name: "price" });
+    const $count = Box.make(realm, 3);
+    const $total = Computed.make(realm, (read) => read($price) * read($count), { name: "total" });
+    expect(Source.inspect($total).lastReason).toBeUndefined();
+    Realm.untracked(realm, (read) => read($total));
+    expect(Source.inspect($total).lastReason).toBe("the first run");
+    Realm.update(realm, (_read, write) => {
       write($price, 5);
     });
-    untracked(realm, (read) => read($total));
-    expect(inspect($total).lastReason).toBe("price changed");
-    update(realm, (_read, write) => {
+    Realm.untracked(realm, (read) => read($total));
+    expect(Source.inspect($total).lastReason).toBe("price changed");
+    Realm.update(realm, (_read, write) => {
       write($count, 4);
     });
-    untracked(realm, (read) => read($total));
-    expect(inspect($total).lastReason).toBe("<anonymous> changed");
+    Realm.untracked(realm, (read) => read($total));
+    expect(Source.inspect($total).lastReason).toBe("<anonymous> changed");
   });
 
   test("the reason names the computed value that changed upstream", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2);
-    const $double = computed(realm, (read) => read($price) * 2, { name: "double" });
-    const $label = computed(realm, (read) => `${read($double)}`, { name: "label" });
-    untracked(realm, (read) => read($label));
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2);
+    const $double = Computed.make(realm, (read) => read($price) * 2, { name: "double" });
+    const $label = Computed.make(realm, (read) => `${read($double)}`, { name: "label" });
+    Realm.untracked(realm, (read) => read($label));
+    Realm.update(realm, (_read, write) => {
       write($price, 3);
     });
-    untracked(realm, (read) => read($label));
-    expect(inspect($label).lastReason).toBe("double changed");
+    Realm.untracked(realm, (read) => read($label));
+    expect(Source.inspect($label).lastReason).toBe("double changed");
   });
 
   test("observers counts what observes the value now", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2, { name: "price" });
-    const stopFirst = watch(
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2, { name: "price" });
+    const stopFirst = Realm.watch(
       realm,
       (read) => read($price),
       () => {},
       { name: "first" },
     );
-    const stopSecond = watch(
+    const stopSecond = Realm.watch(
       realm,
       (read) => read($price),
       () => {},
     );
-    expect(inspect($price).observers).toBe(2);
+    expect(Source.inspect($price).observers).toBe(2);
     stopFirst();
-    expect(inspect($price).observers).toBe(1);
+    expect(Source.inspect($price).observers).toBe(1);
     stopSecond();
-    expect(inspect($price).observers).toBe(0);
+    expect(Source.inspect($price).observers).toBe(0);
   });
 
   test("inspecting runs nothing: a stale value reports its last run", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2, { name: "price" });
-    const $count = box(realm, 3, { name: "count" });
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2, { name: "price" });
+    const $count = Box.make(realm, 3, { name: "count" });
     let runs = 0;
-    const $total = computed(
+    const $total = Computed.make(
       realm,
       (read) => {
         runs++;
@@ -133,26 +124,27 @@ describe("Pinna.inspect", () => {
       },
       { name: "total" },
     );
-    expect(inspect($total).dependencies).toEqual([]);
-    untracked(realm, (read) => read($total));
-    update(realm, (_read, write) => {
+    expect(Source.inspect($total).dependencies).toEqual([]);
+    Realm.untracked(realm, (read) => read($total));
+    Realm.update(realm, (_read, write) => {
       write($price, 0);
     });
-    expect(inspect($total)).toEqual({
+    expect(Source.inspect($total)).toEqual({
       name: "total",
       realm: undefined,
       dependencies: ["price"],
       observers: 0,
       lastReason: "the first run",
+      stages: [],
     });
     expect(runs).toBe(1);
   });
 
   test("a named computed value is named in the error for a write while it computes", () => {
-    const realm = createRealm();
-    const $price = box(realm, 2);
+    const realm = Realm.make();
+    const $price = Box.make(realm, 2);
     const write = keptWrite(realm);
-    const $bad = computed(
+    const $bad = Computed.make(
       realm,
       () => {
         write($price, 3);
@@ -160,45 +152,47 @@ describe("Pinna.inspect", () => {
       },
       { name: "bad" },
     );
-    expect(() => untracked(realm, (read) => read($bad))).toThrow(
+    expect(() => Realm.untracked(realm, (read) => read($bad))).toThrow(
       'pinna: the computed value "bad" cannot write while it computes',
     );
   });
 
   test("each computed value a named memo makes carries the name", () => {
-    const realm = createRealm();
-    const $rate = box(realm, 2, { name: "rate" });
-    const $times = computedFunction(realm, (read, amount: number) => amount * read($rate), {
+    const realm = Realm.make();
+    const $rate = Box.make(realm, 2, { name: "rate" });
+    const $times = Computed.fn(realm, (read, amount: number) => amount * read($rate), {
       name: "times",
     });
     const $three = $times(3);
-    untracked(realm, (read) => read($three));
-    expect(inspect($three)).toEqual({
+    Realm.untracked(realm, (read) => read($three));
+    expect(Source.inspect($three)).toEqual({
       name: "times",
       realm: undefined,
       dependencies: ["rate"],
       observers: 0,
       lastReason: "the first run",
+      stages: [],
     });
   });
 
   test("an atom has no name and no dependencies", () => {
-    const realm = createRealm();
-    const outside = atom(realm);
-    expect(inspect(outside)).toEqual({
+    const realm = Realm.make();
+    const outside = Atom.make(realm);
+    expect(Source.inspect(outside)).toEqual({
       name: undefined,
       realm: undefined,
       dependencies: [],
       observers: 0,
       lastReason: undefined,
+      stages: [],
     });
   });
 
   test("an unobserved atom read first is the reason, said as such", () => {
-    const realm = createRealm();
-    const outside = atom(realm);
-    const $price = box(realm, 2, { name: "price" });
-    const $total = computed(
+    const realm = Realm.make();
+    const outside = Atom.make(realm);
+    const $price = Box.make(realm, 2, { name: "price" });
+    const $total = Computed.make(
       realm,
       (read) => {
         read(outside);
@@ -206,34 +200,34 @@ describe("Pinna.inspect", () => {
       },
       { name: "total" },
     );
-    untracked(realm, (read) => read($total));
-    untracked(realm, (read) => read($total));
-    expect(inspect($total).lastReason).toBe(
+    Realm.untracked(realm, (read) => read($total));
+    Realm.untracked(realm, (read) => read($total));
+    expect(Source.inspect($total).lastReason).toBe(
       "<anonymous> is an atom nothing observes, so it counts as changed",
     );
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($total),
       () => {},
     );
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($price, 3);
     });
-    expect(inspect($total).lastReason).toBe("price changed");
+    expect(Source.inspect($total).lastReason).toBe("price changed");
     stop();
   });
 
   test("an empty name throws", () => {
-    const realm = createRealm();
-    expect(() => box(realm, 2, { name: "" })).toThrow("pinna: a name is a non-empty string");
-    expect(() => computed(realm, () => 1, { name: "" })).toThrow(
+    const realm = Realm.make();
+    expect(() => Box.make(realm, 2, { name: "" })).toThrow("pinna: a name is a non-empty string");
+    expect(() => Computed.make(realm, () => 1, { name: "" })).toThrow(
       "pinna: a name is a non-empty string",
     );
   });
 
   test("anything else throws", () => {
-    expect(() => inspect({} as never)).toThrow(
-      "pinna: inspect needs a box, a computed value, or an atom",
+    expect(() => Source.inspect({} as never)).toThrow(
+      "pinna: Source.inspect needs a box, a computed value, or an atom",
     );
   });
 });

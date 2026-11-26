@@ -29,6 +29,8 @@
  *   twice, so a restored cell version is safe.
  */
 
+import { PinnaError, PinnaUsageError } from "./errors.ts";
+
 export type Equals<Value> = (left: Value, right: Value) => boolean;
 
 export interface Options<Value> {
@@ -47,6 +49,223 @@ const WATCH = 3;
 const REACTION = 4;
 /** The node a reaction's pending run records into: never linked, never walked. */
 const PENDING = 5;
+/**
+ * A reaction told of every mark that reaches it, with no refresh first: its
+ * owner brings the sources current later, through `changed`, at most once
+ * for many marks.
+ */
+const NOTIFIED = 6;
+
+/* ---------------------------------------------------------------- place */
+
+/*
+ * The place word: `Graph.place`, one integer that says what the code running
+ * now may do. Each place is entered by saving the word, setting the next one
+ * from the outer word and the place's kind (`nextPlace`), and restoring the
+ * saved word on exit, so a place nests as a stack frame does. Every question
+ * about where code runs is one mask test on it; `placeAllows` names them.
+ *
+ * The low bits are conditions, each the answer the fields it replaced gave:
+ */
+/** An update, a `Realm.untracked`, or a peek is open: a read outside a tracked run may run. */
+export const placeOpen = 1;
+/** An update is open: a write may run unless a derivation runs. */
+export const placeUpdating = 2;
+/** A derived value computes, or a stage recipe or its `equals` runs: nothing writes, observes, or releases. */
+export const placeDeriving = 4;
+/** The innermost derivation is a stage recipe: nothing is made, and the realm's own verbs name the recipe. */
+export const placeRecipe = 8;
+/** A run records the reads it makes: `Graph.active` is set. */
+export const placeTracked = 16;
+/** The tracked run is a select, a selector, or a compute, not an autorun's body: an update is refused. */
+export const placeSelecting = 32;
+/** A `Realm.untracked` read runs inside a tracked run, here or outside a hook. */
+export const placeShadowed = 64;
+/** That tracked run was a select or a selector: an update is refused in it too. */
+export const placeUnderSelect = 128;
+/** The realm is disposed: an update is refused. */
+export const placeDisposed = 256;
+/** `Realm.onUpdate` listeners take their records: the realm is not at rest. */
+export const placeListening = 512;
+/**
+ * A `Realm.untracked` read runs inside a scheduled autorun's body: a reaction
+ * set aside, which refuses an update once an autorun body nested inside
+ * begins (the old check compared the set-aside run with the body's run).
+ */
+export const placeUnderScheduled = 1024;
+
+/** The kind of the place entered last, in the bits from `placeKindShift`: for messages and `openParts`. */
+export const placeKindShift = 12;
+/** The condition bits of a word, without its kind. */
+export const placeConditions = (1 << placeKindShift) - 1;
+
+/**
+ * The kinds of place. Each takes some conditions from the outer word and sets
+ * others (`nextPlace`):
+ *
+ * - idle: nothing runs; the word a graph starts with.
+ * - update: `Realm.update`'s recipe. Sets open and updating.
+ * - untracked: `Realm.untracked` (the realm adds open). Clears tracked; under
+ *   a tracked run, sets shadowed, and under-select when that run selects
+ *   and is not a compute.
+ * - compute: a derived value's compute. Sets deriving, tracked, selecting;
+ *   clears recipe.
+ * - select: a watch's select or an autorun's run. Sets tracked, selecting.
+ * - selector: a reaction's run (a renderer's selector, a scheduled watch or
+ *   autorun). Sets tracked, selecting.
+ * - autorun: an autorun's body, inside its select. Clears selecting; under a
+ *   scheduled autorun's untracked read, sets under-select.
+ * - scheduledAutorun: the same inside a selector, for a scheduled autorun:
+ *   an untracked read inside it sets under-scheduled.
+ * - autorunUpdate: `Realm.update` inside an autorun's body, before the
+ *   update's own place. Clears tracked.
+ * - recipe: a stage recipe or read function. Sets deriving and recipe;
+ *   clears open, tracked, selecting.
+ * - recipeEquals: a box's `equals` the visible stack runs under the stage
+ *   guard. Sets deriving and recipe; clears tracked, selecting.
+ * - hook: an `onObserved` hook or cleanup. Keeps open, updating, disposed,
+ *   and listening; clears the rest.
+ * - peek: `Source.peek` of a computed value. Sets open.
+ * - listening: `Realm.onUpdate` listeners. Sets listening.
+ */
+export const placeKind = {
+  idle: 0,
+  update: 1,
+  untracked: 2,
+  compute: 3,
+  select: 4,
+  selector: 5,
+  autorun: 6,
+  autorunUpdate: 7,
+  recipe: 8,
+  recipeEquals: 9,
+  hook: 10,
+  peek: 11,
+  listening: 12,
+  scheduledAutorun: 13,
+} as const;
+
+export type PlaceKind = keyof typeof placeKind;
+
+/** The kinds by number, for `openParts`. */
+export const placeKindNames: ReadonlyArray<PlaceKind> = Object.keys(placeKind) as Array<PlaceKind>;
+
+/** What a compute keeps of the outer word; it sets deriving, tracked, and selecting. */
+const computeKeeps =
+  placeOpen |
+  placeUpdating |
+  placeShadowed |
+  placeUnderSelect |
+  placeUnderScheduled |
+  placeDisposed |
+  placeListening;
+const computeWord =
+  placeDeriving | placeTracked | placeSelecting | (placeKind.compute << placeKindShift);
+/** A select and a selector keep every condition and set tracked and selecting. */
+const selectWord = placeTracked | placeSelecting | (placeKind.select << placeKindShift);
+const selectorWord = placeTracked | placeSelecting | (placeKind.selector << placeKindShift);
+/** What a hook keeps: it runs outside every run and derivation. */
+const hookKeeps = placeOpen | placeUpdating | placeDisposed | placeListening;
+
+/*
+ * The words the hot paths enter, written as numbers: an interpreter (Hermes,
+ * JavaScriptCore without its JIT) loads a module constant from its scope on
+ * each use, and `placeKind.compute` is a property load. Measured on the
+ * reaction bench with the JIT off: the constants made `Reaction.track` 15%
+ * slower than before the place word, the numbers none. `place.test.ts`
+ * checks each number against `nextPlace`.
+ */
+
+/**
+ * The word a place of `kind` runs in, entered from `outer`: the table. A port
+ * reads it, and `place.test.ts` checks every kind under every outer kind
+ * against what the old fields answered. The graph's own hot entries
+ * (`recompute`, `runWatch`, `Reaction.track`) write their row out inline.
+ */
+export const nextPlace = (outer: number, kind: number): number => {
+  const conditions = outer & placeConditions;
+  const tag = kind << placeKindShift;
+  switch (kind) {
+    case placeKind.update:
+      return conditions | placeOpen | placeUpdating | tag;
+    case placeKind.untracked: {
+      if ((conditions & placeTracked) === 0) {
+        return conditions | tag;
+      }
+      const underSelect =
+        (conditions & (placeSelecting | placeDeriving)) === placeSelecting ? placeUnderSelect : 0;
+      const underScheduled =
+        outer >>> placeKindShift === placeKind.scheduledAutorun ? placeUnderScheduled : 0;
+      return (
+        (conditions & ~(placeTracked | placeSelecting | placeUnderSelect | placeUnderScheduled)) |
+        placeShadowed |
+        underSelect |
+        underScheduled |
+        tag
+      );
+    }
+    case placeKind.compute:
+      return (conditions & computeKeeps) | computeWord;
+    case placeKind.select:
+      return conditions | selectWord;
+    case placeKind.selector:
+      return conditions | selectorWord;
+    case placeKind.autorun:
+    case placeKind.scheduledAutorun: {
+      const scheduled = outer >>> placeKindShift === placeKind.selector;
+      const underSelect = (conditions & placeUnderScheduled) !== 0 ? placeUnderSelect : 0;
+      return (
+        (conditions & ~placeSelecting) |
+        underSelect |
+        ((scheduled ? placeKind.scheduledAutorun : placeKind.autorun) << placeKindShift)
+      );
+    }
+    case placeKind.autorunUpdate:
+      return (conditions & ~placeTracked) | tag;
+    case placeKind.recipe:
+      return (
+        (conditions & ~(placeOpen | placeTracked | placeSelecting)) |
+        placeDeriving |
+        placeRecipe |
+        tag
+      );
+    case placeKind.recipeEquals:
+      return (conditions & ~(placeTracked | placeSelecting)) | placeDeriving | placeRecipe | tag;
+    case placeKind.hook:
+      return (conditions & hookKeeps) | tag;
+    case placeKind.peek:
+      return conditions | placeOpen | tag;
+    case placeKind.listening:
+      return conditions | placeListening | tag;
+    default:
+      return conditions | tag;
+  }
+};
+
+/**
+ * Each question about where code runs, as the mask test on the word that
+ * answers it. Hot paths write the test out; everything else calls these.
+ */
+export const placeAllows = {
+  /** A read outside a tracked run (`Graph.active` unset) may run. */
+  read: (place: number): boolean => (place & placeOpen) !== 0,
+  /** A write verb may run. */
+  write: (place: number): boolean => (place & (placeUpdating | placeDeriving)) === placeUpdating,
+  /** `Realm.update` may start: refused in a derivation, a select, a selector, under one, or once disposed. */
+  update: (place: number): boolean =>
+    (place & (placeDeriving | placeSelecting | placeUnderSelect | placeDisposed)) === 0,
+  /** An observer may start or stop. */
+  observe: (place: number): boolean => (place & placeDeriving) === 0,
+  /** An observable may be made. */
+  make: (place: number): boolean => (place & placeRecipe) === 0,
+  /** Nothing of the realm runs, but for the graph's own depth, which the caller asks apart. */
+  rest: (place: number): boolean =>
+    (place & (placeOpen | placeUpdating | placeDeriving | placeTracked | placeListening)) === 0,
+} as const;
+
+/** The kind of place `place` names. */
+export const placeKindOf = (place: number): PlaceKind =>
+  placeKindNames[(place >>> placeKindShift) & 15] as PlaceKind;
 
 /** A node's `status`: what its last run left. */
 const EMPTY = 0;
@@ -66,16 +285,32 @@ const maximumSettleRounds = 100;
 const maximumComputeDepth = 256;
 
 /**
+ * How often the bounded driver runs one value again within one outer read.
+ * A synchronous compute cannot resume where it stopped, so a chain rebuilt
+ * on every run is told from a kept one only by counting: a value that makes
+ * and keeps one deep branch per run finishes in branches + 1 runs, and one
+ * that rebuilds its chain throws past this many.
+ */
+const maximumRestarts = 64;
+
+/**
  * Thrown by a stale read past `maximumComputeDepth`, and through every compute
  * above it, even one whose compute catches it. Each discards the unfinished
  * result, retaining a cached value only for the retry's equality check.
  * Never reaches code outside a compute.
  */
-const suspension = new Error("pinna: a compute past the depth limit waits (internal)");
+class Suspension extends PinnaError {
+  readonly _tag = "PinnaSuspension" as const;
+}
 
-class CycleError extends Error {
+const suspension = new Suspension("pinna: a compute past the depth limit waits (internal)");
+
+class CycleError extends PinnaUsageError {
   constructor(readonly origin: Node) {
-    super(`pinna: ${origin.label ?? "a derived value"} is read while it computes (cycle)`);
+    super(
+      "pinna/cycle",
+      `pinna: ${origin.label ?? "a derived value"} is read while it computes (cycle)`,
+    );
   }
 }
 
@@ -114,6 +349,12 @@ type Start = () => (() => void) | undefined;
  * begins at most once until it ends, so starting or stopping twice does
  * nothing.
  */
+/** A hook that has begun and not ended, in `Graph.begunHooks`. */
+interface BegunHook {
+  readonly hooks: Hooks;
+  readonly start: Start;
+}
+
 interface Hooks {
   /** The hooks, in the order they were added. */
   readonly starts: Array<Start>;
@@ -121,6 +362,8 @@ interface Hooks {
   readonly begun: Array<Start>;
   /** The cleanup of each hook in `begun`, at the same index. */
   readonly cleanups: Array<(() => void) | undefined>;
+  /** The graph's entry for each hook in `begun`, at the same index: `Graph.endBegunHooks` ends them. */
+  readonly entries: Array<BegunHook>;
   /**
    * Whether the hooks have started, as of the last settle. The observer
    * count is not this: it moves with the links, and the hooks follow it at
@@ -293,8 +536,8 @@ const makeObserver = (
   effect: ((value: unknown, previous: unknown) => void) | undefined,
   equals: Equals<unknown>,
   label: string | undefined,
-): Node =>
-  ({
+): Node => {
+  const node = {
     kind,
     version: 0,
     value: undefined,
@@ -325,24 +568,30 @@ const makeObserver = (
     nextDue: undefined,
     nextInRound: undefined,
     linked: kind === WATCH,
-  }) as Node;
+  } as Node;
+  return node;
+};
 
 /* ---------------------------------------------------------------- edges */
 
 const append = (edge: Edge): void => {
+  // region append
   const source = edge.source;
   edge.linked = true;
-  edge.previousObserver = source.observersTail;
+  const tail = source.observersTail;
+  edge.previousObserver = tail;
   edge.nextObserver = undefined;
-  if (source.observersTail !== undefined) {
-    source.observersTail.nextObserver = edge;
+  if (tail !== undefined) {
+    tail.nextObserver = edge;
   } else {
     source.observersHead = edge;
   }
   source.observersTail = edge;
+  // endregion append
 };
 
 const detach = (edge: Edge): void => {
+  // region detach
   const source = edge.source;
   edge.linked = false;
   const previous = edge.previousObserver;
@@ -359,6 +608,7 @@ const detach = (edge: Edge): void => {
   }
   edge.previousObserver = undefined;
   edge.nextObserver = undefined;
+  // endregion detach
 };
 
 /** Queues `node`'s hooks for the settle, once. */
@@ -415,6 +665,7 @@ const subscribe = (graph: Graph, edge: Edge): void => {
   graph.markFloor = graph.clock;
   graph.lastMarked = undefined;
   // `append`, inline: Hermes does not inline it.
+  // region append
   const source = edge.source;
   edge.linked = true;
   const tail = source.observersTail;
@@ -426,6 +677,7 @@ const subscribe = (graph: Graph, edge: Edge): void => {
     source.observersHead = edge;
   }
   source.observersTail = edge;
+  // endregion append
   if (source.observers++ !== 0) {
     return;
   }
@@ -477,6 +729,7 @@ const subscribe = (graph: Graph, edge: Edge): void => {
 /** Unlinks `edge`, and, when its source loses its last observer, the source's own edges, transitively. */
 const unsubscribe = (graph: Graph, edge: Edge): void => {
   // `detach`, inline: Hermes does not inline it.
+  // region detach
   const source = edge.source;
   edge.linked = false;
   const previous = edge.previousObserver;
@@ -493,6 +746,7 @@ const unsubscribe = (graph: Graph, edge: Edge): void => {
   }
   edge.previousObserver = undefined;
   edge.nextObserver = undefined;
+  // endregion detach
   if (--source.observers !== 0) {
     return;
   }
@@ -883,16 +1137,27 @@ const reconcile = (graph: Graph, node: Node, stale: Edge | undefined, observing:
 
 /* ------------------------------------------------------------ computing */
 
-const derivingWriteError = (graph: Graph): Error =>
-  new Error(`pinna: ${graph.deriving?.label ?? "a derived value"} cannot write while it computes`);
+/** What derives now, as an error names it: a stage recipe, or the innermost computing value. */
+const derivingLabel = (graph: Graph): string =>
+  (graph.place & placeRecipe) !== 0
+    ? "a stage recipe"
+    : ((graph.place >>> placeKindShift === placeKind.compute ? graph.active : graph.shadowed)
+        ?.label ?? "a derived value");
 
-const isDeriving = (graph: Graph): boolean => graph.deriving !== undefined;
+const derivingWriteError = (graph: Graph): Error =>
+  new PinnaUsageError(
+    "pinna/write-while-computing",
+    `pinna: ${derivingLabel(graph)} cannot write while it computes`,
+  );
+
+/** 4 is `placeDeriving`, written out: hooks, writes, and observes ask this. */
+const isDeriving = (graph: Graph): boolean => (graph.place & 4) !== 0;
 
 const checkObserving = (graph: Graph): void => {
-  const deriving = graph.deriving;
-  if (deriving !== undefined) {
-    throw new Error(
-      `pinna: ${deriving.label ?? "a derived value"} cannot observe or release while it computes`,
+  if ((graph.place & 4) !== 0) {
+    throw new PinnaUsageError(
+      "pinna/observe-while-computing",
+      `pinna: ${derivingLabel(graph)} cannot observe or release while it computes`,
     );
   }
 };
@@ -927,10 +1192,11 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
   // runs leaves the value due for another check.
   const clock = graph.clock;
   const outer = graph.active;
-  const outerDeriving = graph.deriving;
+  const outerPlace = graph.place;
   const outerRun = graph.run;
   graph.active = node;
-  graph.deriving = node;
+  // `nextPlace` for a compute, inline: `(outer & computeKeeps) | computeWord`.
+  graph.place = (outerPlace & 1987) | 12340;
   const run = ++graph.runs;
   graph.run = run;
   node.cursor = undefined;
@@ -968,7 +1234,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
     // version.
     node.linked = false;
     graph.active = outer;
-    graph.deriving = outerDeriving;
+    graph.place = outerPlace;
     graph.run = outerRun;
     if (passedOn) {
       finishFailedRun(graph, node, run);
@@ -976,6 +1242,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
       // `finishRun`'s case with nothing to drop, inline: Hermes does not inline it.
       // `finishRun` and `runWatch` hold the same code; change all three together.
       // The run moved the cursor since it was cleared; TypeScript cannot see that.
+      // region finish-run-clean
       const last = node.cursor as Edge | undefined;
       const stale = last === undefined ? node.dependenciesHead : last.nextDependency;
       if (stale === undefined) {
@@ -985,6 +1252,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
           // `reconcile` with nothing stale: link each new edge when observed.
           // A first compute is unobserved and links nothing.
           node.added = false;
+          // region-differs: whether the node is observed, by kind
           if (node.observers > 0) {
             for (let edge = node.dependenciesHead; edge !== undefined; edge = edge.nextDependency) {
               if (!edge.linked) {
@@ -996,6 +1264,7 @@ const recompute = (graph: Graph, node: Node, cause: Node | undefined): void => {
       } else {
         finishRun(graph, node);
       }
+      // endregion finish-run-clean
     }
   }
   if (passedOn && value !== suspension) {
@@ -1273,6 +1542,10 @@ const refreshAll = (graph: Graph, node: Node): boolean => {
 const computeBounded = (graph: Graph, node: Node): void => {
   let target = node;
   let waiting: Array<Node> | undefined;
+  // The map of restarts is made at the first restart, never here: a stale
+  // read inside a compute run by the iterative walk comes through this
+  // driver once per read, and nearly none of them restarts.
+  const outermost = graph.restarts === undefined;
   // One walk for every retry: what a retry finds stamped this walk, such as
   // a value a cycle closed on, it does not walk again.
   if (graph.walkDepth++ === 0) {
@@ -1320,18 +1593,54 @@ const computeBounded = (graph: Graph, node: Node): void => {
         return;
       }
       next.computing = false;
+      countRestart(graph, next);
       target = next;
     }
   } finally {
     graph.walkDepth--;
     graph.suspended = undefined;
+    // A restart pops a value that waited, so only a driver that made
+    // `waiting` can hold a map of restarts to drop.
     if (waiting !== undefined) {
+      if (outermost) {
+        graph.restarts = undefined;
+      }
       for (const waited of waiting) {
         waited.computing = false;
       }
     }
   }
 };
+
+/**
+ * Counts one more run of `target` within the outermost bounded driver's
+ * read, making the map at the first restart, and throws
+ * `pinna/depth-rebuilt` past `maximumRestarts`. Out of `computeBounded`, so
+ * the driver's path that never restarts holds no map and no count.
+ */
+const countRestart = (graph: Graph, target: Node): void => {
+  let restarts = graph.restarts;
+  if (restarts === undefined) {
+    restarts = new Map();
+    graph.restarts = restarts;
+  }
+  const count = (restarts.get(target) ?? 0) + 1;
+  if (count > maximumRestarts) {
+    throw rebuiltError(target);
+  }
+  restarts.set(target, count);
+};
+
+/**
+ * What the bounded driver throws when it would run `target` again more than
+ * `maximumRestarts` times in one outer read: a value that makes a new chain
+ * deeper than the limit on every run never reaches the value computed for it.
+ */
+const rebuiltError = (target: Node): Error =>
+  new PinnaUsageError(
+    "pinna/depth-rebuilt",
+    `pinna: ${target.label ?? "a computed value"} stopped past depth ${maximumComputeDepth} and ran again more than ${maximumRestarts} times in one read, as one that makes a new chain of computed values each time it computes does; make the chain outside the computed value and read it there`,
+  );
 
 /** The slow branch of a derived read: not current. Records the read on the paths that throw, so the reader follows a value that throws. */
 const refreshForRead = (graph: Graph, node: Node): void => {
@@ -1350,7 +1659,8 @@ const refreshForRead = (graph: Graph, node: Node): void => {
       } else if (
         node.status !== EMPTY &&
         graph.computeDepth === 0 &&
-        graph.deriving === undefined
+        // 4 is `placeDeriving`, written out: this runs on every stale read.
+        (graph.place & 4) === 0
       ) {
         // A cached outer read keeps the iterative path. Only a stale read
         // reached through a compute needs the bounded retry driver.
@@ -1469,6 +1779,7 @@ const mark = (graph: Graph, from: Node, dirty: boolean): void => {
       }
     } else if (observer.nextDue === undefined) {
       // Appended to the queue for the next round, written out as in `runWatch`.
+      // region queue-due (observer=node)
       observer.nextDue = endOfDue;
       const tail = graph.dueTail;
       if (tail === undefined) {
@@ -1477,6 +1788,7 @@ const mark = (graph: Graph, from: Node, dirty: boolean): void => {
         tail.nextDue = observer;
       }
       graph.dueTail = observer;
+      // endregion queue-due
     }
     edge = next;
   }
@@ -1548,9 +1860,12 @@ const runWatch = (graph: Graph, watch: Node): void => {
     graph.walk++;
   }
   const outer = graph.active;
+  const outerPlace = graph.place;
   const outerRun = graph.run;
   const clock = graph.clock;
   graph.active = watch;
+  // `nextPlace` for a select, inline: `(outer & placeConditions) | selectWord`.
+  graph.place = (outerPlace & 4095) | 16432;
   const run = ++graph.runs;
   graph.run = run;
   watch.cursor = undefined;
@@ -1567,11 +1882,13 @@ const runWatch = (graph: Graph, watch: Node): void => {
     throw error;
   } finally {
     graph.active = outer;
+    graph.place = outerPlace;
     graph.run = outerRun;
     if (failedRun === 0) {
       // `finishRun`'s case with nothing to drop, inline, as in `recompute`;
       // change all three together.
       // The run moved the cursor since it was cleared; TypeScript cannot see that.
+      // region finish-run-clean (watch=node)
       const last = watch.cursor as Edge | undefined;
       const stale = last === undefined ? watch.dependenciesHead : last.nextDependency;
       if (stale === undefined) {
@@ -1580,6 +1897,7 @@ const runWatch = (graph: Graph, watch: Node): void => {
         if (watch.added) {
           // `reconcile` with nothing stale: a first run links every edge here.
           watch.added = false;
+          // region-differs: whether the node is observed, by kind
           if (watch.linked) {
             for (
               let edge = watch.dependenciesHead;
@@ -1595,6 +1913,7 @@ const runWatch = (graph: Graph, watch: Node): void => {
       } else {
         finishRun(graph, watch);
       }
+      // endregion finish-run-clean
     } else {
       finishFailedRun(graph, watch, failedRun);
     }
@@ -1604,6 +1923,7 @@ const runWatch = (graph: Graph, watch: Node): void => {
     // changing what it read meets the round limit.
     if (graph.clock !== clock && watch.linked && watch.nextDue === undefined) {
       // Appended to the queue for the next round, written out as in `mark`.
+      // region queue-due (watch=node)
       watch.nextDue = endOfDue;
       const tail = graph.dueTail;
       if (tail === undefined) {
@@ -1612,13 +1932,21 @@ const runWatch = (graph: Graph, watch: Node): void => {
         tail.nextDue = watch;
       }
       graph.dueTail = watch;
+      // endregion queue-due
     }
     graph.walkDepth--;
   }
   const previous = watch.value;
   watch.value = value;
   if (watch.status !== EMPTY) {
-    if (watch.linked && watch.effect !== undefined && !watch.equals(previous, value)) {
+    // `linked` again after `equals`: a comparator that stops the watch ends
+    // it before its effect, as a stop anywhere else in a delivery does.
+    if (
+      watch.linked &&
+      watch.effect !== undefined &&
+      !watch.equals(previous, value) &&
+      watch.linked
+    ) {
       watch.effect(value, previous);
     }
   } else {
@@ -1634,14 +1962,23 @@ const unlinkAll = (graph: Graph, node: Node): void => {
   }
 };
 
+/** What starting an observer in a closed graph throws: its realm is disposed. */
+const closedError = (graph: Graph, what: string): Error =>
+  new PinnaUsageError(
+    "pinna/realm-disposed",
+    `pinna: ${what} cannot start in the disposed realm${graph.name === undefined ? "" : ` "${graph.name}"`}; make a new realm`,
+  );
+
 const disposeWatch = (graph: Graph, watch: Node): void => {
   if (!watch.linked) {
     return;
   }
   // `checkObserving`, inline: Hermes does not inline it.
-  if (graph.deriving !== undefined) {
+  // region check-observing
+  if ((graph.place & 4) !== 0) {
     checkObserving(graph);
   }
+  // endregion check-observing
   watch.linked = false;
   graph.depth++;
   let failed = true;
@@ -1656,22 +1993,45 @@ const disposeWatch = (graph: Graph, watch: Node): void => {
   }
 };
 
+/**
+ * A reaction's run entered straight from a compute: sets the compute aside
+ * in `shadowed`, so an error inside names it, and enters `run` from the
+ * compute's conditions under no kind. Off the reaction's own path, which
+ * writes no field for the label; it captures nothing, so the path makes no
+ * scope for a closure.
+ */
+const fromCompute = <Result>(
+  graph: Graph,
+  reaction: Reaction,
+  read: (argument: never) => Result,
+  pending: boolean,
+): Result => {
+  const outerPlace = graph.place;
+  const outerShadowed = graph.shadowed;
+  graph.shadowed = graph.active;
+  graph.place = outerPlace & placeConditions;
+  try {
+    return pending ? reaction.trackPending(read) : reaction.track(read);
+  } finally {
+    graph.place = outerPlace;
+    graph.shadowed = outerShadowed;
+  }
+};
+
 /* ---------------------------------------------------------------- hooks */
 
 /** Hooks run outside tracking and outside any compute, inside a batch, and may write. */
 const runHook = (graph: Graph, hook: () => void): void => {
   const outerActive = graph.active;
-  const outerDeriving = graph.deriving;
-  const outerUntracked = graph.untrackedActive;
+  const outerPlace = graph.place;
   graph.active = undefined;
-  graph.deriving = undefined;
-  graph.untrackedActive = undefined;
+  // `nextPlace` for a hook, written out: `(outer & hookKeeps) | hook's tag`.
+  graph.place = (outerPlace & 771) | 40960;
   try {
     graph.batch(hook);
   } finally {
     graph.active = outerActive;
-    graph.deriving = outerDeriving;
-    graph.untrackedActive = outerUntracked;
+    graph.place = outerPlace;
   }
 };
 
@@ -1687,9 +2047,16 @@ const beginHook = (graph: Graph, hooks: Hooks, start: Start): void => {
   if (hooks.begun.indexOf(start) !== -1) {
     return;
   }
+  // A closed graph begins no hook: one would open what no later disposal ends.
+  if (graph.closed) {
+    return;
+  }
   const placeholder = (): void => {};
+  const entry: BegunHook = { hooks, start };
   hooks.begun.push(start);
   hooks.cleanups.push(placeholder);
+  hooks.entries.push(entry);
+  graph.begunHooks.add(entry);
   runHook(graph, () => {
     const cleanup = start();
     const at = hooks.cleanups.indexOf(placeholder);
@@ -1707,8 +2074,10 @@ const endHook = (graph: Graph, hooks: Hooks, start: Start): void => {
     return;
   }
   const cleanup = hooks.cleanups[index];
+  graph.begunHooks.delete(hooks.entries[index] as BegunHook);
   hooks.begun.splice(index, 1);
   hooks.cleanups.splice(index, 1);
+  hooks.entries.splice(index, 1);
   if (cleanup !== undefined) {
     runHook(graph, cleanup);
   }
@@ -1784,6 +2153,7 @@ const addHook = (graph: Graph, node: Node, start: Start, now: boolean): (() => v
       starts: [],
       begun: [],
       cleanups: [],
+      entries: [],
       started: node.observers > 0,
       endsDue: false,
       due: false,
@@ -1808,7 +2178,15 @@ const addHook = (graph: Graph, node: Node, start: Start, now: boolean): (() => v
       graph.reportAside(error);
     }
   }
+  // A remover belongs to its own registration: once it has run, it does
+  // nothing, so calling it again never ends a later registration of the
+  // same start.
+  let removed = false;
   return () => {
+    if (removed) {
+      return;
+    }
+    removed = true;
     const index = hooks.starts.indexOf(start);
     if (index !== -1) {
       hooks.starts.splice(index, 1);
@@ -1943,16 +2321,20 @@ const settle = (graph: Graph, observing: boolean, owner: Node | undefined): void
         }
         continue;
       }
-      if (round >= maximumSettleRounds) {
+      if (round >= maximumSettleRounds || graph.closed) {
         // The watchers still due are dropped, and the hooks due settle
         // without them; a hook that schedules one again has it dropped too.
+        // A closed graph runs no watcher: its realm is disposing, and a
+        // cleanup's write is not a change anything is due.
         const left = graph.dueHead;
         graph.dueHead = undefined;
         graph.dueTail = undefined;
         dropDue(left);
         graph.markFloor = graph.clock;
         graph.lastMarked = undefined;
-        watchersDropped = true;
+        if (!graph.closed) {
+          watchersDropped = true;
+        }
         continue;
       }
       round++;
@@ -1979,10 +2361,12 @@ const settle = (graph: Graph, observing: boolean, owner: Node | undefined): void
           next = after === endOfDue ? undefined : after;
           node.nextInRound = undefined;
           try {
-            if (node.linked && refresh(graph, node) !== undefined) {
+            if (node.linked) {
               if (node.kind === WATCH) {
-                runWatch(graph, node);
-              } else {
+                if (refresh(graph, node) !== undefined) {
+                  runWatch(graph, node);
+                }
+              } else if (node.kind === NOTIFIED || refresh(graph, node) !== undefined) {
                 (node.effect as () => void)();
               }
             }
@@ -2013,9 +2397,10 @@ const settle = (graph: Graph, observing: boolean, owner: Node | undefined): void
     try {
       const failure = reportSettling(
         graph,
-        new Error(
+        new PinnaUsageError(
+          unsettled === "hooks" ? "pinna/hooks-unsettled" : "pinna/watchers-unsettled",
           unsettled === "hooks"
-            ? `pinna: onObserved hooks did not settle after ${maximumSettleRounds} passes`
+            ? `pinna: Source.onObserved hooks did not settle after ${maximumSettleRounds} passes`
             : `pinna: watchers did not settle after ${maximumSettleRounds} rounds`,
         ),
         undefined,
@@ -2066,6 +2451,7 @@ export const readCell = <Value>(cell: CellNode<Value>): Value => {
   const graph = cell.graph;
   // `record`, inline: Hermes does not inline it, and this runs on every read.
   // `record` and the other read hold the same code; change all three together.
+  // region record-read (cell=source)
   const active = graph.active;
   if (active !== undefined) {
     const run = graph.run;
@@ -2084,6 +2470,7 @@ export const readCell = <Value>(cell: CellNode<Value>): Value => {
       cold.recordAfterNested(graph, cell);
     }
   }
+  // endregion record-read
   return cell.value as Value;
 };
 
@@ -2095,6 +2482,7 @@ export const readDerived = <Value>(derived: DerivedNode<Value>): Value => {
   }
   // `record`, inline: Hermes does not inline it, and this runs on every read.
   // `record` and the other read hold the same code; change all three together.
+  // region record-read (derived=source)
   const active = graph.active;
   if (active !== undefined) {
     const run = graph.run;
@@ -2113,6 +2501,7 @@ export const readDerived = <Value>(derived: DerivedNode<Value>): Value => {
       cold.recordAfterNested(graph, derived);
     }
   }
+  // endregion record-read
   return derived.value as Value;
 };
 
@@ -2127,6 +2516,14 @@ export const readAtom = (atom: AtomNode): undefined => {
   }
   return undefined;
 };
+
+/**
+ * A derived value's function, to run outside the graph: a hidden stage
+ * evaluates it against its own `read`, so it writes no cache in the graph
+ * and starts nothing.
+ */
+export const computeOf = <Value>(derived: DerivedNode<Value>): ((argument: never) => Value) =>
+  derived.compute as (argument: never) => Value;
 
 /** A cell's value, read without tracking. */
 export const peekCell = <Value>(cell: CellNode<Value>): Value => cell.value as Value;
@@ -2151,6 +2548,15 @@ export const writeCell = <Value>(cell: CellNode<Value>, value: Value): void => {
   if (isDeriving(graph)) {
     throw derivingWriteError(graph);
   }
+  setCell(cell, value);
+};
+
+/**
+ * `writeCell` for a caller that asked the place word already: a box's write
+ * tests `placeAllows.write` once, so the graph does not test again.
+ */
+export const setCell = <Value>(cell: CellNode<Value>, value: Value): void => {
+  const graph = cell.graph;
   if (cell.equals(cell.value, value)) {
     return;
   }
@@ -2209,6 +2615,65 @@ export const dependenciesOf = (derived: DerivedNode<unknown>): ReadonlyArray<Sou
   return sources;
 };
 
+/**
+ * What observes a source now: each observed derived value, watch, and
+ * active reaction linked to it, in link order, once per link. A read of the
+ * links the graph keeps; runs nothing. For devtools.
+ */
+export const observersOf = (source: Node): ReadonlyArray<Node> => {
+  const observers: Array<Node> = [];
+  for (let edge = source.observersHead; edge !== undefined; edge = edge.nextObserver) {
+    observers.push(edge.observer);
+  }
+  return observers;
+};
+
+/** What a node is, by name: for devtools, which shows nodes of every kind. */
+export type NodeKind = "cell" | "atom" | "derived" | "watch" | "reaction";
+
+/** The kind of a node, a reaction's pending node as a reaction. */
+export const kindOf = (node: Node): NodeKind => {
+  switch (node.kind) {
+    case CELL:
+      return "cell";
+    case ATOM:
+      return "atom";
+    case DERIVED:
+      return "derived";
+    case WATCH:
+      return "watch";
+    default:
+      return "reaction";
+  }
+};
+
+/** What an observer's last run read, in read order: a derived value, a watch, or a reaction. Runs nothing. */
+export const sourcesOf = (node: Node): ReadonlyArray<Node> => {
+  const sources: Array<Node> = [];
+  if (node.kind === CELL || node.kind === ATOM) {
+    return sources;
+  }
+  for (let edge = node.dependenciesHead; edge !== undefined; edge = edge.nextDependency) {
+    sources.push(edge.source);
+  }
+  return sources;
+};
+
+/**
+ * The value a node holds now, without a run: a cell's value, a derived
+ * value's kept value; `has` is false for an atom, a watch, a reaction, and
+ * a derived value that has not run or keeps an error.
+ */
+export const heldValue = (node: Node): { readonly has: boolean; readonly value: unknown } => {
+  if (node.kind === CELL) {
+    return { has: true, value: node.value };
+  }
+  if (node.kind === DERIVED && node.status === VALUE) {
+    return { has: true, value: node.value };
+  }
+  return { has: false, value: undefined };
+};
+
 /** Whether a run's value or error is kept. Runs nothing. */
 export const hasRun = (derived: DerivedNode<unknown>): boolean => derived.status !== EMPTY;
 
@@ -2236,10 +2701,141 @@ export const lastReason = (derived: DerivedNode<unknown>): Source | undefined =>
   derived.cause as Source | undefined;
 
 /**
- * A renderer's observer. `track` runs a read and follows what it read;
- * `trackPending` runs a read apart, into a pending node, and `adopt` makes
- * the pending reads the followed ones. `activate` links, `deactivate`
- * unlinks; only an active reaction is scheduled.
+ * What one run read, kept apart from every observer, with the version of
+ * each source it read: a renderer's capture of one render. `run` runs a read
+ * under the selector place into the capture's own node, which is never
+ * linked, so the run observes nothing and starts no hook. `changed` tells
+ * whether a source moved since, and `Reaction.follow` makes a reaction
+ * follow the same sources. A renderer keeps one capture per render, so a
+ * render it throws away leaves the followed sources as they were.
+ */
+export class Capture {
+  /** The graph's own: the run's edges, read by `Reaction.follow`. Never linked. */
+  readonly node: Node;
+  /**
+   * The clock before the last run, or at the last `changed` that found
+   * nothing moved: while the clock stays, nothing was written, and `changed`
+   * walks nothing. Before the run, so a write the run made is checked.
+   */
+  private checkedClock = -1;
+
+  constructor(
+    readonly graph: Graph,
+    label = "capture",
+  ) {
+    this.node = makeObserver(graph, PENDING, undefined, undefined, Object.is, label);
+  }
+
+  /**
+   * Runs `read` and records what it read, replacing the last run's record.
+   * A run that throws keeps what it read, and the sources of the last run it
+   * did not reach, as a reaction's run does.
+   */
+  run<Result>(read: (argument: never) => Result): Result {
+    const graph = this.graph;
+    const node = this.node;
+    if (node.computing) {
+      throw new PinnaUsageError(
+        "pinna/reentrant-run",
+        `pinna: ${node.label} cannot track inside its own run`,
+      );
+    }
+    const outerPlace = graph.place;
+    const outerShadowed = graph.shadowed;
+    // A compute's own kind, under the deriving bit, is set aside as
+    // `fromCompute` does, so an error inside names it.
+    const fromCompute = (outerPlace & 4) !== 0 && outerPlace >>> 12 === 3;
+    if (fromCompute) {
+      graph.shadowed = graph.active;
+    }
+    graph.depth++;
+    if (graph.walkDepth++ === 0) {
+      graph.walk++;
+    }
+    const outer = graph.active;
+    const outerRun = graph.run;
+    graph.active = node;
+    // `nextPlace` for a selector, inline: `(outer & placeConditions) | selectorWord`.
+    graph.place = (outerPlace & 4095) | 20528;
+    const run = ++graph.runs;
+    graph.run = run;
+    node.cursor = undefined;
+    node.added = false;
+    node.computing = true;
+    // The clock before the run: a selector place may write, and a cell the
+    // run read and then wrote holds a version the capture did not read.
+    const clock = graph.clock;
+    let failed = true;
+    try {
+      const result = (read as (argument: unknown) => Result)(graph.argument);
+      failed = false;
+      return result;
+    } finally {
+      node.computing = false;
+      graph.active = outer;
+      graph.place = outerPlace;
+      graph.run = outerRun;
+      if (fromCompute) {
+        graph.shadowed = outerShadowed;
+      }
+      if (failed) {
+        finishFailedRun(graph, node, run);
+        this.checkedClock = -1;
+      } else {
+        finishRun(graph, node);
+        this.checkedClock = clock;
+      }
+      graph.walkDepth--;
+      endObserving(graph, undefined, failed);
+    }
+  }
+
+  /**
+   * Whether a source the last run read changed since it read it. It brings
+   * each derived source current, unobserved, as a read would, and starts
+   * nothing. With no write since the last check it walks nothing, so two
+   * calls with nothing written agree, even over an atom nothing observes.
+   * Such an atom is never current, and a walk would call it changed every
+   * time: a renderer's snapshot read twice would then never settle. A
+   * change of what it stands for shows at the walk that links it,
+   * `Reaction.follow` or `Reaction.activate`, which reports it as a change;
+   * while a reaction follows it, the atom is observed and no longer
+   * volatile. A stated limit of the core API (an edge, ruling 67):
+   * `changed` sees writes, not an unobserved atom's outside value;
+   * `Reaction.follow` or `Reaction.activate` decide that.
+   */
+  changed(): boolean {
+    const graph = this.graph;
+    if (this.checkedClock === graph.clock) {
+      return false;
+    }
+    graph.depth++;
+    let changed = true;
+    let failed = true;
+    try {
+      changed = refreshAll(graph, this.node);
+      failed = false;
+    } finally {
+      endObserving(graph, undefined, failed);
+    }
+    if (!changed) {
+      this.checkedClock = graph.clock;
+    }
+    return changed;
+  }
+}
+
+/**
+ * A renderer's observer, or a scheduled watch's. `track` runs a read and
+ * follows what it read; `trackPending` runs a read apart, into a pending
+ * node, and `adopt` makes the pending reads the followed ones. `activate`
+ * links, `deactivate` unlinks; only an active reaction is scheduled.
+ *
+ * `notify` picks when the settle calls `onChange`: `"changed"` once the
+ * settle has brought what the reaction read current and found a change;
+ * `"marked"` whenever a write marked it, with nothing brought current, for
+ * an owner that runs later and asks `changed` then, so many writes cost one
+ * refresh.
  */
 export class Reaction {
   private readonly node: Node;
@@ -2255,10 +2851,11 @@ export class Reaction {
     readonly graph: Graph,
     onChange: () => void,
     label = "reaction",
+    notify: "changed" | "marked" = "changed",
   ) {
     this.node = makeObserver(
       graph,
-      REACTION,
+      notify === "marked" ? NOTIFIED : REACTION,
       undefined,
       onChange as (value: unknown, previous: unknown) => void,
       Object.is,
@@ -2269,11 +2866,23 @@ export class Reaction {
   track<Result>(read: (argument: never) => Result): Result {
     const graph = this.graph;
     const node = this.node;
-    if (node.linked) {
-      checkObserving(graph);
+    // One read of the word answers both questions a compute raises:
+    // deriving (`placeDeriving`, 4) refuses an observe, and a compute's own
+    // kind (3 above `placeKindShift`, 12) sets it aside for the error's label.
+    const outerPlace = graph.place;
+    if ((outerPlace & 4) !== 0) {
+      if (node.linked) {
+        checkObserving(graph);
+      }
+      if (!this.running && outerPlace >>> 12 === 3) {
+        return fromCompute(graph, this, read, false);
+      }
     }
     if (this.running) {
-      throw new Error(`pinna: ${node.label} cannot track inside its own run`);
+      throw new PinnaUsageError(
+        "pinna/reentrant-run",
+        `pinna: ${node.label} cannot track inside its own run`,
+      );
     }
     graph.depth++;
     if (graph.walkDepth++ === 0) {
@@ -2281,7 +2890,10 @@ export class Reaction {
     }
     const outer = graph.active;
     const outerRun = graph.run;
+    const clock = graph.clock;
     graph.active = node;
+    // `nextPlace` for a selector, inline: `(outer & placeConditions) | selectorWord`.
+    graph.place = (outerPlace & 4095) | 20528;
     const run = ++graph.runs;
     graph.run = run;
     node.cursor = undefined;
@@ -2300,11 +2912,26 @@ export class Reaction {
     } finally {
       this.running = false;
       graph.active = outer;
+      graph.place = outerPlace;
       graph.run = outerRun;
       if (failed) {
         finishFailedRun(graph, node, run);
       } else {
         finishRun(graph, node);
+      }
+      // The run wrote: a source it read through an edge linked only now
+      // changed with no mark reaching it. As in `runWatch`.
+      if (graph.clock !== clock && node.linked && node.nextDue === undefined) {
+        // region queue-due
+        node.nextDue = endOfDue;
+        const tail = graph.dueTail;
+        if (tail === undefined) {
+          graph.dueHead = node;
+        } else {
+          tail.nextDue = node;
+        }
+        graph.dueTail = node;
+        // endregion queue-due
       }
       graph.walkDepth--;
       node.status = VALUE;
@@ -2320,7 +2947,15 @@ export class Reaction {
   trackPending<Result>(read: (argument: never) => Result): Result {
     const graph = this.graph;
     if (this.running) {
-      throw new Error(`pinna: ${this.node.label} cannot track inside its own run`);
+      throw new PinnaUsageError(
+        "pinna/reentrant-run",
+        `pinna: ${this.node.label} cannot track inside its own run`,
+      );
+    }
+    const outerPlace = graph.place;
+    // A compute's own kind, under the deriving bit: as in `track`.
+    if ((outerPlace & 4) !== 0 && outerPlace >>> 12 === 3) {
+      return fromCompute(graph, this, read, true);
     }
     const into =
       this.spare ?? makeObserver(graph, PENDING, undefined, undefined, Object.is, this.node.label);
@@ -2332,6 +2967,8 @@ export class Reaction {
     const outer = graph.active;
     const outerRun = graph.run;
     graph.active = into;
+    // `nextPlace` for a selector, inline: `(outer & placeConditions) | selectorWord`.
+    graph.place = (outerPlace & 4095) | 20528;
     graph.run = ++graph.runs;
     into.cursor = undefined;
     into.added = false;
@@ -2342,6 +2979,7 @@ export class Reaction {
       return result;
     } finally {
       graph.active = outer;
+      graph.place = outerPlace;
       graph.run = outerRun;
       finishRun(graph, into);
       if (failed) {
@@ -2367,7 +3005,10 @@ export class Reaction {
     const node = this.node;
     const pending = this.pending;
     if (this.running) {
-      throw new Error(`pinna: ${node.label} cannot adopt inside its own run`);
+      throw new PinnaUsageError(
+        "pinna/reentrant-run",
+        `pinna: ${node.label} cannot adopt inside its own run`,
+      );
     }
     if (!this.pendingRan || pending === undefined) {
       return false;
@@ -2410,6 +3051,88 @@ export class Reaction {
   }
 
   /**
+   * Follows what `capture` read, in place of what the reaction followed:
+   * the reaction's edges become copies of the capture's, with the versions
+   * the capture read, and `capture` keeps its own. A source both read keeps
+   * its live edge, so its `onObserved` hook neither stops nor starts. While
+   * active, returns whether any source changed since the capture read it:
+   * a write between the capture and this call. Like `activate`, it is a
+   * walk, so an atom it links counts as changed.
+   */
+  follow(capture: Capture): boolean {
+    const graph = this.graph;
+    const node = this.node;
+    if (this.running) {
+      throw new PinnaUsageError(
+        "pinna/reentrant-run",
+        `pinna: ${node.label} cannot adopt inside its own run`,
+      );
+    }
+    if (node.linked) {
+      checkObserving(graph);
+    }
+    // The same sources in the same order: the edges stay and take the
+    // capture's versions, so a follow after each change allocates nothing.
+    let edge = node.dependenciesHead;
+    let from = capture.node.dependenciesHead;
+    while (edge !== undefined && from !== undefined && edge.source === from.source) {
+      edge.version = from.version;
+      edge = edge.nextDependency;
+      from = from.nextDependency;
+    }
+    const relinked = edge !== undefined || from !== undefined;
+    const stale = node.dependenciesHead;
+    if (relinked) {
+      let head: Edge | undefined;
+      let tail: Edge | undefined;
+      for (from = capture.node.dependenciesHead; from !== undefined; from = from.nextDependency) {
+        const copy: Edge = {
+          source: from.source,
+          observer: node,
+          version: from.version,
+          nextDependency: undefined,
+          previousObserver: undefined,
+          nextObserver: undefined,
+          linked: false,
+        };
+        if (tail === undefined) {
+          head = copy;
+        } else {
+          tail.nextDependency = copy;
+        }
+        tail = copy;
+      }
+      node.dependenciesHead = head;
+    }
+    node.status = VALUE;
+    if (!node.linked) {
+      return false;
+    }
+    graph.depth++;
+    let changed = false;
+    let failed = true;
+    // One walk, as `adopt`: an atom the reconcile links is checked by the
+    // refresh, never taken as current from an earlier walk's number.
+    if (graph.walkDepth++ === 0) {
+      graph.walk++;
+    }
+    try {
+      if (relinked) {
+        // A source both read keeps its live edge. Same reconcile as a run's end.
+        reconcile(graph, node, stale, true);
+      }
+      changed = refreshAll(graph, node);
+      graph.markFloor = graph.clock;
+      graph.lastMarked = undefined;
+      failed = false;
+    } finally {
+      graph.walkDepth--;
+      endObserving(graph, undefined, failed);
+    }
+    return node.linked && changed;
+  }
+
+  /**
    * Links to what the last run read. Returns whether any of it changed
    * since. It is a walk: an atom it links counts as changed, whatever the
    * last walk checked, since nothing reported what the atom did unobserved.
@@ -2421,6 +3144,9 @@ export class Reaction {
     }
     const graph = this.graph;
     checkObserving(graph);
+    if (graph.closed) {
+      throw closedError(graph, node.label ?? "a reaction");
+    }
     graph.depth++;
     let changed = false;
     let failed = true;
@@ -2452,6 +3178,32 @@ export class Reaction {
       endObserving(graph, undefined, failed);
     }
     // A hook the settle ran may have deactivated it.
+    return node.linked && changed;
+  }
+
+  /**
+   * Brings what the last run read current and returns whether any of it
+   * changed since, while active. For a reaction notified when marked, whose
+   * settle checks nothing.
+   */
+  changed(): boolean {
+    const node = this.node;
+    if (!node.linked) {
+      return false;
+    }
+    const graph = this.graph;
+    checkObserving(graph);
+    graph.depth++;
+    let changed = false;
+    let failed = true;
+    try {
+      changed = refreshAll(graph, node);
+      graph.markFloor = graph.clock;
+      graph.lastMarked = undefined;
+      failed = false;
+    } finally {
+      endObserving(graph, undefined, failed);
+    }
     return node.linked && changed;
   }
 
@@ -2501,25 +3253,32 @@ export class Graph {
   /** The run that met a cycle last: `meetCycle`. */
   cycleRun = 0;
   active: Node | undefined = undefined;
-  /** The enclosing execution whose reads `untracked` suppresses; hooks set it aside. */
-  untrackedActive: Node | undefined = undefined;
+  /**
+   * The place word: what the code running now may do (`nextPlace`,
+   * `placeAllows`). Saved and restored around every place entered.
+   */
+  place = 0;
   /**
    * Handed to every compute and select as its one argument, so a host can
    * give each run what it reads with, without a closure per node.
    */
   argument: unknown = undefined;
   /**
-   * The derived value whose compute or equals runs, innermost: while set,
-   * nothing writes, observes, or releases, however deep the call. Only a
-   * hook's run clears it.
+   * The compute an untracked read or a reaction's run set aside, for the
+   * label an error names and nothing else: inside a compute, `active` names
+   * the computing value, and inside an untracked read or a reaction's run in
+   * it, this does. `placeDeriving` in `place` is what refuses a write, an
+   * observe, or a release. A compute writes no field for the label.
    */
-  deriving: Node | undefined = undefined;
+  shadowed: Node | undefined = undefined;
   /** Batches, scopes, and the settle: while above zero, nothing settles. */
   depth = 0;
   /** Stale reads nested through user code: `maximumComputeDepth`. */
   computeDepth = 0;
   /** The value a compute stopped at past `maximumComputeDepth`, until the outermost reads it. */
   suspended: Node | undefined = undefined;
+  /** While the outermost bounded driver runs and once it has restarted, how often each value it retried ran again. */
+  restarts: Map<Node, number> | undefined = undefined;
   /**
    * A computed value marked at or before this clock is walked again by the
    * next mark that reaches it, even if it looks marked already. Each link and
@@ -2594,8 +3353,13 @@ export class Graph {
     options?: Options<Value>,
   ): () => void {
     // `checkObserving`, inline: Hermes does not inline it.
-    if (this.deriving !== undefined) {
+    // region check-observing (this=graph)
+    if ((this.place & 4) !== 0) {
       checkObserving(this);
+    }
+    // endregion check-observing
+    if (this.closed) {
+      throw closedError(this, "a watch");
     }
     const node = makeObserver(
       this,
@@ -2660,7 +3424,10 @@ export class Graph {
    */
   endBatch(failed: boolean): void {
     if (this.openBatches === 0) {
-      throw new Error("pinna: endBatch needs a beginBatch before it");
+      throw new PinnaUsageError(
+        "pinna/unbalanced-batch",
+        "pinna: endBatch needs a beginBatch before it",
+      );
     }
     this.openBatches--;
     endBatch(this, failed);
@@ -2668,14 +3435,17 @@ export class Graph {
 
   untracked<Result>(read: (argument: never) => Result): Result {
     const outerActive = this.active;
-    const outerUntracked = this.untrackedActive;
-    this.untrackedActive = outerActive ?? outerUntracked;
+    const outerPlace = this.place;
+    const outerShadowed = this.shadowed;
+    this.place = nextPlace(outerPlace, placeKind.untracked);
+    if (outerPlace >>> placeKindShift === placeKind.compute) this.shadowed = outerActive;
     this.active = undefined;
     try {
       return (read as (argument: unknown) => Result)(this.argument);
     } finally {
       this.active = outerActive;
-      this.untrackedActive = outerUntracked;
+      this.place = outerPlace;
+      this.shadowed = outerShadowed;
     }
   }
 
@@ -2710,7 +3480,10 @@ export class Graph {
    */
   onObserved(node: Node, start: Start): () => void {
     if (node.graph !== this) {
-      throw new Error("pinna: onObserved needs a source from this graph");
+      throw new PinnaUsageError(
+        "pinna/foreign-source",
+        "pinna: Source.onObserved needs a source from this graph",
+      );
     }
     return addHook(this, node, start, false);
   }
@@ -2723,14 +3496,43 @@ export class Graph {
    */
   onObservedNow(node: Node, start: Start): () => void {
     if (node.graph !== this || node.kind > DERIVED || !this.defersHooks()) {
-      throw new Error("pinna: onObservedNow needs a source from this graph, inside a batch");
+      throw new PinnaUsageError(
+        "pinna/foreign-source",
+        "pinna: onObservedNow needs a source from this graph, inside a batch",
+      );
     }
     const remove = addHook(this, node, start, true);
     queueHooks(this, node);
     return remove;
   }
 
+  /**
+   * Ends every begun hook, the last begun first, for the host's disposal
+   * once the graph is closed. A cleanup that throws goes to
+   * `reportAside`; the rest still end.
+   */
+  endBegunHooks(): void {
+    for (const entry of [...this.begunHooks].reverse()) {
+      try {
+        endHook(this, entry.hooks, entry.start);
+      } catch (error) {
+        this.reportAside(error);
+      }
+    }
+  }
+
   nextCellVersion(): number {
     return ++this.versions;
   }
+
+  // Last, after every field the graph's hot paths read.
+  /** Every hook that has begun and not ended, in the order each began. */
+  readonly begunHooks = new Set<BegunHook>();
+  /**
+   * Set once the host disposes the graph's realm: no watch starts, no
+   * reaction activates, and a settle runs no watcher.
+   */
+  closed = false;
+  /** The realm's name, for the message that refuses an observer once closed. */
+  name: string | undefined = undefined;
 }

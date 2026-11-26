@@ -1,4 +1,4 @@
-import { createRealm, schemaBox, update } from "@frondruntime/pinna-effect";
+import { Box, Realm } from "@frondruntime/pinna-effect";
 import { RealmProvider, useRealm, useSelect, useValue } from "@frondruntime/pinna-react";
 import { Schema } from "effect";
 import { memo, useState } from "react";
@@ -8,13 +8,13 @@ import { PositionsExample } from "./positions-view.tsx";
 import { Renders, useRenders } from "./renders.tsx";
 
 /** The one realm this app keeps its state in. */
-const realm = createRealm();
+export const realm = Realm.make({ name: "playground" });
 
-const $count = schemaBox(realm, Schema.Number, 0);
-const $step = schemaBox(realm, Schema.Number, 1);
+export const $count = Box.schema(realm, Schema.Number, 0);
+export const $step = Box.schema(realm, Schema.Number, 1);
 
 const increment = (): void =>
-  update(realm, (read, write) => {
+  Realm.update(realm, (read, write) => {
     write($count, read($count) + read($step));
   });
 
@@ -40,7 +40,7 @@ const CounterStep = () => {
           type="button"
           aria-pressed={current === step}
           onClick={() =>
-            update(realm, (_read, write) => {
+            Realm.update(realm, (_read, write) => {
               write($step, step);
             })
           }
@@ -55,7 +55,7 @@ const CounterStep = () => {
 
 const LocalCounter = () => {
   const local = useRealm();
-  const [$clicks] = useState(() => schemaBox(local, Schema.Number, 0));
+  const [$clicks] = useState(() => Box.schema(local, Schema.Number, 0));
   const clicks = useValue($clicks);
   const renders = useRenders();
   return (
@@ -63,7 +63,7 @@ const LocalCounter = () => {
       <button
         type="button"
         onClick={() =>
-          update(local, (read, write) => {
+          Realm.update(local, (read, write) => {
             write($clicks, read($clicks) + 1);
           })
         }

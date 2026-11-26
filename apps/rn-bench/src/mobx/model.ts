@@ -10,7 +10,7 @@
  * - https://mobx.js.org/actions.html: code that changes state is an action,
  *   and "no reactions will be run until the outer-most action has finished".
  * - https://mobx.js.org/computeds.html: read for the decision not to add a
- *   `computed` per row. A computed outside a reaction is not cached, and a
+ *   `Computed.make` per row. A computed outside a reaction is not cached, and a
  *   cell reads two fields at most, so the formatters run in the component.
  *
  * Installed API checked in node_modules/mobx/src/api/observable.ts

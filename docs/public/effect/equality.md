@@ -10,12 +10,12 @@ already use Effect: see [Schema-checked boxes](./boxes.md).
 
 ## Example
 
-A `schemaBox` compares as `Schema.toEquivalence` of its schema does. An
+A `Box.schema` compares as `Schema.toEquivalence` of its schema does. An
 equal write keeps the object the box holds.
 
 <!-- region equality.ts#box -->
 
-A `SchemaModel` without its own Equal compares its boxes and its realm by
+A `Model.Schema` without its own Equal compares its boxes and its realm by
 identity, so two decodes of the same JSON are not equal when the class has a
 `$` field.
 
@@ -26,13 +26,13 @@ change.
 
 <!-- region equality.ts#refetch -->
 
-A refetched `SchemaModel` row is merged into the held one, so a component
+A refetched `Model.Schema` row is merged into the held one, so a component
 that reads the row reruns only when a plain field changes, and one that
 reads `$size` reruns when the size does.
 
 <!-- region equality.ts#contents -->
 
-A `SchemaModel` that defines `[Equal.symbol]` decides its own equality. A
+A `Model.Schema` that defines `[Equal.symbol]` decides its own equality. A
 refetched rate under a held pair is merged, and its box takes the new bid.
 
 <!-- region equality.ts#ownEqual -->
@@ -43,11 +43,11 @@ refetched rate under a held pair is merged, and its box takes the new bid.
 
 ## Rules
 
-- The core's `box`, `collection`, and `computed` compare with `Object.is`
+- The core's `Box.make`, `Collection.make`, and `Computed.make` compare with `Object.is`
   unless `{ equals }` says otherwise, so a new array or object is a change.
   A computed value compares with `Object.is` in `pinna-effect` too, even
-  when what it reads is a `schemaBox`.
-- A `schemaBox` and a `BoxField` compare with the schema's equivalence,
+  when what it reads is a `Box.schema`.
+- A `Box.schema` and a `Model.boxField` compare with the schema's equivalence,
   with the answers of `Schema.toEquivalence`. An equal write keeps the
   value held and notifies nobody, so a refetch of the same data reruns
   nothing.
@@ -63,33 +63,34 @@ refetched rate under a held pair is merged, and its box takes the new bid.
 - `{ equals }` replaces the schema's equivalence: `Object.is` counts every
   new array or object as a change, even one equal part by part, and a
   function by id counts a row with a new price as unchanged.
-- A `SchemaModel` instance without its own `Equal` compares its plain fields
-  by value and its boxes and its realm by identity. Every `decode` makes new
+- A `Model.Schema` instance without its own `Equal` compares its plain fields
+  by value and its boxes and its realm by identity. Every `Model.decode` makes new
   boxes, so a refetched instance with a `$` field is not equal to the one
   held, and neither is an instance from another realm.
-- A `SchemaModel` with its own `[Equal.symbol]` is compared by that method
-  wherever Pinna compares with the class's schema, as in a `schemaBox` and
-  in `reconcileSchema`, on every comparison, with no answer cached. A plain
+- A `Model.Schema` with its own `[Equal.symbol]` is compared by that method
+  wherever Pinna compares with the class's schema, as in a `Box.schema` and
+  in `Collection.reconcile`, on every comparison, with no answer cached. A plain
   `Schema.Class` ignores its own `[Equal.symbol]` there, as Effect's schema
   does, and compares field by field.
-- A refetched `SchemaModel` instance under a held key is merged into the
+- A refetched `Model.Schema` instance under a held key is merged into the
   held one when both are of the same class and realm and their plain fields
   are equal, or the class's own `[Equal.symbol]` finds them equal, even
-  when a plain field differs. The held instance stays; each `BoxField`
+  when a plain field differs. The held instance stays; each `Model.boxField`
   takes the refetched value, compared with its schema, and each
-  `CollectionField` merges its rows the same way, so a refetch reruns only
+  `Model.collectionField` merges its rows the same way, so a refetch reruns only
   the readers of a box that changed. A plain field that holds a model is
   compared, not merged. Any other difference replaces the instance.
-- `reconcileSchema`, `write.replaceAll`, and `write.upsert` merge. A
-  `schemaBox` of an array compares by index and does not.
-- A `CollectionField` merges a `SchemaModel` row written under a held key
+- `Collection.reconcile`, `write.replaceAll`, and `write.upsert` merge. A
+  `Box.schema` of an array compares by index and does not.
+- A `Model.collectionField` merges a `Model.Schema` row written under a held key
   and compares any other row with the row schema's equivalence: `replaceAll`
   and `upsert` keep every equal or merged row, and notify nobody when
   nothing changed.
-- `reconcile` takes `equals` and has no default: a refetch builds new
-  objects, and the comparison is the caller's choice.
-- `reconcileSchema` keeps a row that is the same instance, merges a
-  `SchemaModel` row, compares any other instance of a `Schema.Class` with
+- `Collection.reconcile` given `equals` compares with it alone and merges
+  nothing, as `pinna`'s does, where `equals` is required: a refetch builds
+  new objects, and the comparison is the caller's choice.
+- `Collection.reconcile` without `equals` keeps a row that is the same instance, merges a
+  `Model.Schema` row, compares any other instance of a `Schema.Class` with
   its class's equivalence, and anything else with Effect's `Equal.equals`.
   A key repeated in the new array throws before any box is written. The
   merge writes in the open update, or in one of its own; a refetch that
@@ -99,13 +100,13 @@ refetched rate under a held pair is merged, and its box takes the new bid.
   with, is not the schema's equivalence. It compares `Hash.hash` first,
   caches each object's hash, caches its answer for a pair of objects, and
   compares an instance by every own property. The two agree on a plain
-  `Schema.Class` and on a `SchemaModel` whose fields are all plain: two
+  `Schema.Class` and on a `Model.Schema` whose fields are all plain: two
   decodes of the same JSON into one realm are equal, and `HashSet.has`
   finds either. They part on two cases:
   - A `$` property of the class body, such as a computed value, is no
     schema field. The schema's equivalence ignores it; `Equal.equals`
     compares it by identity, so two instances are not equal under Effect.
-  - A `SchemaModel` with `[Equal.symbol]` and no `[Hash.symbol]` is equal
+  - A `Model.Schema` with `[Equal.symbol]` and no `[Hash.symbol]` is equal
     under the schema's equivalence and not under `Equal.equals`, which
     compares hashes first. Define both, on plain fields only, such as the
     key, since Effect caches the hash.
@@ -117,19 +118,19 @@ refetched rate under a held pair is merged, and its box takes the new bid.
 
 | Call | Compares a new value with the held one by default with |
 | --- | --- |
-| `box(realm, initial, { equals? })` | `Object.is`. |
-| `collection(realm, { keyOf, equals? })` | `Object.is`, row by row. |
-| `computed(realm, compute, { equals? })` | `Object.is`. |
-| `schemaBox(realm, schema, initial, { equals? })` | The schema's equivalence. |
-| `BoxField(schema)` | The schema's equivalence. |
-| `CollectionField(schema, { keyOf })` | A merge for a `SchemaModel` row, the row schema's equivalence otherwise, row by row. |
-| `reconcile(previous, next, { keyOf, equals })` | `equals`, required. |
-| `reconcileSchema(previous, next, { keyOf, equals? })` | A merge for a `SchemaModel` row, the class's equivalence for another schema class instance, `Equal.equals` otherwise. |
+| `Box.make(realm, initial, { equals? })` | `Object.is`. |
+| `Collection.make(realm, { keyOf, equals? })` | `Object.is`, row by row. |
+| `Computed.make(realm, compute, { equals? })` | `Object.is`. |
+| `Box.schema(realm, schema, initial, { equals? })` | The schema's equivalence. |
+| `Model.boxField(schema)` | The schema's equivalence. |
+| `Model.collectionField(schema, { keyOf })` | A merge for a `Model.Schema` row, the row schema's equivalence otherwise, row by row. |
+| `Collection.reconcile(previous, next, { keyOf, equals })` | `equals`, with no merge; `pinna`'s requires it. |
+| `Collection.reconcile(previous, next, { keyOf })` | A merge for a `Model.Schema` row, the class's equivalence for another schema class instance, `Equal.equals` otherwise. |
 
 ## See also
 
 - [Schema-checked boxes](./boxes.md): the box that checks a schema on every write.
 - [Classes](./classes.md): the model whose fields these rules compare.
-- [Collection fields](./collections.md): `replaceAll` and `reconcile` on a refetch.
+- [Collection fields](./collections.md): `replaceAll` and `Collection.reconcile` on a refetch.
 - [Boxes and computed](../state/boxes.md): the core's box and its `equals`.
 - [Collections](../state/collections.md): the core's collection and its `equals`.

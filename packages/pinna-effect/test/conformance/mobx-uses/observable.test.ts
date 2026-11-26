@@ -9,17 +9,7 @@ import {
   reaction,
   runInAction,
 } from "mobx";
-import {
-  autorun,
-  type Box,
-  CollectionField,
-  createRealm,
-  decode,
-  type Realm,
-  SchemaModel,
-  schemaBox,
-  update,
-} from "../../../src/index.ts";
+import { Box, Model, Realm } from "../../../src/index.ts";
 
 /**
  * An application's `observable` and `ObservableMap` uses, each beside its Pinna
@@ -61,11 +51,11 @@ class PinnaBook {
     readonly realm: Realm,
     items: ReadonlyArray<Position>,
   ) {
-    this.$items = schemaBox(realm, Schema.Array(Position), items);
+    this.$items = Box.schema(realm, Schema.Array(Position), items);
   }
 
   upsert(position: Position): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const items = read(this.$items);
       write(
         this.$items,
@@ -77,7 +67,7 @@ class PinnaBook {
   }
 
   remove(id: string): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       write(
         this.$items,
         read(this.$items).filter((item) => item.id !== id),
@@ -113,10 +103,10 @@ describe("observable.ref on a model field", () => {
   });
 
   test("Pinna: a box of the list, written inside update", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const book = new PinnaBook(realm, [a1, b1]);
     const seen: Array<string> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(show(read(book.$items)));
     });
     bookSteps(book);
@@ -136,13 +126,13 @@ const ratesTrace = {
   ],
 };
 
-class Rate extends SchemaModel<Rate>("Rate")({
+class Rate extends Model.Schema<Rate>("Rate")({
   pair: Schema.String,
   rate: Schema.Number,
 }) {}
 
-class Rates extends SchemaModel<Rates>("Rates")({
-  $items: CollectionField(Rate, { keyOf: (rate) => rate.pair }),
+class Rates extends Model.Schema<Rates>("Rates")({
+  $items: Model.collectionField(Rate, { keyOf: (rate) => rate.pair }),
 }) {}
 
 describe("ObservableMap", () => {
@@ -187,8 +177,8 @@ describe("ObservableMap", () => {
   });
 
   test("Pinna: a CollectionField, tracked key by key", () => {
-    const realm = createRealm();
-    const rates = decode(
+    const realm = Realm.make();
+    const rates = Model.decode(
       realm,
       Rates,
     )({
@@ -203,25 +193,25 @@ describe("ObservableMap", () => {
       keys: [] as Array<unknown>,
     };
     const stops = [
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         seen.euro.push(read(rates.$items.row("EUR/USD"))?.rate);
       }),
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         seen.pound.push(read(rates.$items.row("GBP/USD"))?.rate);
       }),
       // A new key goes first in a collection and last in a map; sorted, the
       // two agree.
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         seen.keys.push([...read(rates.$items.keys)].sort());
       }),
     ];
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rates.$items, Rate.make({ pair: "EUR/USD", rate: 1.2, realm }));
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rates.$items, Rate.make({ pair: "USD/JPY", rate: 150, realm }));
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.remove(rates.$items, "GBP/USD");
     });
     for (const stop of stops) {

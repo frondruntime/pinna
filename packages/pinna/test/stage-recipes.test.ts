@@ -1,27 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
-  atom,
-  autorun,
-  box,
-  collection,
-  computed,
-  computedFunction,
-  dropStage,
-  inspectStage,
+  Atom,
+  Box,
+  Collection,
+  Computed,
   Model,
-  observe,
-  onObserved,
-  onRowChange,
-  openStage,
   type Read,
-  type Recipe,
-  stageRead,
-  stageStatus,
-  stageUpdate,
-  untracked,
-  update,
+  Realm,
+  Source,
+  Stage,
+  type UpdateRecipe,
   type Write,
-  watch,
 } from "../src/index.ts";
 import { testRealm } from "../src/testing/index.ts";
 import { expectRealmAtRest } from "./rest.ts";
@@ -37,188 +26,199 @@ describe("inside a stage recipe", () => {
     test(`making a plain model in ${place} throws before its initializers`, () => {
       using realm = testRealm();
       let initializers = 0;
-      class Item extends Model {
+      class Item extends Model.Class {
         readonly id = ++initializers;
       }
-      const stage = openStage(realm);
+      const stage = Stage.make(realm);
       try {
         const make = (): undefined => {
           new Item(realm);
         };
         expect(() =>
-          place === "recipe" ? stageUpdate(stage, make) : stageRead(stage, make),
+          place === "recipe" ? Stage.update(stage, make) : Stage.read(stage, make),
         ).toThrow("pinna: a model is made inside a stage recipe");
         expect(initializers).toBe(0);
       } finally {
-        dropStage(stage);
+        Stage.drop(stage);
       }
       expect(new Item(realm).id).toBe(1);
     });
 
-    for (const query of [stageStatus, inspectStage]) {
-      test(`${query.name} refuses ${place} and remains callable after closing`, () => {
+    for (const [name, query] of [
+      ["Stage.status", Stage.status],
+      ["Stage.inspect", Stage.inspect],
+    ] as const) {
+      test(`${name} refuses ${place} and remains callable after closing`, () => {
         using realm = testRealm();
-        const stage = openStage(realm);
+        const stage = Stage.make(realm);
         try {
           const inspect = (): undefined => {
             query(stage);
           };
           expect(() =>
-            place === "recipe" ? stageUpdate(stage, inspect) : stageRead(stage, inspect),
-          ).toThrow(`pinna: ${query.name} runs inside a stage recipe`);
+            place === "recipe" ? Stage.update(stage, inspect) : Stage.read(stage, inspect),
+          ).toThrow(`pinna: ${name} runs inside a stage recipe`);
         } finally {
-          dropStage(stage);
+          Stage.drop(stage);
         }
-        expect(stageStatus(stage)).toBe("dropped");
-        expect(inspectStage(stage).status).toBe("dropped");
+        expect(Stage.status(stage)).toBe("dropped");
+        expect(Stage.inspect(stage).status).toBe("dropped");
       });
     }
   }
 
   test("update writing the realm throws, and nothing reaches the realm", () => {
     using realm = testRealm();
-    const $a = box(realm, 1);
-    const $b = box(realm, 1);
-    const stage = openStage(realm);
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 1);
+    const stage = Stage.make(realm);
     expect(() =>
-      stageUpdate(stage, (_read, write) => {
+      Stage.update(stage, (_read, write) => {
         write($a, 2);
-        update(realm, (_outerRead, outerWrite) => {
+        Realm.update(realm, (_outerRead, outerWrite) => {
           outerWrite($b, 2);
         });
       }),
-    ).toThrow("pinna: a stage recipe writes the realm, through update or a write kept from one");
-    expect(untracked(realm, (read) => [read($a), read($b)])).toEqual([1, 1]);
-    expect(stageRead(stage, (read) => read($a))).toBe(1);
-    dropStage(stage);
+    ).toThrow(
+      "pinna: a stage recipe writes the realm, through Realm.update or a write kept from one",
+    );
+    expect(Realm.untracked(realm, (read) => [read($a), read($b)])).toEqual([1, 1]);
+    expect(Stage.read(stage, (read) => read($a))).toBe(1);
+    Stage.drop(stage);
     expectRealmAtRest(realm);
   });
 
   test("a write kept from an open update throws", () => {
     using realm = testRealm();
-    const $a = box(realm, 1);
-    const stage = openStage(realm);
-    update(realm, (_read, outerWrite) => {
+    const $a = Box.make(realm, 1);
+    const stage = Stage.make(realm);
+    Realm.update(realm, (_read, outerWrite) => {
       expect(() =>
-        stageUpdate(stage, () => {
+        Stage.update(stage, () => {
           outerWrite($a, 2);
         }),
       ).toThrow("pinna: a stage recipe writes the realm");
     });
-    expect(untracked(realm, (read) => read($a))).toBe(1);
-    dropStage(stage);
+    expect(Realm.untracked(realm, (read) => read($a))).toBe(1);
+    Stage.drop(stage);
   });
 
   test("a read kept from an open place, and untracked, throw: they would skip the stage's values", () => {
     using realm = testRealm();
-    const $a = box(realm, 1, { name: "a" });
-    const $rows = collection<string, string>(realm, { keyOf: (row) => row });
-    const stage = openStage(realm);
-    update(realm, (outerRead) => {
+    const $a = Box.make(realm, 1, { name: "a" });
+    const $rows = Collection.make<string, string>(realm, { keyOf: (row) => row });
+    const stage = Stage.make(realm);
+    Realm.update(realm, (outerRead) => {
       expect(() =>
-        stageUpdate(stage, () => {
+        Stage.update(stage, () => {
           outerRead($a);
         }),
       ).toThrow('pinna: read("a") of the realm runs inside a stage recipe');
       expect(() =>
-        stageUpdate(stage, () => {
+        Stage.update(stage, () => {
           outerRead.row($rows, "x");
         }),
       ).toThrow("pinna: read.row of the realm runs inside a stage recipe");
     });
     expect(() =>
-      stageUpdate(stage, () => {
-        untracked(realm, (read) => read($a));
+      Stage.update(stage, () => {
+        Realm.untracked(realm, (read) => read($a));
       }),
-    ).toThrow("pinna: untracked of the realm runs inside a stage recipe");
-    expect(() => stageRead(stage, () => untracked(realm, (read) => read($a)))).toThrow(
-      "pinna: untracked of the realm runs inside a stage recipe",
+    ).toThrow("pinna: Realm.untracked of the realm runs inside a stage recipe");
+    expect(() => Stage.read(stage, () => Realm.untracked(realm, (read) => read($a)))).toThrow(
+      "pinna: Realm.untracked of the realm runs inside a stage recipe",
     );
-    dropStage(stage);
+    Stage.drop(stage);
   });
 
   test("making an observable throws: the replay would make another", () => {
     using realm = testRealm();
-    class Todo extends Model {
-      readonly $done = box(this.realm, false);
+    class Todo extends Model.Class {
+      readonly $done = Box.make(this.realm, false);
     }
-    const stage = openStage(realm);
+    const stage = Stage.make(realm);
     const makers: ReadonlyArray<readonly [string, () => unknown]> = [
-      ["a box", () => box(realm, 0)],
+      ["a box", () => Box.make(realm, 0)],
       ["a model", () => new Todo(realm)],
-      ["a computed value", () => computed(realm, () => 1)],
-      ["a computed function", () => computedFunction(realm, () => 1)],
-      ["an atom", () => atom(realm)],
-      ["a collection", () => collection(realm, { keyOf: (row: string) => row })],
+      ["a computed value", () => Computed.make(realm, () => 1)],
+      ["a computed function", () => Computed.fn(realm, () => 1)],
+      ["an atom", () => Atom.make(realm)],
+      ["a collection", () => Collection.make(realm, { keyOf: (row: string) => row })],
     ];
     for (const [what, make] of makers) {
       expect(() =>
-        stageUpdate(stage, () => {
+        Stage.update(stage, () => {
           make();
         }),
       ).toThrow(`pinna: ${what} is made inside a stage recipe`);
     }
-    dropStage(stage);
+    Stage.drop(stage);
   });
 
   test("a watch, an autorun, an observe, an onObserved hook, and an onRowChange listener throw", () => {
     using realm = testRealm();
-    const $a = box(realm, 1);
-    const $rows = collection<string, string>(realm, { keyOf: (row) => row });
-    const stage = openStage(realm);
+    const $a = Box.make(realm, 1);
+    const $rows = Collection.make<string, string>(realm, { keyOf: (row) => row });
+    const stage = Stage.make(realm);
     const starts: ReadonlyArray<readonly [string, () => unknown]> = [
       [
         "a stage recipe cannot observe",
         () =>
-          watch(
+          Realm.watch(
             realm,
             (read) => read($a),
             () => undefined,
           ),
       ],
-      ["a stage recipe cannot observe", () => autorun(realm, () => undefined)],
-      ["a stage recipe cannot observe", () => observe($a)],
-      ["onObserved runs inside a stage recipe", () => onObserved($a, () => undefined)],
-      ["onRowChange runs inside a stage recipe", () => onRowChange($rows, () => undefined)],
+      ["a stage recipe cannot observe", () => Realm.autorun(realm, () => undefined)],
+      ["a stage recipe cannot observe", () => Source.observe($a)],
+      [
+        "Source.onObserved runs inside a stage recipe",
+        () => Source.onObserved($a, () => undefined),
+      ],
+      [
+        "Collection.onRowChange runs inside a stage recipe",
+        () => Collection.onRowChange($rows, () => undefined),
+      ],
     ];
     for (const [message, start] of starts) {
       expect(() =>
-        stageUpdate(stage, () => {
+        Stage.update(stage, () => {
           start();
         }),
       ).toThrow(message);
     }
-    dropStage(stage);
+    Stage.drop(stage);
     expectRealmAtRest(realm);
   });
 
   test("a computed function read with new arguments, and a collection's row, are reads: they work", () => {
     using realm = testRealm();
-    const $count = box(realm, 2);
-    const times = computedFunction(realm, (read, factor: number) => read($count) * factor);
-    const $rows = collection<string, string>(realm, { keyOf: (row) => row });
-    const stage = openStage(realm);
-    stageUpdate(stage, (read, write) => {
+    const $count = Box.make(realm, 2);
+    const times = Computed.fn(realm, (read, factor: number) => read($count) * factor);
+    const $rows = Collection.make<string, string>(realm, { keyOf: (row) => row });
+    const stage = Stage.make(realm);
+    Stage.update(stage, (read, write) => {
       write($count, read(times(7)) + (read($rows.row("x")) === undefined ? 0 : 1));
     });
-    expect(stageRead(stage, (read) => read($count))).toBe(14);
-    dropStage(stage);
+    expect(Stage.read(stage, (read) => read($count))).toBe(14);
+    Stage.drop(stage);
   });
 
   test("a Recipe returned by a model method runs through update and through a stage alike", () => {
     using realm = testRealm();
-    class Cart extends Model {
-      readonly $count = box(this.realm, 0);
-      add(amount: number): Recipe {
+    class Cart extends Model.Class {
+      readonly $count = Box.make(this.realm, 0);
+      add(amount: number): UpdateRecipe {
         return (read: Read, write: Write) => write(this.$count, read(this.$count) + amount);
       }
     }
     const cart = new Cart(realm);
-    update(realm, cart.add(1));
-    const stage = openStage(realm);
-    stageUpdate(stage, cart.add(2));
-    expect(stageRead(stage, (read) => read(cart.$count))).toBe(3);
-    expect(untracked(realm, (read) => read(cart.$count))).toBe(1);
-    dropStage(stage);
+    Realm.update(realm, cart.add(1));
+    const stage = Stage.make(realm);
+    Stage.update(stage, cart.add(2));
+    expect(Stage.read(stage, (read) => read(cart.$count))).toBe(3);
+    expect(Realm.untracked(realm, (read) => read(cart.$count))).toBe(1);
+    Stage.drop(stage);
   });
 });

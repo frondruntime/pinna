@@ -16,9 +16,9 @@ import { Console, Effect, FileSystem, Path, Schema, Stdio } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { packAndSmoke, readJson } from "./pack.ts";
 import {
-  type PublishedPackage,
   packageDirectory,
-  publishedPackages,
+  type ReleasePackage,
+  releasePackages,
   scope,
   workspaceRoot,
 } from "./packages.ts";
@@ -41,6 +41,16 @@ const PackageManifest = Schema.Struct({
 });
 
 type PackageManifest = typeof PackageManifest.Type;
+
+/**
+ * The dist-tag a version is published under. A prerelease (`0.2.0-rc.1`)
+ * goes to `next`, so `npm install` without a tag keeps resolving the last
+ * release; any other version goes to `latest`. Build metadata after `+`
+ * may hold a hyphen and marks no prerelease. Without `--tag`, npm 10
+ * puts a prerelease on `latest`.
+ */
+export const distTagOf = (version: string): string =>
+  version.split("+")[0]?.includes("-") ? "next" : "latest";
 
 /**
  * `npm whoami`, and `npm login` on this terminal when it fails. Publishing
@@ -74,22 +84,29 @@ const signIn = (root: string, dryRun: boolean): Effect.Effect<void, ReleaseError
 const readManifests = (
   root: string,
 ): Effect.Effect<
-  ReadonlyArray<readonly [PublishedPackage, PackageManifest]>,
+  ReadonlyArray<readonly [ReleasePackage, PackageManifest]>,
   ReleaseError,
   FileSystem.FileSystem | Path.Path
 > =>
-  Effect.forEach(publishedPackages, (published) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const directory = yield* packageDirectory(root, published);
-      const manifest = yield* readJson(
-        `manifest of ${published.name}`,
-        PackageManifest,
-        path.join(directory, "package.json"),
-      );
-      return [published, manifest] as const;
-    }),
+  Effect.forEach(
+    releasePackages.filter((released) => released.publishes),
+    (published) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const directory = yield* packageDirectory(root, published);
+        const manifest = yield* readJson(
+          `manifest of ${published.name}`,
+          PackageManifest,
+          path.join(directory, "package.json"),
+        );
+        return [published, manifest] as const;
+      }),
   );
+
+/** The packages packed for a release candidate and never sent to npm. */
+const unpublishedNames = new Set(
+  releasePackages.filter((released) => !released.publishes).map((released) => released.name),
+);
 
 /**
  * The packages are released together at one version, and each names the
@@ -97,7 +114,7 @@ const readManifests = (
  * it was tested with.
  */
 const checkManifests = (
-  manifests: ReadonlyArray<readonly [PublishedPackage, PackageManifest]>,
+  manifests: ReadonlyArray<readonly [ReleasePackage, PackageManifest]>,
 ): Effect.Effect<string, ReleaseError> => {
   const [first] = manifests;
   const version = first?.[1].version ?? "";
@@ -109,6 +126,10 @@ const checkManifests = (
       manifest.version === version
         ? []
         : [`${manifest.name} is at ${manifest.version}, ${first?.[1].name} at ${version}`],
+      // npm would install a published package without the private one it names.
+      ranges
+        .filter(([name]) => unpublishedNames.has(name))
+        .map(([name]) => `${manifest.name} names ${name}, which is not published`),
       ranges
         .filter(([, range]) => range.startsWith("workspace:"))
         .map(([name]) => `${manifest.name} names ${name} with a workspace: range`),
@@ -177,7 +198,7 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
     yield* section("registry");
     const manifests = yield* readManifests(root);
     const version = yield* checkManifests(manifests);
-    const pending: Array<PublishedPackage> = [];
+    const pending: Array<ReleasePackage> = [];
     for (const [published] of manifests) {
       if (yield* isPublished(root, published.name, version)) {
         yield* Console.log(`${published.name}@${version} is already published; skipped`);
@@ -219,6 +240,8 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
         const tarballs = yield* packAndSmoke(work);
 
         yield* section(dryRun ? "publish, dry run" : "publish");
+        const tag = distTagOf(version);
+        yield* Console.log(`dist-tag ${tag}`);
         for (const [published, tarball] of tarballs) {
           if (!pending.includes(published)) {
             continue;
@@ -226,7 +249,15 @@ export const publish = (dryRun: boolean): Effect.Effect<void, ReleaseError, Serv
           yield* attachedOrFail(
             `publish ${published.name}`,
             "npm",
-            ["publish", tarball, "--access", "public", ...(dryRun ? ["--dry-run"] : [])],
+            [
+              "publish",
+              tarball,
+              "--access",
+              "public",
+              "--tag",
+              tag,
+              ...(dryRun ? ["--dry-run"] : []),
+            ],
             root,
           );
         }

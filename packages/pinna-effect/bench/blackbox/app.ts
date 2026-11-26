@@ -5,21 +5,7 @@
  */
 
 import { Schema } from "effect";
-import {
-  autorun,
-  type Computed,
-  computed,
-  computedFunction,
-  createRealm,
-  decode,
-  onObserved,
-  type Read,
-  type Realm,
-  reconcile,
-  untracked,
-  update,
-  watch,
-} from "../../src/index.ts";
+import { Collection, Computed, Model, type Read, Realm, Source } from "../../src/index.ts";
 import { type Built, expectEqual, type Scenario, seeded } from "./harness.ts";
 import {
   Balance,
@@ -42,7 +28,7 @@ const ignore = (): undefined => undefined;
 
 /** Errors with no caller fail the run: a scenario that expects them collects them itself. */
 const strictRealm = (): Realm =>
-  createRealm({
+  Realm.make({
     onError: (error) => {
       throw error;
     },
@@ -50,7 +36,7 @@ const strictRealm = (): Realm =>
 
 /** A `Markets` of `count` markets, decoded from the wire. */
 const marketsOf = (realm: Realm, count: number, random: () => number): Markets =>
-  decode(realm, Markets)(marketsWire(count, random));
+  Model.decode(realm, Markets)(marketsWire(count, random));
 
 /** The ten markets that moved most, by the size of their change: the picker's "top movers". */
 const topMoversOf = (
@@ -82,7 +68,7 @@ const positionsWire = (
 
 /** What a position screen shows: each position's profit, valued at the market's price. */
 const valuationOf = (realm: Realm, markets: Markets, portfolio: Portfolio) =>
-  computed(realm, (read) => {
+  Computed.make(realm, (read) => {
     let total = 0;
     const lines: Array<string> = [];
     for (const position of read(portfolio.$positions.rows)) {
@@ -111,7 +97,7 @@ const recountValuation = (read: Read, markets: Markets, portfolio: Portfolio): n
 
 /** A component showing one market row: its price, change, and spread. */
 const mountRow = (realm: Realm, market: Market, rendered: () => undefined): (() => void) =>
-  watch(
+  Realm.watch(
     realm,
     (read) => `${read(market.$priceText)} ${read(market.$changeText)} ${read(market.$spread)}`,
     rendered,
@@ -131,9 +117,12 @@ const ratesBatch = (markets: number, batch: number, steps: number): Scenario => 
     const random = seeded(1);
     const realm = strictRealm();
     const state = marketsOf(realm, markets, random);
-    const portfolio = decode(realm, Portfolio)({ positions: positionsWire(100, markets, random) });
+    const portfolio = Model.decode(
+      realm,
+      Portfolio,
+    )({ positions: positionsWire(100, markets, random) });
     const rows = state.$items.rows;
-    const topMovers = computed(realm, (read) =>
+    const topMovers = Computed.make(realm, (read) =>
       topMoversOf(read(rows), (market) => read(market.$change)),
     );
     const valuation = valuationOf(realm, state, portfolio);
@@ -142,16 +131,16 @@ const ratesBatch = (markets: number, batch: number, steps: number): Scenario => 
       renders++;
     };
     const stops = [
-      watch(realm, (read) => read(topMovers), rendered),
-      watch(realm, (read) => read(valuation), rendered),
-      ...untracked(realm, (read) => read(rows))
+      Realm.watch(realm, (read) => read(topMovers), rendered),
+      Realm.watch(realm, (read) => read(valuation), rendered),
+      ...Realm.untracked(realm, (read) => read(rows))
         .slice(0, 50)
         .map((market) => mountRow(realm, market, rendered)),
     ];
-    const all = untracked(realm, (read) => read(rows));
+    const all = Realm.untracked(realm, (read) => read(rows));
     return {
       step: () => {
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           for (let index = 0; index < batch; index++) {
             tick(read, write, all[Math.floor(random() * all.length)] as Market, random);
           }
@@ -159,7 +148,7 @@ const ratesBatch = (markets: number, batch: number, steps: number): Scenario => 
         });
       },
       check: () => {
-        untracked(realm, (read) => {
+        Realm.untracked(realm, (read) => {
           expectEqual(
             read(topMovers).join(),
             topMoversOf(all, (market) => read(market.$change)).join(),
@@ -196,12 +185,12 @@ const candlesInBox = (cap: number, write: "set" | "modify", steps: number): Scen
   build: (): Built => {
     const random = seeded(2);
     const realm = strictRealm();
-    const series = decode(realm, Series)({ market: "M0", candles: candlesWire(cap, random) });
-    const last = computed(realm, (read) => {
+    const series = Model.decode(realm, Series)({ market: "M0", candles: candlesWire(cap, random) });
+    const last = Computed.make(realm, (read) => {
       const candles = read(series.$candles);
       return candles[candles.length - 1] as Candle;
     });
-    const range = computed(realm, (read) => {
+    const range = Computed.make(realm, (read) => {
       let low = Number.POSITIVE_INFINITY;
       let high = Number.NEGATIVE_INFINITY;
       for (const candle of read(series.$candles)) {
@@ -212,14 +201,14 @@ const candlesInBox = (cap: number, write: "set" | "modify", steps: number): Scen
     });
     let renders = 0;
     const stops = [
-      watch(
+      Realm.watch(
         realm,
         (read) => read(last).close,
         () => {
           renders++;
         },
       ),
-      watch(
+      Realm.watch(
         realm,
         (read) => read(range),
         () => {
@@ -231,7 +220,7 @@ const candlesInBox = (cap: number, write: "set" | "modify", steps: number): Scen
     return {
       step: (index) => {
         const opens = index % 10 === 9;
-        update(realm, (read, put) => {
+        Realm.update(realm, (read, put) => {
           const candles = read(series.$candles);
           const previous = candles[candles.length - 1] as Candle;
           const close = previous.close * (0.999 + random() * 0.002);
@@ -275,7 +264,7 @@ const candlesInBox = (cap: number, write: "set" | "modify", steps: number): Scen
         });
       },
       check: () => {
-        untracked(realm, (read) => {
+        Realm.untracked(realm, (read) => {
           const candles = read(series.$candles);
           expectEqual(candles.length, cap, "series length");
           expectEqual(read(last), candles[cap - 1], "last candle");
@@ -301,13 +290,16 @@ const candlesInCollection = (cap: number, steps: number): Scenario => ({
   build: (): Built => {
     const random = seeded(2);
     const realm = strictRealm();
-    const series = decode(realm, RowSeries)({ market: "M0", candles: candlesWire(cap, random) });
+    const series = Model.decode(
+      realm,
+      RowSeries,
+    )({ market: "M0", candles: candlesWire(cap, random) });
     const keys = series.$candles.keys;
-    const last = computed(realm, (read) => {
+    const last = Computed.make(realm, (read) => {
       const order = read(keys);
       return read(series.$candles.row(order[order.length - 1] as number));
     });
-    const range = computed(realm, (read) => {
+    const range = Computed.make(realm, (read) => {
       let low = Number.POSITIVE_INFINITY;
       let high = Number.NEGATIVE_INFINITY;
       for (const candle of read(series.$candles.rows)) {
@@ -318,7 +310,7 @@ const candlesInCollection = (cap: number, steps: number): Scenario => ({
     });
     let renders = 0;
     const stops = [
-      watch(
+      Realm.watch(
         realm,
         (read) => {
           const candle = read(last);
@@ -328,7 +320,7 @@ const candlesInCollection = (cap: number, steps: number): Scenario => ({
           renders++;
         },
       ),
-      watch(
+      Realm.watch(
         realm,
         (read) => read(range),
         () => {
@@ -337,11 +329,11 @@ const candlesInCollection = (cap: number, steps: number): Scenario => ({
       ),
     ];
     let time = cap * 900;
-    const decodeCandle = decode(realm, CandleRow);
+    const decodeCandle = Model.decode(realm, CandleRow);
     return {
       step: (index) => {
         const opens = index % 10 === 9;
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           const order = read(keys);
           const previous = read(
             series.$candles.row(order[order.length - 1] as number),
@@ -368,7 +360,7 @@ const candlesInCollection = (cap: number, steps: number): Scenario => ({
         });
       },
       check: () => {
-        expectEqual(untracked(realm, (read) => read(keys)).length, cap, "series length");
+        expectEqual(Realm.untracked(realm, (read) => read(keys)).length, cap, "series length");
         if (renders === 0) {
           throw new Error("blackbox: nothing rendered");
         }
@@ -394,17 +386,17 @@ const positionsStream = (positions: number, steps: number): Scenario => ({
     const random = seeded(3);
     const realm = strictRealm();
     const state = marketsOf(realm, 300, random);
-    const portfolio = decode(
+    const portfolio = Model.decode(
       realm,
       Portfolio,
     )({
       positions: positionsWire(positions, 300, random),
     });
     const valuation = valuationOf(realm, state, portfolio);
-    const decodePosition = decode(realm, Position);
+    const decodePosition = Model.decode(realm, Position);
     let renders = 0;
     const stops = [
-      watch(
+      Realm.watch(
         realm,
         (read) => read(valuation),
         () => {
@@ -415,7 +407,7 @@ const positionsStream = (positions: number, steps: number): Scenario => ({
     let next = positions;
     return {
       step: () => {
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           const rows = read(portfolio.$positions.rows);
           const roll = random();
           if (roll < 0.15 || rows.length < positions / 2) {
@@ -441,7 +433,7 @@ const positionsStream = (positions: number, steps: number): Scenario => ({
         });
       },
       check: () => {
-        untracked(realm, (read) => {
+        Realm.untracked(realm, (read) => {
           expectEqual(
             Math.round(read(valuation).total),
             Math.round(recountValuation(read, state, portfolio)),
@@ -464,7 +456,9 @@ const positionsStream = (positions: number, steps: number): Scenario => ({
 /**
  * A balances subscription delivers the whole list each time; one balance
  * differs. `naive` decodes and replaces every row; `reconciled` keeps the
- * rows whose contents did not change, as the README advises.
+ * rows whose contents did not change first. Either way `write.replaceAll`
+ * merges each refetched `Balance` into the held instance (ruling 51), so the
+ * two modes differ in cost, not in what reruns.
  */
 const balancesSnapshot = (mode: "naive" | "reconciled", steps: number): Scenario => ({
   name: `balances snapshot: ${mode}`,
@@ -477,21 +471,21 @@ const balancesSnapshot = (mode: "naive" | "reconciled", steps: number): Scenario
       token: `T${index}`,
       amount: Math.round(random() * 1000),
     }));
-    const balances = decode(realm, Balances)({ items: wire });
-    const decodeList = decode(realm, Schema.Array(Balance));
+    const balances = Model.decode(realm, Balances)({ items: wire });
+    const decodeList = Model.decode(realm, Schema.Array(Balance));
     const rows = balances.$items.rows;
-    const total = computed(realm, (read) =>
+    const total = Computed.make(realm, (read) =>
       read(rows).reduce((sum, row) => sum + read(row.$amount), 0),
     );
     let rowRenders = 0;
     const stops = [
-      watch(
+      Realm.watch(
         realm,
         (read) => read(total),
         () => {},
       ),
       ...wire.map((entry) =>
-        watch(
+        Realm.watch(
           realm,
           (read) => {
             const row = read(balances.$items.row(entry.token));
@@ -503,7 +497,7 @@ const balancesSnapshot = (mode: "naive" | "reconciled", steps: number): Scenario
         ),
       ),
       ...wire.map((entry) =>
-        watch(
+        Realm.watch(
           realm,
           (read) => read(balances.$items.row(entry.token)),
           () => {
@@ -517,13 +511,13 @@ const balancesSnapshot = (mode: "naive" | "reconciled", steps: number): Scenario
         const changed = wire[index % wire.length] as { token: string; amount: number };
         changed.amount += 1;
         const next = decodeList(wire);
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           if (mode === "naive") {
             write.replaceAll(balances.$items, next);
           } else {
             write.replaceAll(
               balances.$items,
-              reconcile(read(rows), next, {
+              Collection.reconcile(read(rows), next, {
                 keyOf: (balance) => balance.token,
                 equals: (left, right) => read(left.$amount) === read(right.$amount),
               }),
@@ -534,14 +528,15 @@ const balancesSnapshot = (mode: "naive" | "reconciled", steps: number): Scenario
       },
       check: () => {
         expectEqual(
-          untracked(realm, (read) => read(total)),
+          Realm.untracked(realm, (read) => read(total)),
           wire.reduce((sum, entry) => sum + entry.amount, 0),
           "balances total",
         );
-        // A reconciled snapshot renders the one changed row, twice (its
-        // amount and its instance); a naive one renders every row instance.
+        // Ruling 51: a refetched `Model.Schema` row merges into the held
+        // instance, so no row's instance changes and only the changed row's
+        // amount rerenders, once per snapshot, naive or reconciled.
         const perStep = rowRenders / steps;
-        expectEqual(perStep, mode === "naive" ? 31 : 2, "row renders per snapshot");
+        expectEqual(perStep, 1, "row renders per snapshot");
       },
       dispose: () => {
         for (const stop of stops) {
@@ -555,7 +550,7 @@ const balancesSnapshot = (mode: "naive" | "reconciled", steps: number): Scenario
 /**
  * Switching the selected market: the old screen unmounts, the new one
  * mounts. The screen reads a memoized stats value and the row, starts a
- * price feed through `onObserved` on the market's price, and keeps a chart
+ * price feed through `Source.onObserved` on the market's price, and keeps a chart
  * series made for that market. A few ticks land between switches.
  */
 const marketSwitch = (steps: number): Scenario => ({
@@ -566,17 +561,17 @@ const marketSwitch = (steps: number): Scenario => ({
     const random = seeded(5);
     const realm = strictRealm();
     const state = marketsOf(realm, 300, random);
-    const all = untracked(realm, (read) => read(state.$items.rows));
+    const all = Realm.untracked(realm, (read) => read(state.$items.rows));
     const feeds = new Set<string>();
     const hooks = all.map((market) =>
-      onObserved(market.$price, () => {
+      Source.onObserved(market.$price, () => {
         feeds.add(market.id);
         return () => {
           feeds.delete(market.id);
         };
       }),
     );
-    const statsOf = computedFunction(realm, (read, id: string) => {
+    const statsOf = Computed.fn(realm, (read, id: string) => {
       const market = read(state.$items.row(id));
       return market === undefined
         ? undefined
@@ -594,28 +589,28 @@ const marketSwitch = (steps: number): Scenario => ({
       }
       screen = [];
     };
-    const decodeSeries = decode(realm, Series);
+    const decodeSeries = Model.decode(realm, Series);
     return {
       step: () => {
         unmount();
         selected = all[Math.floor(random() * all.length)] as Market;
         const market = selected;
         const series = decodeSeries({ market: market.id, candles: candlesWire(100, random) });
-        const chart: Computed<number> = computed(realm, (read) => {
+        const chart: Computed<number> = Computed.make(realm, (read) => {
           const candles = read(series.$candles);
           return (candles[candles.length - 1] as Candle).close + read(market.$price);
         });
         screen = [
-          watch(realm, (read) => read(statsOf(market.id)), rendered),
+          Realm.watch(realm, (read) => read(statsOf(market.id)), rendered),
           mountRow(realm, market, rendered),
-          watch(realm, (read) => read(chart), rendered),
-          autorun(realm, (read) => {
+          Realm.watch(realm, (read) => read(chart), rendered),
+          Realm.autorun(realm, (read) => {
             read(market.$price);
             return () => {};
           }),
         ];
         for (let index = 0; index < 5; index++) {
-          update(realm, (read, write) => {
+          Realm.update(realm, (read, write) => {
             tick(read, write, market, random);
             return undefined;
           });
@@ -641,7 +636,7 @@ const marketSwitch = (steps: number): Scenario => ({
 
 /**
  * Scrolling a list of markets: rows leave the window and new ones mount.
- * Every market's four rate fields carry an `onObserved` hook, as a rates
+ * Every market's four rate fields carry a `Source.onObserved` hook, as a rates
  * store that subscribes only the pairs on screen has, and ticks keep coming.
  */
 const scrollRows = (markets: number, window: number, steps: number): Scenario => ({
@@ -652,11 +647,11 @@ const scrollRows = (markets: number, window: number, steps: number): Scenario =>
     const random = seeded(6);
     const realm = strictRealm();
     const state = marketsOf(realm, markets, random);
-    const all = untracked(realm, (read) => read(state.$items.rows));
+    const all = Realm.untracked(realm, (read) => read(state.$items.rows));
     let observedFields = 0;
     const hooks = all.flatMap((market) =>
       [market.$price, market.$bid, market.$ask, market.$open].map((field) =>
-        onObserved(field, () => {
+        Source.onObserved(field, () => {
           observedFields++;
           return () => {
             observedFields--;
@@ -680,7 +675,7 @@ const scrollRows = (markets: number, window: number, steps: number): Scenario =>
           mount(index + window);
         }
         top += 5;
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           for (let index = 0; index < 20; index++) {
             tick(
               read,
@@ -715,7 +710,7 @@ const scrollRows = (markets: number, window: number, steps: number): Scenario =>
 
 /**
  * Pulling to refresh: the markets come back from the server with one in
- * twenty prices moved. `replace` decodes and replaces the rows; `reconcile`
+ * twenty prices moved. `replace` decodes and replaces the rows; `Collection.reconcile`
  * keeps unchanged rows first; `patch` writes the new prices into the rows
  * already held.
  */
@@ -727,17 +722,17 @@ const refetch = (mode: "replace" | "reconcile" | "patch", steps: number): Scenar
     const random = seeded(7);
     const realm = strictRealm();
     const wire = marketsWire(300, random);
-    const state = decode(realm, Markets)(wire);
-    const decodeList = decode(realm, Schema.Array(Market));
+    const state = Model.decode(realm, Markets)(wire);
+    const decodeList = Model.decode(realm, Schema.Array(Market));
     const rows = state.$items.rows;
-    const topMovers = computed(realm, (read) =>
+    const topMovers = Computed.make(realm, (read) =>
       topMoversOf(read(rows), (market) => read(market.$change)),
     );
     let rowRenders = 0;
     const stops = [
-      watch(realm, (read) => read(topMovers), ignore),
+      Realm.watch(realm, (read) => read(topMovers), ignore),
       ...wire.items.slice(0, 50).map((entry) =>
-        watch(
+        Realm.watch(
           realm,
           (read) => {
             const market = read(state.$items.row(entry.id));
@@ -759,7 +754,7 @@ const refetch = (mode: "replace" | "reconcile" | "patch", steps: number): Scenar
           }
         }
         if (mode === "patch") {
-          update(realm, (read, write) => {
+          Realm.update(realm, (read, write) => {
             for (const entry of wire.items) {
               const row = read(state.$items.row(entry.id));
               if (row !== undefined) {
@@ -771,12 +766,12 @@ const refetch = (mode: "replace" | "reconcile" | "patch", steps: number): Scenar
           return;
         }
         const next = decodeList(wire.items);
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write.replaceAll(
             state.$items,
             mode === "replace"
               ? next
-              : reconcile(read(rows), next, {
+              : Collection.reconcile(read(rows), next, {
                   keyOf: (market) => market.id,
                   equals: (left, right) => read(left.$price) === read(right.$price),
                 }),
@@ -785,7 +780,7 @@ const refetch = (mode: "replace" | "reconcile" | "patch", steps: number): Scenar
         });
       },
       check: () => {
-        untracked(realm, (read) => {
+        Realm.untracked(realm, (read) => {
           for (const entry of wire.items) {
             const row = read(state.$items.row(entry.id));
             expectEqual(
@@ -820,10 +815,10 @@ const pagination = (mode: "upsert" | "replaceAll", pages: number): Scenario => (
   build: (): Built => {
     const random = seeded(8);
     const realm = strictRealm();
-    const state = decode(realm, Markets)({ items: [] });
-    const decodeList = decode(realm, Schema.Array(Market));
-    const count = computed(realm, (read) => read(state.$items.keys).length);
-    const stops = [watch(realm, (read) => read(count), ignore)];
+    const state = Model.decode(realm, Markets)({ items: [] });
+    const decodeList = Model.decode(realm, Schema.Array(Market));
+    const count = Computed.make(realm, (read) => read(state.$items.keys).length);
+    const stops = [Realm.watch(realm, (read) => read(count), ignore)];
     return {
       step: (index) => {
         const page = decodeList(
@@ -832,7 +827,7 @@ const pagination = (mode: "upsert" | "replaceAll", pages: number): Scenario => (
             id: `M${index * 50 + offset}`,
           })),
         );
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           if (mode === "upsert") {
             for (const market of page) {
               write.upsert(state.$items, market, { at: "end" });
@@ -845,7 +840,7 @@ const pagination = (mode: "upsert" | "replaceAll", pages: number): Scenario => (
       },
       check: () => {
         expectEqual(
-          untracked(realm, (read) => read(count)),
+          Realm.untracked(realm, (read) => read(count)),
           pages * 50,
           "rows",
         );

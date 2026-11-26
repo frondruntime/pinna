@@ -1,27 +1,18 @@
 // The site's docs print the regions of this file (docs/public/effect/equality.md), so
 // `bun run typecheck` compiles what the page shows.
-import {
-  BoxField,
-  CollectionField,
-  createRealm,
-  decode,
-  reconcileSchema,
-  SchemaModel,
-  schemaBox,
-  update,
-} from "@frondruntime/pinna-effect";
+import { Box, Collection, Model, Realm } from "@frondruntime/pinna-effect";
 import { Equal, Hash, Schema } from "effect";
 
 // #region box
-const realm = createRealm();
+const realm = Realm.make();
 
 const Reading = Schema.Struct({ at: Schema.Date, value: Schema.Number });
 type Reading = typeof Reading.Type;
 
-const $reading = schemaBox(realm, Reading, { at: new Date(0), value: 1 });
+const $reading = Box.schema(realm, Reading, { at: new Date(0), value: 1 });
 
 const record = (reading: Reading) => {
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     // A Date compares by its time: an equal reading keeps the object
     // the box holds, and nobody reruns.
     write($reading, reading);
@@ -30,14 +21,14 @@ const record = (reading: Reading) => {
 // #endregion
 
 // #region models
-class Position extends SchemaModel<Position>("Position")({
+class Position extends Model.Schema<Position>("Position")({
   id: Schema.String,
-  $size: BoxField(Schema.Number),
+  $size: Model.boxField(Schema.Number),
 }) {}
 
 const samePosition = Schema.toEquivalence(Position);
-const first = decode(realm, Position)({ id: "a", size: 1 });
-const again = decode(realm, Position)({ id: "a", size: 1 });
+const first = Model.decode(realm, Position)({ id: "a", size: 1 });
+const again = Model.decode(realm, Position)({ id: "a", size: 1 });
 
 // false: each decode makes its own $size box, and boxes compare by identity.
 const positionsEqual = samePosition(first, again);
@@ -50,15 +41,15 @@ class Quote extends Schema.Class<Quote>("Quote")({
   price: Schema.Number,
 }) {}
 
-class Market extends SchemaModel<Market>("Market")({
-  $quotes: CollectionField(Quote, { keyOf: (quote) => quote.symbol }),
+class Market extends Model.Schema<Market>("Market")({
+  $quotes: Model.collectionField(Quote, { keyOf: (quote) => quote.symbol }),
 }) {}
 
-const market = decode(realm, Market)({ quotes: [] });
+const market = Model.decode(realm, Market)({ quotes: [] });
 
 const receiveQuotes = (json: unknown) => {
-  const quotes = decode(realm, Schema.Array(Quote))(json);
-  update(realm, (_read, write) => {
+  const quotes = Model.decode(realm, Schema.Array(Quote))(json);
+  Realm.update(realm, (_read, write) => {
     // A quote equal under Quote's schema is kept, and what read its row does not rerun.
     write.replaceAll(market.$quotes, quotes);
   });
@@ -66,24 +57,24 @@ const receiveQuotes = (json: unknown) => {
 // #endregion
 
 // #region contents
-const $positions = schemaBox(realm, Schema.Array(Position), []);
+const $positions = Box.schema(realm, Schema.Array(Position), []);
 
 const receivePositions = (json: unknown) => {
-  const fresh = decode(realm, Schema.Array(Position))(json);
-  update(realm, (read, write) => {
+  const fresh = Model.decode(realm, Schema.Array(Position))(json);
+  Realm.update(realm, (read, write) => {
     // A held id keeps its Position, and the new size goes into its $size box.
     write(
       $positions,
-      reconcileSchema(read($positions), fresh, { keyOf: (position) => position.id }),
+      Collection.reconcile(read($positions), fresh, { keyOf: (position) => position.id }),
     );
   });
 };
 // #endregion
 
 // #region ownEqual
-class Rate extends SchemaModel<Rate>("Rate")({
+class Rate extends Model.Schema<Rate>("Rate")({
   pair: Schema.String,
-  $bid: BoxField(Schema.Number),
+  $bid: Model.boxField(Schema.Number),
 }) {
   // One rate per pair. Plain fields only: Effect caches what Equal.equals answers.
   [Equal.symbol](that: unknown): boolean {
@@ -95,13 +86,13 @@ class Rate extends SchemaModel<Rate>("Rate")({
   }
 }
 
-const $rates = schemaBox(realm, Schema.Array(Rate), []);
+const $rates = Box.schema(realm, Schema.Array(Rate), []);
 
 const receiveRates = (json: unknown) => {
-  const fresh = decode(realm, Schema.Array(Rate))(json);
-  update(realm, (read, write) => {
+  const fresh = Model.decode(realm, Schema.Array(Rate))(json);
+  Realm.update(realm, (read, write) => {
     // A pair already held keeps its rate, and the new bid goes into that rate's box.
-    write($rates, reconcileSchema(read($rates), fresh, { keyOf: (rate) => rate.pair }));
+    write($rates, Collection.reconcile(read($rates), fresh, { keyOf: (rate) => rate.pair }));
   });
 };
 // #endregion
@@ -110,10 +101,10 @@ const receiveRates = (json: unknown) => {
 const Row = Schema.Struct({ id: Schema.String, price: Schema.Number });
 
 // Every new array is a change, even one equal part by part.
-const $log = schemaBox(realm, Schema.Array(Schema.String), [], { equals: Object.is });
+const $log = Box.schema(realm, Schema.Array(Schema.String), [], { equals: Object.is });
 
 // The same row while the id is the same, whatever the price.
-const $selected = schemaBox(
+const $selected = Box.schema(
   realm,
   Row,
   { id: "a", price: 1 },

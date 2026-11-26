@@ -1,35 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import {
-  autorun,
-  box,
-  collection,
-  computed,
-  createRealm,
-  observe,
-  untracked,
-  update,
-  watch,
-} from "../src/index.ts";
-import { openParts } from "../src/internal/index.ts";
+import { Box, Collection, Computed, Realm, Source } from "../src/index.ts";
 import { held, record, retainedKeys, testRealm } from "../src/testing/index.ts";
+import { expectRealmAtRest } from "./rest.ts";
 
 /** `@frondruntime/pinna/testing`: `record`, `held`, and `testRealm` (ruling 52). */
 
 describe("record", () => {
   test("keeps each value a select changes to, not its first value", () => {
     using realm = testRealm();
-    const $count = box(realm, 1);
+    const $count = Box.make(realm, 1);
     using doubled = record(realm, (read) => read($count) * 2);
     expect(doubled.values).toEqual([]);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 2);
       write($count, 3);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 3);
     });
     expect(doubled.values).toEqual([6]);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 4);
     });
     expect(doubled.values).toEqual([6, 8]);
@@ -37,14 +27,14 @@ describe("record", () => {
 
   test("compares with options.equals", () => {
     using realm = testRealm();
-    const $items = box(realm, [1, 2]);
+    const $items = Box.make(realm, [1, 2]);
     using lengths = record(realm, (read) => [...read($items)], {
       equals: (left, right) => left.length === right.length,
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($items, [3, 4]);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($items, [5]);
     });
     expect(lengths.values).toEqual([[5]]);
@@ -52,31 +42,31 @@ describe("record", () => {
 
   test("keeps nothing once stopped, and stopping again or leaving its scope does nothing", () => {
     using realm = testRealm();
-    const $count = box(realm, 1);
+    const $count = Box.make(realm, 1);
     {
       using counts = record(realm, (read) => read($count));
       counts.stop();
       counts.stop();
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($count, 2);
       });
       expect(counts.values).toEqual([]);
     }
-    expect(openParts(realm)).toEqual([]);
+    expectRealmAtRest(realm);
   });
 
   test("stops when its scope ends", () => {
     using realm = testRealm();
-    const $count = box(realm, 1);
+    const $count = Box.make(realm, 1);
     let kept: ReadonlyArray<number> = [];
     {
       using counts = record(realm, (read) => read($count));
       kept = counts.values;
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($count, 2);
       });
     }
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 3);
     });
     expect(kept).toEqual([2]);
@@ -96,27 +86,27 @@ describe("record", () => {
 describe("held", () => {
   test("runs the stop function of an autorun, a watch, and an observe when its scope ends", () => {
     using realm = testRealm();
-    const $count = box(realm, 1);
+    const $count = Box.make(realm, 1);
     const seen: Array<number> = [];
     {
       using _autorun = held(
-        autorun(realm, (read) => {
+        Realm.autorun(realm, (read) => {
           seen.push(read($count));
         }),
       );
       using _watch = held(
-        watch(
+        Realm.watch(
           realm,
           (read) => read($count),
           () => undefined,
         ),
       );
-      using _observe = held(observe(computed(realm, (read) => read($count) + 1)));
-      update(realm, (_read, write) => {
+      using _observe = held(Source.observe(Computed.make(realm, (read) => read($count) + 1)));
+      Realm.update(realm, (_read, write) => {
         write($count, 2);
       });
     }
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 3);
     });
     expect(seen).toEqual([1, 2]);
@@ -126,9 +116,9 @@ describe("held", () => {
     const failure = new Error("the assertion");
     const run = () => {
       using realm = testRealm();
-      const $count = box(realm, 1);
+      const $count = Box.make(realm, 1);
       using _autorun = held(
-        autorun(realm, (read) => {
+        Realm.autorun(realm, (read) => {
           read($count);
         }),
       );
@@ -141,10 +131,10 @@ describe("held", () => {
 describe("testRealm", () => {
   test("disposing a leaked autorun runs its complete cleanup once", () => {
     const realm = testRealm();
-    const $count = box(realm, 1);
+    const $count = Box.make(realm, 1);
     let cleanups = 0;
     let runs = 0;
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       read($count);
       runs++;
       return () => {
@@ -157,7 +147,9 @@ describe("testRealm", () => {
     expect(cleanups).toBe(1);
     stop();
     expect(() => realm[Symbol.dispose]()).not.toThrow();
-    update(realm, (_read, write) => write($count, 2));
+    expect(() => Realm.update(realm, (_read, write) => write($count, 2))).toThrow(
+      "pinna: Realm.update cannot start in the disposed realm",
+    );
     expect(runs).toBe(1);
     expect(cleanups).toBe(1);
   });
@@ -166,7 +158,7 @@ describe("testRealm", () => {
     const errors: Array<unknown> = [];
     const realm = testRealm({ onError: (error) => errors.push(error) });
     const failure = new Error("cleanup failed");
-    autorun(realm, () => () => {
+    Realm.autorun(realm, () => () => {
       throw failure;
     });
     expect(() => realm[Symbol.dispose]()).toThrow(
@@ -179,14 +171,14 @@ describe("testRealm", () => {
   test("an autorun whose stop throws stays tracked with its cleanup", () => {
     const realm = testRealm();
     let cleanups = 0;
-    const stop = autorun(realm, () => () => {
+    const stop = Realm.autorun(realm, () => () => {
       cleanups++;
     });
-    const $stopping = computed(realm, () => {
+    const $stopping = Computed.make(realm, () => {
       stop();
       return 0;
     });
-    expect(() => untracked(realm, (read) => read($stopping))).toThrow();
+    expect(() => Realm.untracked(realm, (read) => read($stopping))).toThrow();
     expect(cleanups).toBe(0);
     expect(() => realm[Symbol.dispose]()).toThrow(
       "The test realm is not at rest: autorun still running.",
@@ -197,7 +189,7 @@ describe("testRealm", () => {
 
   test("a watch named autorun stays counted separately", () => {
     const realm = testRealm();
-    watch(
+    Realm.watch(
       realm,
       () => 1,
       () => undefined,
@@ -211,19 +203,19 @@ describe("testRealm", () => {
 
   test("disposes quietly when every watch, autorun, and observe was stopped", () => {
     const realm = testRealm();
-    const $count = box(realm, 1);
-    const $doubled = computed(realm, (read) => read($count) * 2);
+    const $count = Box.make(realm, 1);
+    const $doubled = Computed.make(realm, (read) => read($count) * 2);
     const stops = [
-      watch(
+      Realm.watch(
         realm,
         (read) => read($count),
         () => undefined,
       ),
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         read($doubled);
         return undefined;
       }),
-      observe($doubled),
+      Source.observe($doubled),
     ];
     for (const stop of stops) {
       stop();
@@ -233,54 +225,52 @@ describe("testRealm", () => {
 
   test("throws on dispose, naming each watch, autorun, and observe still running", () => {
     const realm = testRealm();
-    const $count = box(realm, 1);
-    watch(
+    const $count = Box.make(realm, 1);
+    Realm.watch(
       realm,
       (read) => read($count),
       () => undefined,
       { name: "count" },
     );
-    autorun(realm, (read) => {
+    Realm.autorun(realm, (read) => {
       read($count);
       return undefined;
     });
-    observe($count);
+    Source.observe($count);
     expect(() => realm[Symbol.dispose]()).toThrow(
-      "The test realm is not at rest: count still running; autorun still running; watch still running.",
+      "The test realm is not at rest: autorun still running; count still running; watch still running.",
     );
   });
 
   test("stops what it found running, so a second dispose is quiet", () => {
     const realm = testRealm();
-    const $count = box(realm, 1);
+    const $count = Box.make(realm, 1);
     let runs = 0;
-    autorun(realm, (read) => {
+    Realm.autorun(realm, (read) => {
       read($count);
       runs++;
       return undefined;
     });
     expect(() => realm[Symbol.dispose]()).toThrow("autorun still running");
-    update(realm, (_read, write) => {
-      write($count, 2);
-    });
+    expect(Realm.status(realm)).toBe("disposed");
     expect(runs).toBe(1);
     expect(() => realm[Symbol.dispose]()).not.toThrow();
   });
 
   test("counts a watch whose stop threw as still running, and stops it", () => {
     const realm = testRealm();
-    const $count = box(realm, 1);
-    const stop = watch(
+    const $count = Box.make(realm, 1);
+    const stop = Realm.watch(
       realm,
       (read) => read($count),
       () => undefined,
       { name: "count" },
     );
-    const $stopping = computed(realm, () => {
+    const $stopping = Computed.make(realm, () => {
       stop();
       return 0;
     });
-    expect(() => untracked(realm, (read) => read($stopping))).toThrow();
+    expect(() => Realm.untracked(realm, (read) => read($stopping))).toThrow();
     expect(() => realm[Symbol.dispose]()).toThrow("count still running");
     expect(() => realm[Symbol.dispose]()).not.toThrow();
   });
@@ -288,9 +278,9 @@ describe("testRealm", () => {
   test("throws on dispose even when the scope ends with an error, which it suppresses", () => {
     const run = (): void => {
       using realm = testRealm();
-      watch(
+      Realm.watch(
         realm,
-        (read) => read(box(realm, 1)),
+        (read) => read(Box.make(realm, 1)),
         () => undefined,
       );
       throw new Error("the test failed");
@@ -310,8 +300,8 @@ describe("testRealm", () => {
   test("counts only its own realm's watches", () => {
     const realm = testRealm();
     const other = testRealm();
-    const $count = box(other, 1);
-    const stop = watch(
+    const $count = Box.make(other, 1);
+    const stop = Realm.watch(
       other,
       (read) => read($count),
       () => undefined,
@@ -331,21 +321,21 @@ describe("retainedKeys", () => {
     Array.from({ length: count }, (_, index) => ({ id: `row-${index}`, value: index }));
 
   test("names the held rows, and lets go of each removed one with its box and computed value", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf: (row) => row.id });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf: (row) => row.id });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, rowsOf(100));
     });
     // A reader of each row makes its box and its computed value.
-    const release = observe(rows.row("row-1"));
-    const reads = rowsOf(100).map((row) => observe(rows.row(row.id)));
+    const release = Source.observe(rows.row("row-1"));
+    const reads = rowsOf(100).map((row) => Source.observe(rows.row(row.id)));
     for (const stop of reads) stop();
     expect(retainedKeys(rows)).toEqual(new Set(rowsOf(100).map((row) => row.id)));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, rowsOf(10));
     });
     expect(retainedKeys(rows)).toEqual(new Set(rowsOf(10).map((row) => row.id)));
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.remove(rows, "row-1");
     });
     // Still observed, yet removed: its box and computed value are let go.
@@ -355,10 +345,10 @@ describe("retainedKeys", () => {
   });
 
   test("is a copy, taken when called", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf: (row) => row.id });
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf: (row) => row.id });
     const before = retainedKeys(rows);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", value: 1 });
     });
     expect(before.size).toBe(0);
@@ -366,8 +356,8 @@ describe("retainedKeys", () => {
   });
 
   test("throws for a value that is not a collection Pinna made", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf: (row) => row.id });
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf: (row) => row.id });
     expect(() => retainedKeys({ ...rows })).toThrow(
       "pinna: retainedKeys takes a collection Pinna made",
     );

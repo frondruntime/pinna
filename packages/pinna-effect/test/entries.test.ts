@@ -27,37 +27,43 @@ describe("the entries", () => {
     expect(missing).toEqual([]);
   });
 
-  test("a star import reads every builder at the top level, with no nested namespace", () => {
+  test("a star import reads modules and errors at the top level, and no flat builder", () => {
     const extra = Object.keys(Schema)
       .filter((name) => !(name in Bare))
       .sort();
-    expect(extra).toEqual([
-      "BoxField",
-      "CollectionField",
-      "FromContext",
-      "RealmService",
-      "SchemaModel",
-      "StageConflict",
-      "changes",
-      "decode",
-      "fromStream",
-      "observeScoped",
-      "reconcileSchema",
-      "schemaBox",
-      "schemaCollection",
-      "watchScoped",
-      "whileObserved",
-      "withStage",
-    ]);
+    expect(extra).toEqual(["DecodeError", "Program", "RealmService"]);
     expect("Pinna" in Schema).toBe(false);
     expect("Pinna" in Bare).toBe(false);
   });
 
-  test("every name pinna exports is pinna's own value here: a name that checks a schema says so", () => {
-    const differing = Object.keys(Bare).filter(
-      (name) =>
-        (Bare as Record<string, unknown>)[name] !== (Schema as Record<string, unknown>)[name],
-    );
-    expect(differing).toEqual([]);
+  test("every name pinna exports is pinna's own value here, but the modules this package extends", () => {
+    const differing = Object.keys(Bare)
+      .filter(
+        (name) =>
+          (Bare as Record<string, unknown>)[name] !== (Schema as Record<string, unknown>)[name],
+      )
+      .sort();
+    expect(differing).toEqual(["Box", "Collection", "Model", "Realm", "Source", "Stage", "View"]);
+  });
+
+  test("an extended module keeps every member of pinna's, the same function, but reconcile", () => {
+    const pairs = {
+      Box: [Bare.Box, Schema.Box],
+      Collection: [Bare.Collection, Schema.Collection],
+      Model: [Bare.Model, Schema.Model],
+      Realm: [Bare.Realm, Schema.Realm],
+      Source: [Bare.Source, Schema.Source],
+      Stage: [Bare.Stage, Schema.Stage],
+      View: [Bare.View, Schema.View],
+    } as const;
+    for (const [name, [bare, schema]] of Object.entries(pairs)) {
+      const plain = bare as unknown as Record<string, unknown>;
+      const extended = schema as unknown as Record<string, unknown>;
+      const changed = Object.keys(plain).filter((member) => plain[member] !== extended[member]);
+      expect({ name, changed }).toEqual({
+        name,
+        changed: name === "Collection" ? ["reconcile"] : [],
+      });
+    }
   });
 });

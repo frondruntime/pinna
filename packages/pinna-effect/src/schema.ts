@@ -5,13 +5,14 @@
  */
 
 import type { Equals } from "@frondruntime/pinna";
-import { acceptAll, type Check, type Rejection } from "@frondruntime/pinna/internal";
+import { acceptAll, assertNoDraft, type Check, type Rejection } from "@frondruntime/pinna/internal";
 import { Schema, SchemaAST, SchemaIssue } from "effect";
 
 const wholeCheckOf = (schema: Schema.Top): ((value: unknown) => Rejection | undefined) => {
   const is = Schema.is(schema);
   const decode = Schema.decodeUnknownResult(Schema.toType(schema));
   return (value) => {
+    assertNoDraft(value);
     if (is(value)) {
       return undefined;
     }
@@ -74,7 +75,7 @@ export const checkOf = (schema: Schema.Top): Check => {
 
 /**
  * The checks `checkOf` built, one per schema. A check keeps no state of its
- * own, so every box of one schema shares it: `box` builds none.
+ * own, so every box of one schema shares it: `Box.make` builds none.
  */
 const checks = new WeakMap<Schema.Top, Check>();
 

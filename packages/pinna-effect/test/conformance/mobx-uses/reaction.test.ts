@@ -1,18 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Schema, Stream } from "effect";
 import { observable, reaction, runInAction } from "mobx";
-import {
-  changes,
-  createRealm,
-  RealmService,
-  schemaBox,
-  untracked,
-  update,
-  watch,
-} from "../../../src/index.ts";
+import { Box, Program, Realm, RealmService } from "../../../src/index.ts";
 
 /**
- * An application's `reaction` uses, beside `watch`: a test that sees each new
+ * An application's `reaction` uses, beside `Realm.watch`: a test that sees each new
  * greeting, and a panel that sends a debounced estimate as the user types.
  */
 
@@ -39,10 +31,10 @@ describe("reaction", () => {
   });
 
   test("Pinna: watch", () => {
-    const realm = createRealm();
-    const $name = schemaBox(realm, Schema.String, "World");
+    const realm = Realm.make();
+    const $name = Box.schema(realm, Schema.String, "World");
     const seen: Array<string> = [];
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => `Hello, ${read($name)}`,
       (text) => {
@@ -50,7 +42,7 @@ describe("reaction", () => {
       },
     );
     for (const name of ["Ada", "Ada", "Grace"]) {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($name, name);
       });
     }
@@ -86,16 +78,16 @@ describe("reaction({ delay, fireImmediately })", () => {
   });
 
   test("Pinna: the effect once by hand, then changes with Stream.debounce", async () => {
-    const realm = createRealm();
-    const $text = schemaBox(realm, Schema.String, "a");
+    const realm = Realm.make();
+    const $text = Box.schema(realm, Schema.String, "a");
     const seen: Array<string> = [];
     const send = (text: string) => {
       seen.push(text);
     };
-    send(untracked(realm, (read) => read($text)));
+    send(Realm.untracked(realm, (read) => read($text)));
     await Effect.runPromise(
       Effect.gen(function* () {
-        yield* changes($text).pipe(
+        yield* Program.changes($text).pipe(
           Stream.drop(1),
           Stream.debounce("20 millis"),
           Stream.runForEach((text) => Effect.sync(() => send(text))),
@@ -103,7 +95,7 @@ describe("reaction({ delay, fireImmediately })", () => {
         );
         yield* Effect.sleep("5 millis");
         for (const text of ["ab", "abc"]) {
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($text, text);
           });
         }

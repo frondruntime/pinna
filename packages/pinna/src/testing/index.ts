@@ -2,22 +2,21 @@
  * Helpers for tests of code built on Pinna, for any test runner. `record`
  * keeps each value a select changes to; `held` lets `using` run a stop
  * function; `testRealm` makes a realm that, when disposed, throws if a
- * watch, an autorun, an `observe`, an `onRowChange` listener, or a stage is
+ * watch, an autorun, a `Source.observe`, a `Collection.onRowChange` listener, or a stage is
  * still running; `retainedKeys` names the keys a collection still keeps something
  * for. None imports a test runner: a failure is a thrown `Error`.
  */
-import type { Graph } from "@frondruntime/pinna-core";
+import { type Graph, PinnaUsageError } from "@frondruntime/pinna-core";
+import type { Collection, Realm, ValueOptions } from "../box.ts";
 import { KeyedCollection } from "../collection.ts";
 import {
-  type Collection,
   createRealm,
+  disposeRealm,
   type ObservableRealm,
-  type Options,
-  type Read,
-  type Realm,
   type RealmOptions,
   watch,
-} from "../observable.ts";
+} from "../realm.ts";
+import type { Read } from "../verbs.ts";
 import { openParts } from "./rest.ts";
 
 /** `Symbol.dispose`, or `undefined` on a runtime that has none. */
@@ -48,12 +47,12 @@ export interface Recording<Value> extends Disposable {
 /**
  * Watches `select` in `realm` and keeps each value it changes to, compared
  * with `options.equals` or `Object.is`. An error from `select`'s first run is
- * thrown here, as `watch` throws it.
+ * thrown here, as `Realm.watch` throws it.
  */
 export const record = <Value>(
   realm: Realm,
   select: (read: Read) => Value,
-  options?: Options<Value>,
+  options?: ValueOptions<Value>,
 ): Recording<Value> => {
   const values: Array<Value> = [];
   const stop = watch(
@@ -69,69 +68,90 @@ export const record = <Value>(
 };
 
 /**
- * Holds a stop function, or an `observe` release, for `using`, which runs it
+ * Holds a stop function, or a `Source.observe` release, for `using`, which runs it
  * when the scope ends, also when an assertion throws:
- * `using _ = held(autorun(realm, ...))`. The stop functions of `watch` and
- * `autorun` are plain functions, because a dispose property on each costs
+ * `using _ = held(Realm.autorun(realm, ...))`. The stop functions of `Realm.watch` and
+ * `Realm.autorun` are plain functions, because a dispose property on each costs
  * every application's watches.
  */
 export const held = (stop: () => void): Disposable => withDispose({}, stop);
 
 /**
  * Makes a realm whose dispose throws when the test left a watch, an autorun,
- * an `observe`, an `onRowChange` listener, or an Effect program's watch
+ * a `Source.observe`, a `Collection.onRowChange` listener, or an Effect program's watch
  * running, or a stage neither applied nor dropped, naming each by its label
- * (a watch's `name`, or `watch`, `autorun`, `onRowChange`, or `stage`), and
- * stops each first, dropping a stage, so nothing runs on into the next test. A React component's subscription is
- * not counted. Dispose also throws when the realm is not at rest, which only
- * a fault in Pinna leaves it.
+ * (a watch's `name`, or `Realm.watch`, `Realm.autorun`, `Collection.onRowChange`, or `stage`). It
+ * disposes the realm first, with `Realm.dispose`, so nothing runs on into the
+ * next test and a test that keeps using the realm throws at the use. A React
+ * component's subscription is not reported. Dispose also throws when the
+ * realm is not at rest, which only a fault in Pinna leaves it.
  */
 export const testRealm = (options?: RealmOptions): Realm & Disposable => {
   const realm = createRealm(options);
-  const core: Graph = (realm as ObservableRealm).core;
-  const running = new Set<{ readonly label: string; readonly stop: () => void }>();
+  const owner = realm as ObservableRealm;
+  const core: Graph = owner.core;
+  const watches = new Set<{ readonly label: string; readonly stop: () => void }>();
   const watchInCore = core.watch.bind(core);
-  const count = (label: string, stop: () => void): (() => void) => {
-    const entry = {
-      label,
-      stop: () => {
-        stop();
-        running.delete(entry);
-      },
-    };
-    running.add(entry);
-    return entry.stop;
-  };
   // The test realm's own graph counts its watches; every other graph keeps
-  // the class's `watch`, so the count costs an application nothing.
+  // the class's `Realm.watch`, so the count costs an application nothing.
   core.watch = ((select, effect, watchOptions) => {
     const stop = watchInCore(select, effect, watchOptions);
-    // Autorun registers its complete stop function, which also runs cleanup.
-    // A watch named "autorun" still has an effect and is counted here.
-    return effect === undefined && watchOptions?.label === "autorun"
-      ? stop
-      : count(watchOptions?.label ?? "watch", stop);
+    // An autorun is registered with the realm, with its complete stop. A
+    // watch named "autorun" still has an effect and is counted here.
+    if (effect === undefined && watchOptions?.label === "autorun") {
+      return stop;
+    }
+    const entry = {
+      label: watchOptions?.label ?? "watch",
+      stop: () => {
+        stop();
+        watches.delete(entry);
+      },
+    };
+    watches.add(entry);
+    return entry.stop;
   }) as Graph["watch"];
-  (realm as ObservableRealm).running = count;
   return withDispose(realm, () => {
-    const problems = [...running].map((entry) => `${entry.label} still running`);
-    // Stopped here, so a failed test leaves nothing running for the next one.
-    for (const entry of running) {
+    if (owner.status !== "open") {
+      return;
+    }
+    const problems = [...owner.registered, ...watches].map(
+      (entry) => `${entry.label} still running`,
+    );
+    const open = openParts(realm);
+    if (open.length === 0) {
+      disposeRealm(realm);
+    } else {
+      // Not at rest, so `Realm.dispose` would refuse: stop what the realm
+      // registered by hand, so a failed test leaves nothing running.
+      for (const entry of [...owner.registered].reverse()) {
+        try {
+          entry.stop();
+        } catch {
+          // Reported above as still running.
+        }
+      }
+    }
+    // Unlinked too, so the test's sources keep no observer.
+    for (const entry of watches) {
       try {
         entry.stop();
       } catch {
-        // Reported below as still running.
+        // Reported above as still running.
       }
     }
-    problems.push(...openParts(realm));
+    problems.push(...open);
     if (problems.length > 0) {
-      throw new Error(`The test realm is not at rest: ${problems.join("; ")}.`);
+      throw new PinnaUsageError(
+        "pinna/test-realm-not-at-rest",
+        `The test realm is not at rest: ${problems.join("; ")}.`,
+      );
     }
   });
 };
 
 /**
- * The keys `collection` keeps something for: a row, or the box and computed
+ * The keys `Collection.make` keeps something for: a row, or the box and computed
  * value a reader made for a key. Every one is a present key unless Pinna
  * leaks, so a test that removes rows checks that this set equals the keys
  * it expects to remain. A copy, taken when called. Throws for a value that
@@ -139,7 +159,10 @@ export const testRealm = (options?: RealmOptions): Realm & Disposable => {
  */
 export const retainedKeys = <Key, Value>(collection: Collection<Key, Value>): ReadonlySet<Key> => {
   if (!(collection instanceof KeyedCollection)) {
-    throw new Error("pinna: retainedKeys takes a collection Pinna made");
+    throw new PinnaUsageError(
+      "pinna/not-made-by-pinna",
+      "pinna: retainedKeys takes a collection Pinna made",
+    );
   }
   return (collection as KeyedCollection<Key, Value>).retainedKeys();
 };

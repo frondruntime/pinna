@@ -95,9 +95,9 @@ const reactPoints: ReadonlyArray<{
 // The core section: Pinna without Effect, every job in one sample.
 const apiHtml = await highlightSample(counterSample, "api");
 
-// Every value export, by package. Source: `packages/pinna/src/index.ts`,
-// `packages/pinna-react/src/index.ts`, and `packages/pinna-effect/src/index.ts`, which re-exports
-// every name of pinna and is counted for the names it adds; types are not counted. The export note
+// Every module member and hook, by package. Source: `packages/pinna/src/modules`,
+// `packages/pinna-react/src/index.ts`, and `packages/pinna-effect/src/modules`, which hold every
+// member of pinna's and are counted for the members they add; types and errors are not counted. The export note
 // below counts from here.
 type ApiPackage = "pinna" | "pinna-react" | "pinna-effect";
 const apiPackages: ReadonlyArray<{
@@ -109,23 +109,34 @@ const apiPackages: ReadonlyArray<{
     name: "pinna",
     about: "The realm, boxes, computed values, collections, models, updates, and watchers. It needs no Effect.",
     names: [
-      "createRealm",
-      "atom",
-      "box",
-      "collection",
-      "onRowChange",
-      "computed",
-      "computedFunction",
-      "Model",
-      "update",
-      "observe",
-      "watch",
-      "autorun",
-      "onObserved",
-      "untracked",
-      "isTracking",
-      "reconcile",
-      "inspect",
+      "Realm.make",
+      "Atom.make",
+      "Box.make",
+      "Collection.make",
+      "Collection.onRowChange",
+      "Computed.make",
+      "Computed.fn",
+      "Model.Class",
+      "Realm.update",
+      "Source.observe",
+      "Realm.watch",
+      "Realm.autorun",
+      "Source.onObserved",
+      "Realm.untracked",
+      "Realm.isTracking",
+      "Collection.reconcile",
+      "Source.inspect",
+      "Source.peek",
+      "Realm.dispose",
+      "Realm.status",
+      "Stage.make",
+      "Stage.update",
+      "Stage.read",
+      "Stage.realmRead",
+      "Stage.apply",
+      "Stage.drop",
+      "Stage.status",
+      "Stage.inspect",
     ],
   },
   {
@@ -137,20 +148,22 @@ const apiPackages: ReadonlyArray<{
     name: "pinna-effect",
     about: "Models on Effect Schema, and Effect programs that stop with their scope. It re-exports every name of `pinna`.",
     names: [
-      "schemaBox",
-      "SchemaModel",
-      "BoxField",
-      "CollectionField",
-      "schemaCollection",
-      "FromContext",
-      "decode",
-      "reconcileSchema",
+      "Box.schema",
+      "Model.Schema",
+      "Model.boxField",
+      "Model.collectionField",
+      "Collection.schema",
+      "Model.context",
+      "Model.decode",
+      "Collection.reconcile",
       "RealmService",
-      "watchScoped",
-      "changes",
-      "observeScoped",
-      "fromStream",
-      "whileObserved",
+      "Program.watchScoped",
+      "Realm.scoped",
+      "Stage.scoped",
+      "Program.changes",
+      "Source.observeScoped",
+      "Program.fromStream",
+      "Program.whileObserved",
     ],
   },
 ];
@@ -171,12 +184,12 @@ const effectPoints: ReadonlyArray<{
   },
   {
     title: "The realm is a service.",
-    body: "`decode` hands the realm to what it makes as `RealmService`, and programs read the same service.",
+    body: "`Model.decode` hands the realm to what it makes as `RealmService`, and programs read the same service.",
     test: "packages/pinna-effect/test/effect.test.ts",
   },
   {
     title: "Programs stop with their scope.",
-    body: "`watchScoped` runs an effect on each change, `fromStream` turns a stream into a value, and both stop when their scope closes.",
+    body: "`Program.watchScoped` runs an effect on each change, `Program.fromStream` turns a stream into a value, and both stop when their scope closes.",
     test: "packages/pinna-effect/test/effect.test.ts",
   },
 ];
@@ -635,6 +648,13 @@ const otherSuites: ReadonlyArray<OtherSuite> = [
                   <strong>One set of adapters</strong>
                   <span>
                     Every library's adapter was written for these benches.
+                  </span>
+                </li>
+                <li>
+                  <strong>Two dates</strong>
+                  <span>
+                    Pinna and alien-signals on Node and Hermes are from 0.2.0; the other cells
+                    are earlier runs.
                   </span>
                 </li>
                 <li>

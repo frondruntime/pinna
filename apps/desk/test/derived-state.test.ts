@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { computed, onRowChange, type Read, untracked, update } from "@frondruntime/pinna";
+import { Collection, Computed, type Read, Realm } from "@frondruntime/pinna";
 import { held, record, testRealm } from "@frondruntime/pinna/testing";
 import { Effect } from "effect";
 import { decimal } from "../src/client/decimal.ts";
@@ -11,7 +11,7 @@ test("collection writes alone keep sorted and filtered trades, counts, selection
   using realm = testRealm();
   using book = new TradeBook(
     realm,
-    computed(realm, () => 0),
+    Computed.make(realm, () => 0),
   );
   book.setSort({ column: "notional", direction: "ascending" });
   book.setFilter("done");
@@ -37,7 +37,7 @@ test("collection writes alone keep sorted and filtered trades, counts, selection
     pound: read(book.positions.ledger("GBPUSD").$aggregate),
   });
   using receipts = record(realm, select);
-  update(realm, (_read, write) => write.replaceAll(book.$trades, [first, second, pending]));
+  Realm.update(realm, (_read, write) => write.replaceAll(book.$trades, [first, second, pending]));
   expect(receipts.values).toHaveLength(1);
   expect(receipts.values[0]).toEqual({
     rows: [first, second, pending],
@@ -52,7 +52,7 @@ test("collection writes alone keep sorted and filtered trades, counts, selection
   });
   book.setSelection(["first", "second"]);
   const beforeCorrection = receipts.values.length;
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     write.upsert(book.$trades, corrected);
     write.remove(book.$trades, "second");
   });
@@ -69,15 +69,15 @@ test("collection writes alone keep sorted and filtered trades, counts, selection
     pound: { count: 1, net: decimal("-4"), cost: decimal("-6") },
   });
   const beforeEqual = receipts.values.length;
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     write.upsert(book.$trades, { ...corrected });
     write.remove(book.$trades, "absent");
     write.replaceAll(book.$trades, [{ ...corrected }, { ...pending }]);
   });
   expect(receipts.values).toHaveLength(beforeEqual);
-  update(realm, (_read, write) => write.replaceAll(book.$trades, [second]));
+  Realm.update(realm, (_read, write) => write.replaceAll(book.$trades, [second]));
   expect(receipts.values).toHaveLength(beforeEqual + 1);
-  expect(untracked(realm, select)).toEqual({
+  expect(Realm.untracked(realm, select)).toEqual({
     rows: [second],
     keys: ["second"],
     window: ["second"],
@@ -89,20 +89,20 @@ test("collection writes alone keep sorted and filtered trades, counts, selection
     pound: { count: 0, net: decimal("0"), cost: decimal("0") },
   });
   book.setFilter("");
-  update(realm, (_read, write) => write.upsert(book.$trades, pending));
-  expect(untracked(realm, (read) => read(book.$keys))).toEqual(["pending", "second"]);
-  update(realm, (_read, write) => write.replaceAll(book.$trades, []));
-  expect(untracked(realm, (read) => [read(book.$heldCount), read(book.$matchingCount)])).toEqual([
-    0, 0,
-  ]);
-  expect(untracked(realm, (read) => read(book.$positionSymbols))).toEqual([]);
+  Realm.update(realm, (_read, write) => write.upsert(book.$trades, pending));
+  expect(Realm.untracked(realm, (read) => read(book.$keys))).toEqual(["pending", "second"]);
+  Realm.update(realm, (_read, write) => write.replaceAll(book.$trades, []));
+  expect(
+    Realm.untracked(realm, (read) => [read(book.$heldCount), read(book.$matchingCount)]),
+  ).toEqual([0, 0]);
+  expect(Realm.untracked(realm, (read) => read(book.$positionSymbols))).toEqual([]);
 });
 
 test("failed collection writes roll back the rows and every derived structure, including caught listener failures", async () => {
   using realm = testRealm();
   using book = new TradeBook(
     realm,
-    computed(realm, () => 0),
+    Computed.make(realm, () => 0),
   );
   const first = await Effect.runPromise(decodeTrade({ ...wireTrade("first"), status: "done" }));
   const refused = await Effect.runPromise(
@@ -117,32 +117,32 @@ test("failed collection writes roll back the rows and every derived structure, i
     selection: read(book.$selection),
     positions: book.positions.ledgers.map((ledger) => read(ledger.$aggregate)),
   });
-  update(realm, (_read, write) => write.upsert(book.$trades, first));
+  Realm.update(realm, (_read, write) => write.upsert(book.$trades, first));
   book.setSelection([first.id]);
   book.setFilter("done");
-  const before = untracked(realm, select);
+  const before = Realm.untracked(realm, select);
   using receipts = record(realm, select);
   expect(() =>
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.remove(book.$trades, first.id);
       write.upsert(book.$trades, refused);
       throw new Error("failed trade batch");
     }),
   ).toThrow("failed trade batch");
-  expect(untracked(realm, select)).toEqual(before);
+  expect(Realm.untracked(realm, select)).toEqual(before);
   expect(receipts.values).toEqual([]);
   using _listener = held(
-    onRowChange(book.$trades, ({ before, after }) => {
+    Collection.onRowChange(book.$trades, ({ before, after }) => {
       if (after?.id === refused.id || (before?.id === first.id && after === undefined))
         throw new Error("refused trade write");
     }),
   );
   // The rejecting listener runs after both application listeners have written.
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     expect(() => write.upsert(book.$trades, refused)).toThrow("refused trade write");
     expect(() => write.remove(book.$trades, first.id)).toThrow("refused trade write");
     expect(() => write.replaceAll(book.$trades, [refused])).toThrow("refused trade write");
   });
-  expect(untracked(realm, select)).toEqual(before);
+  expect(Realm.untracked(realm, select)).toEqual(before);
   expect(receipts.values).toEqual([]);
 });

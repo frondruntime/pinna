@@ -22,18 +22,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { BoxCell } from "@frondruntime/pinna/internal";
-import { observerCount } from "@frondruntime/pinna-core";
-import {
-  type Box,
-  computed,
-  createRealm,
-  onObserved,
-  schemaBox,
-  untracked,
-  update,
-  watch,
-} from "@frondruntime/pinna-effect";
+import { Box, Computed, Realm, Source } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 import { act, Component, type ReactNode, StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -73,8 +62,7 @@ const kept = async (refs: ReadonlyArray<WeakRef<object>>): Promise<number> => {
   return refs.filter((ref) => ref.deref() !== undefined).length;
 };
 
-const observersOf = <Value,>(box: Box<Value>): number =>
-  observerCount((box as BoxCell<Value>).source);
+const observersOf = <Value,>(box: Box<Value>): number => Source.inspect(box).observers;
 
 const quietly = <Result,>(run: () => Result): Result => {
   const original = console.error;
@@ -103,12 +91,12 @@ describe("the harness", () => {
 
 describe("the graph", () => {
   test("computed values read untracked are collected and link nothing", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const refs = repeat(rounds, () => {
       const marker = new Marker();
-      const $sum = computed(realm, (read) => read($count) + marker.payload.length);
-      untracked(realm, (read) => read($sum));
+      const $sum = Computed.make(realm, (read) => read($count) + marker.payload.length);
+      Realm.untracked(realm, (read) => read($sum));
       return [marker];
     });
     expect(observersOf($count)).toBe(0);
@@ -116,20 +104,20 @@ describe("the graph", () => {
   });
 
   test("stopped watches release their select, their effect, and the computed values they read", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const refs = repeat(rounds, () => {
       const select = new Marker();
       const effect = new Marker();
-      const $sum = computed(realm, (read) => read($count) + select.payload.length);
-      const stop = watch(
+      const $sum = Computed.make(realm, (read) => read($count) + select.payload.length);
+      const stop = Realm.watch(
         realm,
         (read) => read($sum),
         () => {
           effect.payload[0] = 1;
         },
       );
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write($count, read($count) + 1);
       });
       stop();
@@ -140,14 +128,14 @@ describe("the graph", () => {
   });
 
   test("a run that reads many values holds none of them once a shorter run follows", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const refs = repeat(1, () => {
       const markers = Array.from({ length: rounds }, () => new Marker());
       const sums = markers.map((marker) =>
-        computed(realm, (read) => read($count) + marker.payload.length),
+        Computed.make(realm, (read) => read($count) + marker.payload.length),
       );
-      const stop = watch(
+      const stop = Realm.watch(
         realm,
         (read) => sums.reduce((total, $sum) => total + read($sum), 0),
         () => {},
@@ -155,7 +143,7 @@ describe("the graph", () => {
       stop();
       return markers;
     });
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($count),
       () => {},
@@ -166,21 +154,21 @@ describe("the graph", () => {
   });
 
   test("a watch stopped while another is due is not held by the watchers due", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const refs = repeat(1, () => {
       const markers = Array.from({ length: rounds }, () => new Marker());
-      const stopFirst = watch(
+      const stopFirst = Realm.watch(
         realm,
         (read) => read($count),
         () => {},
       );
-      const stopSecond = watch(
+      const stopSecond = Realm.watch(
         realm,
         (read) => read($count) + markers.length,
         () => {},
       );
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($count, 1);
         stopFirst();
       });
@@ -192,10 +180,10 @@ describe("the graph", () => {
   });
 
   test("cleanups that ran are released while their hook stays", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
     const refs: Array<WeakRef<object>> = [];
-    onObserved($count, () => {
+    Source.onObserved($count, () => {
       const marker = new Marker();
       refs.push(new WeakRef(marker));
       return () => {
@@ -203,7 +191,7 @@ describe("the graph", () => {
       };
     });
     for (let round = 0; round < rounds; round++) {
-      watch(
+      Realm.watch(
         realm,
         (read) => read($count),
         () => {},
@@ -214,9 +202,9 @@ describe("the graph", () => {
   });
 
   test("removed onObserved hooks release their start and their cleanup", async () => {
-    const realm = createRealm();
-    const $count = schemaBox(realm, Schema.Number, 0);
-    const stop = watch(
+    const realm = Realm.make();
+    const $count = Box.schema(realm, Schema.Number, 0);
+    const stop = Realm.watch(
       realm,
       (read) => read($count),
       () => {},
@@ -224,7 +212,7 @@ describe("the graph", () => {
     const refs = repeat(rounds, () => {
       const start = new Marker();
       const cleanup = new Marker();
-      onObserved($count, () => {
+      Source.onObserved($count, () => {
         start.payload[0] = 1;
         return () => {
           cleanup.payload[0] = 1;
@@ -238,10 +226,10 @@ describe("the graph", () => {
 
   test("realms nothing holds are collected, with their watches and hooks still active", async () => {
     const refs = repeat(rounds, () => {
-      const realm = createRealm();
-      const $count = schemaBox(realm, Schema.Number, 0);
-      onObserved($count, () => () => {});
-      watch(
+      const realm = Realm.make();
+      const $count = Box.schema(realm, Schema.Number, 0);
+      Source.onObserved($count, () => () => {});
+      Realm.watch(
         realm,
         (read) => read($count),
         () => {},
@@ -254,14 +242,14 @@ describe("the graph", () => {
 
 describe("updates", () => {
   test("finished updates keep no old value", async () => {
-    const realm = createRealm();
-    const $value = schemaBox(realm, Schema.Unknown, null);
+    const realm = Realm.make();
+    const $value = Box.schema(realm, Schema.Unknown, null);
     const refs = repeat(rounds, () => {
       const marker = new Marker();
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($value, marker);
       });
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($value, null);
       });
       return [marker];
@@ -270,32 +258,32 @@ describe("updates", () => {
   });
 
   test("rolled-back updates keep nothing they wrote", async () => {
-    const realm = createRealm();
-    const $value = schemaBox(realm, Schema.Unknown, null);
+    const realm = Realm.make();
+    const $value = Box.schema(realm, Schema.Unknown, null);
     const refs = repeat(rounds, () => {
       const marker = new Marker();
       expect(() =>
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($value, marker);
           throw new Error("rolled back");
         }),
       ).toThrow("rolled back");
       return [marker];
     });
-    expect(untracked(realm, (read) => read($value))).toBeNull();
+    expect(Realm.untracked(realm, (read) => read($value))).toBeNull();
     expect(await kept(refs)).toBeLessThanOrEqual(noise);
   });
 
   test("an update that wrote many boxes keeps none of their old values", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const refs = (() => {
       const boxes: Array<Box<unknown>> = [];
       const made = repeat(rounds, () => {
         const marker = new Marker();
-        boxes.push(schemaBox(realm, Schema.Unknown, marker));
+        boxes.push(Box.schema(realm, Schema.Unknown, marker));
         return [marker];
       });
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         for (const $box of boxes) {
           write($box, null);
         }
@@ -303,21 +291,21 @@ describe("updates", () => {
       return made;
     })();
     expect(await kept(refs)).toBeLessThanOrEqual(noise);
-    update(realm, () => undefined);
+    Realm.update(realm, () => undefined);
   });
 
   test("a rolled-back nested update keeps none of the old values it recorded", async () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const refs = (() => {
       const boxes: Array<Box<unknown>> = [];
       const made = repeat(rounds, () => {
         const marker = new Marker();
-        boxes.push(schemaBox(realm, Schema.Unknown, marker));
+        boxes.push(Box.schema(realm, Schema.Unknown, marker));
         return [marker];
       });
-      update(realm, () => {
+      Realm.update(realm, () => {
         expect(() =>
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             for (const $box of boxes) {
               write($box, null);
             }
@@ -328,35 +316,35 @@ describe("updates", () => {
       return made;
     })();
     expect(await kept(refs)).toBeLessThanOrEqual(noise);
-    update(realm, () => undefined);
+    Realm.update(realm, () => undefined);
   });
 
   test("draft updates keep neither the old value nor the draft", async () => {
-    const realm = createRealm();
-    const $items = schemaBox(realm, Schema.Array(Schema.Number), [0]);
+    const realm = Realm.make();
+    const $items = Box.schema(realm, Schema.Array(Schema.Number), [0]);
     const refs = repeat(rounds, () => {
-      const old = untracked(realm, (read) => read($items));
-      update(realm, (_read, write) => {
+      const old = Realm.untracked(realm, (read) => read($items));
+      Realm.update(realm, (_read, write) => {
         write.modify($items, (items) => {
           items.push(items.length);
         });
       });
       return [old];
     });
-    expect(untracked(realm, (read) => read($items))).toHaveLength(rounds + 1);
+    expect(Realm.untracked(realm, (read) => read($items))).toHaveLength(rounds + 1);
     expect(await kept(refs)).toBeLessThanOrEqual(noise);
   });
 
   test("closed positions are collected while the portfolio is watched", async () => {
-    const portfolio = new Portfolio(createRealm());
-    const stop = watch(
+    const portfolio = new Portfolio(Realm.make());
+    const stop = Realm.watch(
       portfolio.realm,
       (read) => read(portfolio.$totalLabel),
       () => {},
     );
     const refs = repeat(rounds, () => {
       portfolio.load(positionsJson(3));
-      const response = untracked(portfolio.realm, (read) => read(portfolio.$response));
+      const response = Realm.untracked(portfolio.realm, (read) => read(portfolio.$response));
       portfolio.close("p0");
       return [response, response.items[0] as object];
     });
@@ -366,8 +354,8 @@ describe("updates", () => {
 });
 
 describe("React", () => {
-  const realm = createRealm();
-  const $shared = schemaBox(realm, Schema.Number, 0);
+  const realm = Realm.make();
+  const $shared = Box.schema(realm, Schema.Number, 0);
   const refs: Array<WeakRef<object>> = [];
 
   /** Reads `$shared` both ways, through a marker only this mount holds. */
@@ -405,14 +393,14 @@ describe("React", () => {
     const root = createRoot(container);
     act(() => root.render(<RealmProvider realm={realm}>{element}</RealmProvider>));
     act(() =>
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write($shared, read($shared) + 1);
       }),
     );
     act(() => root.unmount());
   };
 
-  test("1,000 mounts and unmounts leave no link and keep no marker", async () => {
+  test("1,000 mounts and unmounts leave no observer and keep no marker", async () => {
     refs.length = 0;
     for (let round = 0; round < 1000; round++) {
       cycle(<Reader />);
@@ -422,7 +410,7 @@ describe("React", () => {
     expect(await kept(refs)).toBeLessThanOrEqual(noise);
   });
 
-  test("Strict Mode mounts leave no link and keep no marker", async () => {
+  test("Strict Mode mounts leave no observer and keep no marker", async () => {
     refs.length = 0;
     for (let round = 0; round < 100; round++) {
       cycle(
@@ -435,7 +423,7 @@ describe("React", () => {
     expect(await kept(refs)).toBeLessThanOrEqual(noise);
   });
 
-  test("discarded renders leave no link and keep no marker", async () => {
+  test("discarded renders leave no observer and keep no marker", async () => {
     refs.length = 0;
     quietly(() => {
       for (let round = 0; round < 100; round++) {
@@ -453,8 +441,8 @@ describe("React", () => {
   });
 
   test("switching a component to another realm unlinks the first", () => {
-    const other = createRealm();
-    const $other = schemaBox(other, Schema.Number, 0);
+    const other = Realm.make();
+    const $other = Box.schema(other, Schema.Number, 0);
     function One({ $value }: { readonly $value: Box<number> }) {
       return <p>{useValue($value)}</p>;
     }

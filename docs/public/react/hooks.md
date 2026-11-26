@@ -27,7 +27,7 @@ A component's own state is a box in the provider's realm.
 
 <!-- region react.tsx#local -->
 
-An event handler reads through `untracked` and writes through `update`.
+An event handler reads through `Realm.untracked` and writes through `Realm.update`.
 
 <!-- region react.tsx#handler -->
 
@@ -43,20 +43,22 @@ observables they are handed.
   they are.
 - A read in a render body does not type-check: render has no `read`. The
   hooks are the only way in.
-- Prefer `useValue` and `useValues`. `useSelect` costs a layout effect per
-  render; a value several components need is a computed value on the model.
+- Prefer `useValue` and `useValues`. `useSelect` runs its function on every
+  render and a layout effect on every render with a new function; a value
+  several components need is a computed value on the model.
 - `useValues` compares the input array's elements on each render and keeps
   its own copy when they change. Replacing or removing an observable in the
   same input array takes effect on the next render, so reads and the
-  subscription follow the same observables.
+  subscription follow the same observables. The array keeps its identity
+  when equal values move to other observables.
 - To rerender less, move the read into a small component under `memo`. For
   control flow, use plain JSX. `memo` skips a render only when every prop
   is the same as before, so the parent passes values it does not rebuild
   each render. See [Render scopes](#render-scopes).
 - A list of a collection reads `keys` and hands each row its key. Reading
   `rows` rerenders the whole list when any row changes.
-- In an event handler, read inside `untracked` and write through a method
-  that calls `update`.
+- In an event handler, read inside `Realm.untracked` and write through a method
+  that calls `Realm.update`.
 - A slow render after a write reads a deferred value:
   `useDeferredValue(useValue($x))`. A `startTransition` around the write
   changes nothing, since React renders a change of an outside store as a
@@ -88,9 +90,35 @@ the nearest fallback in place of the content on screen. A component that
 suspends on a deferred value keeps the content on screen until the next one
 loads.
 
-Under `<Activity mode="hidden">`, the hooks unsubscribe: an `onObserved` hook
+Under `<Activity mode="hidden">`, the hooks unsubscribe: a `Source.onObserved` hook
 stops, and a write renders nothing there. Shown again, the component
 subscribes and renders the current value.
+
+## A render and its commit
+
+A render reads; only a render React commits changes what the component
+follows. React may render a component and throw the render away: a
+transition that suspends and is then replaced, or a render that a write
+interrupted.
+
+- A hook returns what React's `useSyncExternalStore` returns, and React
+  compares that value before it commits a concurrent render. A write during
+  the render makes React render again, so one commit never shows one source
+  at two values.
+- Each render captures its result and what it read, with nothing observed
+  and no `Source.onObserved` hook started. A render React throws away leaves
+  the mounted component's subscriptions as they were: a source it observes
+  stays observed, so a `Computed.fromPromise` value keeps its loaded value
+  and starts no second request.
+- The commit moves the subscriptions to what the committed render read:
+  `useValue` when React subscribes, `useValues` and `useSelect` in a layout
+  effect. A source both renders read stays observed, and its hook
+  neither stops nor starts.
+- With nothing written, React's two reads of a snapshot return the same
+  reference, also for a computed value that builds a new object on each run.
+- When what a `useSelect` function reads changes and its result stays equal
+  (`Object.is`), the component does not render, and the subscriptions move
+  to what the function read last.
 
 ## Render scopes
 

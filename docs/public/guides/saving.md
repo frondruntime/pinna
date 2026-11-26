@@ -16,7 +16,7 @@ from the boxes that are saved and from nothing else. `$hovered` is shown on
 screen and never saved: `$saved` does not read it, so a write to it neither
 recomputes `$saved` nor runs the watch.
 
-The constructor and `flush` read `$saved` through `untracked`, which reads
+The constructor and `flush` read `$saved` through `Realm.untracked`, which reads
 without subscribing.
 
 <!-- region saving.ts#model -->
@@ -27,7 +27,7 @@ The workspace is made once, in module code.
 
 ## Rules
 
-- Save a `computed` that builds the stored text, not the boxes one by one.
+- Save a `Computed.make` that builds the stored text, not the boxes one by one.
   The watch runs only when that text changes, so state the screen shows
   but the save leaves out, such as a hover or a selection, writes nothing to
   the storage.
@@ -47,6 +47,15 @@ The workspace is made once, in module code.
 - Catch a storage error in `flush` and write it to a box. `flush` runs from a
   microtask, where a throw reaches no caller; as state, the screen shows it.
   The last saved text stays as it was, so the next change saves again.
+- Save state a visible stage writes from the records of `Realm.onUpdate`,
+  or from a value a `Realm.update` recipe read and the code stores after
+  that update returns. `$saved` is a tracked place, and a tracked place
+  reads the shown values, so while a stage shows a guess the stored text
+  holds the guess; a recipe's `read` and a record hold the confirmed
+  values alone. A stored guess that later drops is a value nothing
+  confirmed. The storage write itself runs after the update, never inside
+  its recipe: an update that throws undoes its writes, not the save
+  ([Updates](../state/updates.md)).
 - Dispose with `using` or `[Symbol.dispose]()`: it stops the watch, then
   writes a save still queued, at once. A workspace made right after the
   dispose loads what it saved, and a test realm's dispose finds no watch
@@ -69,7 +78,7 @@ check.
 
 ## See also
 
-- [Reacting](../state/reacting.md): `watch` and when its effect runs.
+- [Reacting](../state/reacting.md): `Realm.watch` and when its effect runs.
 - [Updates](../state/updates.md): an effect that cannot be taken back runs after the update.
 - [Boxes and computed](../state/boxes.md): a `Model` and its `$` fields.
 - [Testing](./testing.md): `testRealm`, and the dispose that finds a watch still running.

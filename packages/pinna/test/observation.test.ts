@@ -1,32 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import {
-  atom,
-  autorun,
-  box,
-  computed,
-  computedFunction,
-  createRealm,
-  inspect,
-  isTracking,
-  observe,
-  onObserved,
-  type Realm,
-  untracked,
-  update,
-  type Write,
-  watch,
-} from "../src/index.ts";
+import { Atom, Box, Computed, Realm, Source, type Write } from "../src/index.ts";
 
 /**
- * Observation: when `onObserved` hooks run, holding an observable observed
- * with `observe`, and asking whether reads are tracked.
+ * Observation: when `Source.onObserved` hooks run, holding an observable observed
+ * with `Source.observe`, and asking whether reads are tracked.
  */
 
 /** A box whose hook logs "start" and "stop". */
 const hooked = (realm: Realm) => {
-  const $value = box(realm, 0);
+  const $value = Box.make(realm, 0);
   const events: Array<string> = [];
-  onObserved($value, () => {
+  Source.onObserved($value, () => {
     events.push("start");
     return () => events.push("stop");
   });
@@ -35,13 +19,13 @@ const hooked = (realm: Realm) => {
 
 /** A watcher that rewrites its own box until the round limit stops it. */
 const runaway = (realm: Realm) => {
-  const $count = box(realm, 0);
-  const stop = watch(
+  const $count = Box.make(realm, 0);
+  const stop = Realm.watch(
     realm,
     (read) => read($count),
     (count) => {
       if (count > 0 && count < 1000) {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($count, count + 1);
         });
       }
@@ -55,15 +39,15 @@ const runaway = (realm: Realm) => {
 
 describe("onObserved inside an update", () => {
   test("an observer lost and gained within one update fires nothing", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
-    const first = observe($value);
+    const first = Source.observe($value);
     expect(events).toEqual(["start"]);
 
     let second: () => void = () => {};
-    update(realm, () => {
+    Realm.update(realm, () => {
       first();
-      second = observe($value);
+      second = Source.observe($value);
     });
 
     expect(events).toEqual(["start"]);
@@ -72,12 +56,12 @@ describe("onObserved inside an update", () => {
   });
 
   test("a gain fires once, after the recipe returns", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
     let release: () => void = () => {};
 
-    update(realm, () => {
-      release = observe($value);
+    Realm.update(realm, () => {
+      release = Source.observe($value);
       events.push("recipe ends");
     });
 
@@ -86,33 +70,33 @@ describe("onObserved inside an update", () => {
   });
 
   test("a gain and loss within one update fires nothing", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
 
-    update(realm, () => {
-      observe($value)();
+    Realm.update(realm, () => {
+      Source.observe($value)();
     });
 
     expect(events).toEqual([]);
   });
 
   test("a watcher that drops a source and another that picks it up in one flush fire nothing", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
-    const $left = box(realm, true);
-    const stopLeft = watch(
+    const $left = Box.make(realm, true);
+    const stopLeft = Realm.watch(
       realm,
       (read) => (read($left) ? read($value) : -1),
       () => {},
     );
-    const stopRight = watch(
+    const stopRight = Realm.watch(
       realm,
       (read) => (read($left) ? -1 : read($value)),
       () => {},
     );
     expect(events).toEqual(["start"]);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($left, false);
     });
 
@@ -123,17 +107,17 @@ describe("onObserved inside an update", () => {
   });
 
   test("a hook that writes runs the watchers of what it wrote", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
-    const $loaded = box(realm, false);
-    onObserved($value, () => {
-      update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
+    const $loaded = Box.make(realm, false);
+    Source.onObserved($value, () => {
+      Realm.update(realm, (_read, write) => {
         write($loaded, true);
       });
       return undefined;
     });
     const seen: Array<boolean> = [];
-    const stopLoaded = watch(
+    const stopLoaded = Realm.watch(
       realm,
       (read) => read($loaded),
       (loaded) => {
@@ -142,8 +126,8 @@ describe("onObserved inside an update", () => {
     );
     let release: () => void = () => {};
 
-    update(realm, () => {
-      release = observe($value);
+    Realm.update(realm, () => {
+      release = Source.observe($value);
     });
 
     expect(seen).toEqual([true]);
@@ -152,12 +136,12 @@ describe("onObserved inside an update", () => {
   });
 
   test("a failed update settles against what is observed after it", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
 
     expect(() =>
-      update(realm, () => {
-        observe($value)();
+      Realm.update(realm, () => {
+        Source.observe($value)();
         throw new Error("the recipe fails");
       }),
     ).toThrow("the recipe fails");
@@ -167,15 +151,15 @@ describe("onObserved inside an update", () => {
 
   test("a hook's error inside an update goes to the realm's sink", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $value = box(realm, 0);
-    onObserved($value, () => {
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $value = Box.make(realm, 0);
+    Source.onObserved($value, () => {
       throw new Error("the hook fails");
     });
     let release: () => void = () => {};
 
-    update(realm, () => {
-      release = observe($value);
+    Realm.update(realm, () => {
+      release = Source.observe($value);
     });
 
     expect(errors).toEqual([new Error("the hook fails")]);
@@ -184,31 +168,31 @@ describe("onObserved inside an update", () => {
 
   test("a stop due when the watchers never settle still runs, and a later start runs once", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value, events } = hooked(realm);
     const stopLoop = runaway(realm);
-    const first = observe($value);
+    const first = Source.observe($value);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       first();
       stopLoop.start(write);
     });
     expect(events).toEqual(["start", "stop"]);
 
-    observe($value)();
+    Source.observe($value)();
     expect(events).toEqual(["start", "stop", "start", "stop"]);
     expect(errors.length).toBe(1);
     stopLoop.stop();
   });
 
   test("a start due when the watchers never settle still runs", () => {
-    const realm = createRealm({ onError: () => {} });
+    const realm = Realm.make({ onError: () => {} });
     const { $value, events } = hooked(realm);
     const stopLoop = runaway(realm);
     let release: () => void = () => {};
 
-    update(realm, (_read, write) => {
-      release = observe($value);
+    Realm.update(realm, (_read, write) => {
+      release = Source.observe($value);
       stopLoop.start(write);
     });
     expect(events).toEqual(["start"]);
@@ -219,14 +203,14 @@ describe("onObserved inside an update", () => {
   });
 
   test("a hook added while its source waits to stop does not start", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value } = hooked(realm);
-    const release = observe($value);
+    const release = Source.observe($value);
     const added: Array<string> = [];
 
-    update(realm, () => {
+    Realm.update(realm, () => {
       release();
-      onObserved($value, () => {
+      Source.onObserved($value, () => {
         added.push("start");
         return () => added.push("stop");
       });
@@ -236,19 +220,19 @@ describe("onObserved inside an update", () => {
   });
 
   test("a hook added while its source is lost and gained starts once the update ends", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
-    const first = observe($value);
+    const first = Source.observe($value);
     const added: Array<string> = [];
     let second: () => void = () => {};
 
-    update(realm, () => {
+    Realm.update(realm, () => {
       first();
-      onObserved($value, () => {
+      Source.onObserved($value, () => {
         added.push("start");
         return () => added.push("stop");
       });
-      second = observe($value);
+      second = Source.observe($value);
     });
 
     expect(events).toEqual(["start"]);
@@ -258,24 +242,24 @@ describe("onObserved inside an update", () => {
   });
 
   test("a memo read by two watchers made in one update computes once", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     let runs = 0;
-    const double = computedFunction(realm, (_read, value: number) => {
+    const double = Computed.fn(realm, (_read, value: number) => {
       runs++;
       return value * 2;
     });
     const stops: Array<() => void> = [];
 
-    update(realm, () => {
+    Realm.update(realm, () => {
       stops.push(
-        watch(
+        Realm.watch(
           realm,
           (read) => read(double(2)),
           () => {},
         ),
       );
       stops.push(
-        watch(
+        Realm.watch(
           realm,
           (read) => read(double(2)),
           () => {},
@@ -290,11 +274,11 @@ describe("onObserved inside an update", () => {
   });
 
   test("a memo entry made in an update and left unobserved is not kept", () => {
-    const realm = createRealm();
-    const double = computedFunction(realm, (_read, value: number) => value * 2);
+    const realm = Realm.make();
+    const double = Computed.fn(realm, (_read, value: number) => value * 2);
     let made: unknown;
 
-    update(realm, () => {
+    Realm.update(realm, () => {
       made = double(2);
     });
 
@@ -302,11 +286,11 @@ describe("onObserved inside an update", () => {
   });
 
   test("a hook that removes itself while it starts still has its cleanup run", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
     let live = 0;
     let remove: () => void = () => {};
-    remove = onObserved($value, () => {
+    remove = Source.onObserved($value, () => {
       live++;
       remove();
       return () => {
@@ -314,14 +298,14 @@ describe("onObserved inside an update", () => {
       };
     });
 
-    observe($value)();
+    Source.observe($value)();
 
     expect(live).toBe(0);
   });
 
   test("a hook that removes and adds itself back while it starts keeps one cleanup", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
     let live = 0;
     let added = false;
     const hook = (): (() => void) => {
@@ -329,15 +313,15 @@ describe("onObserved inside an update", () => {
       if (!added) {
         added = true;
         remove();
-        remove = onObserved($value, hook);
+        remove = Source.onObserved($value, hook);
       }
       return () => {
         live--;
       };
     };
-    let remove = onObserved($value, hook);
+    let remove = Source.onObserved($value, hook);
 
-    const release = observe($value);
+    const release = Source.observe($value);
     expect(live).toBe(1);
     release();
     expect(live).toBe(0);
@@ -345,34 +329,34 @@ describe("onObserved inside an update", () => {
   });
 
   test("a hook removed by an earlier hook's start does not start", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
     const events: Array<string> = [];
     let removeSecond: () => void = () => {};
-    onObserved($value, () => {
+    Source.onObserved($value, () => {
       removeSecond();
       return undefined;
     });
-    removeSecond = onObserved($value, () => {
+    removeSecond = Source.onObserved($value, () => {
       events.push("start");
       return () => events.push("stop");
     });
 
-    observe($value)();
+    Source.observe($value)();
 
     expect(events).toEqual([]);
   });
 
   test("a hook a settle at the round limit makes due still starts in that flush", () => {
-    const realm = createRealm({ onError: () => {} });
-    const $outer = box(realm, 0);
+    const realm = Realm.make({ onError: () => {} });
+    const $outer = Box.make(realm, 0);
     const { $value, events } = hooked(realm);
-    onObserved($outer, () => observe($value));
+    Source.onObserved($outer, () => Source.observe($value));
     const stopLoop = runaway(realm);
     let release: () => void = () => {};
 
-    update(realm, (_read, write) => {
-      release = observe($outer);
+    Realm.update(realm, (_read, write) => {
+      release = Source.observe($outer);
       stopLoop.start(write);
     });
     expect(events).toEqual(["start"]);
@@ -387,17 +371,17 @@ describe("onObserved inside an update", () => {
   // still ends.
   test("a chain of cleanups, each stopping the next autorun, settles in one flush", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const length = 300;
-    const boxes = Array.from({ length }, () => box(realm, 0));
+    const boxes = Array.from({ length }, () => Box.make(realm, 0));
     const stops = boxes.map(($box) =>
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         read($box);
       }),
     );
     let stopped = 0;
     boxes.forEach(($box, index) => {
-      onObserved($box, () => () => {
+      Source.onObserved($box, () => () => {
         stopped++;
         stops[index + 1]?.();
       });
@@ -410,32 +394,32 @@ describe("onObserved inside an update", () => {
 
   test("hooks that keep starting and stopping each other are stopped and reported", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $first = box(realm, 0);
-    const $second = box(realm, 0);
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $first = Box.make(realm, 0);
+    const $second = Box.make(realm, 0);
     let releaseFirst: () => void = () => {};
     let releaseSecond: () => void = () => {};
     let starts = 0;
-    onObserved($first, () => {
+    Source.onObserved($first, () => {
       starts++;
-      releaseSecond = observe($second);
+      releaseSecond = Source.observe($second);
       return () => releaseSecond();
     });
-    onObserved($second, () => {
+    Source.onObserved($second, () => {
       releaseFirst();
       return () => {
-        releaseFirst = observe($first);
+        releaseFirst = Source.observe($first);
       };
     });
 
-    update(realm, () => {
-      releaseFirst = observe($first);
+    Realm.update(realm, () => {
+      releaseFirst = Source.observe($first);
     });
 
     expect(starts).toBeGreaterThan(1);
     expect(starts).toBeLessThan(1000);
     expect(errors.map(String)).toEqual([
-      "Error: pinna: onObserved hooks did not settle after 100 passes",
+      "PinnaUsageError: pinna: Source.onObserved hooks did not settle after 100 passes",
     ]);
   });
 
@@ -444,7 +428,7 @@ describe("onObserved inside an update", () => {
   // failing run from going on forever.
   test("hooks that each observe a new source are left due and reported", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const cap = 10_000;
     let starts = 0;
     const grow = (): (() => void) | undefined => {
@@ -452,20 +436,20 @@ describe("onObserved inside an update", () => {
       if (starts >= cap) {
         return undefined;
       }
-      const $next = box(realm, 0);
-      onObserved($next, grow);
-      return observe($next);
+      const $next = Box.make(realm, 0);
+      Source.onObserved($next, grow);
+      return Source.observe($next);
     };
-    const $first = box(realm, 0);
-    onObserved($first, grow);
+    const $first = Box.make(realm, 0);
+    Source.onObserved($first, grow);
 
-    update(realm, () => {
-      observe($first);
+    Realm.update(realm, () => {
+      Source.observe($first);
     });
 
     expect({ starts, errors: errors.map(String) }).toEqual({
       starts: 100,
-      errors: ["Error: pinna: onObserved hooks did not settle after 100 passes"],
+      errors: ["PinnaUsageError: pinna: Source.onObserved hooks did not settle after 100 passes"],
     });
   });
 
@@ -475,9 +459,9 @@ describe("onObserved inside an update", () => {
   test("hooks that never settle are reported as hooks when a write begins them and a watcher follows them", () => {
     const run = (writeFirst: boolean) => {
       const errors: Array<unknown> = [];
-      const realm = createRealm({ onError: (error) => errors.push(error) });
-      const $log = box(realm, 0);
-      watch(
+      const realm = Realm.make({ onError: (error) => errors.push(error) });
+      const $log = Box.make(realm, 0);
+      Realm.watch(
         realm,
         (read) => read($log),
         () => {},
@@ -489,27 +473,27 @@ describe("onObserved inside an update", () => {
         if (starts >= cap) {
           return undefined;
         }
-        update(realm, (read, write) => {
+        Realm.update(realm, (read, write) => {
           write($log, read($log) + 1);
         });
-        const $next = box(realm, 0);
-        onObserved($next, grow);
-        return observe($next);
+        const $next = Box.make(realm, 0);
+        Source.onObserved($next, grow);
+        return Source.observe($next);
       };
-      const $first = box(realm, 0);
-      onObserved($first, grow);
-      update(realm, (_read, write) => {
+      const $first = Box.make(realm, 0);
+      Source.onObserved($first, grow);
+      Realm.update(realm, (_read, write) => {
         if (writeFirst) {
           write($log, -1);
         }
-        observe($first);
+        Source.observe($first);
       });
       return errors.map(String);
     };
 
     expect({ observed: run(false), written: run(true) }).toEqual({
-      observed: ["Error: pinna: onObserved hooks did not settle after 100 passes"],
-      written: ["Error: pinna: onObserved hooks did not settle after 100 passes"],
+      observed: ["PinnaUsageError: pinna: Source.onObserved hooks did not settle after 100 passes"],
+      written: ["PinnaUsageError: pinna: Source.onObserved hooks did not settle after 100 passes"],
     });
   });
 
@@ -517,14 +501,14 @@ describe("onObserved inside an update", () => {
   // under their own limit, and are what the report names.
   test("hooks that keep beginning once the watchers reach their limit stop at the hook limit", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $loop = box(realm, 0);
-    watch(
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $loop = Box.make(realm, 0);
+    Realm.watch(
       realm,
       (read) => read($loop),
       (value) => {
         if (value > 0) {
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($loop, value + 1);
           });
         }
@@ -537,20 +521,20 @@ describe("onObserved inside an update", () => {
       if (starts >= cap) {
         return undefined;
       }
-      const $next = box(realm, 0);
-      onObserved($next, grow);
-      return observe($next);
+      const $next = Box.make(realm, 0);
+      Source.onObserved($next, grow);
+      return Source.observe($next);
     };
-    const $first = box(realm, 0);
-    onObserved($first, grow);
+    const $first = Box.make(realm, 0);
+    Source.onObserved($first, grow);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($loop, 1);
-      observe($first);
+      Source.observe($first);
     });
 
     expect(errors.map(String)).toEqual([
-      "Error: pinna: onObserved hooks did not settle after 100 passes",
+      "PinnaUsageError: pinna: Source.onObserved hooks did not settle after 100 passes",
     ]);
     expect(starts).toBeLessThan(cap);
   });
@@ -559,7 +543,7 @@ describe("onObserved inside an update", () => {
   // the rest are left due, and the next flush goes on from there.
   test("a chain of 150 starts is cut off at 100 and goes on at the next flush", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const length = 150;
     let starts = 0;
     const link = (): (() => void) | undefined => {
@@ -567,47 +551,47 @@ describe("onObserved inside an update", () => {
       if (starts >= length) {
         return undefined;
       }
-      const $next = box(realm, 0);
-      onObserved($next, link);
-      return observe($next);
+      const $next = Box.make(realm, 0);
+      Source.onObserved($next, link);
+      return Source.observe($next);
     };
-    const $first = box(realm, 0);
-    onObserved($first, link);
+    const $first = Box.make(realm, 0);
+    Source.onObserved($first, link);
 
-    update(realm, () => {
-      observe($first);
+    Realm.update(realm, () => {
+      Source.observe($first);
     });
     const firstFlush = starts;
-    update(realm, () => {});
+    Realm.update(realm, () => {});
 
     expect({ firstFlush, starts, errors: errors.map(String) }).toEqual({
       firstFlush: 100,
       starts: length,
-      errors: ["Error: pinna: onObserved hooks did not settle after 100 passes"],
+      errors: ["PinnaUsageError: pinna: Source.onObserved hooks did not settle after 100 passes"],
     });
   });
 
   test("a chain of cleanups that each touch one shared hooked source settles", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $shared = box(realm, 0);
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $shared = Box.make(realm, 0);
     let sharedStarts = 0;
-    onObserved($shared, () => {
+    Source.onObserved($shared, () => {
       sharedStarts++;
       return undefined;
     });
     const length = 300;
-    const boxes = Array.from({ length }, () => box(realm, 0));
+    const boxes = Array.from({ length }, () => Box.make(realm, 0));
     const stops = boxes.map(($box) =>
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         read($box);
       }),
     );
     let stopped = 0;
     boxes.forEach(($box, index) => {
-      onObserved($box, () => () => {
+      Source.onObserved($box, () => () => {
         stopped++;
-        observe($shared)();
+        Source.observe($shared)();
         stops[index + 1]?.();
       });
     });
@@ -625,20 +609,20 @@ describe("onObserved inside an update", () => {
   // hook the user wrote beginning, so the chain still only runs cleanups.
   test("a chain of cleanups that each read a memo settles", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const label = computedFunction(realm, (_read, index: number) => `item ${index}`);
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const label = Computed.fn(realm, (_read, index: number) => `item ${index}`);
     const length = 300;
-    const boxes = Array.from({ length }, () => box(realm, 0));
+    const boxes = Array.from({ length }, () => Box.make(realm, 0));
     const stops = boxes.map(($box) =>
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         read($box);
       }),
     );
     let stopped = 0;
     boxes.forEach(($box, index) => {
-      onObserved($box, () => () => {
+      Source.onObserved($box, () => () => {
         stopped++;
-        untracked(realm, (read) => read(label(index)));
+        Realm.untracked(realm, (read) => read(label(index)));
         stops[index + 1]?.();
       });
     });
@@ -649,10 +633,10 @@ describe("onObserved inside an update", () => {
   });
 
   test("outside an update a hook fires at once", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
 
-    const release = observe($value);
+    const release = Source.observe($value);
     expect(events).toEqual(["start"]);
     release();
     expect(events).toEqual(["start", "stop"]);
@@ -664,9 +648,9 @@ describe("onObserved inside an update", () => {
  * what runs.
  */
 const twoHooks = (realm: Realm, failing: "start" | "stop") => {
-  const $value = box(realm, 0);
+  const $value = Box.make(realm, 0);
   const events: Array<string> = [];
-  onObserved($value, () => {
+  Source.onObserved($value, () => {
     events.push("first start");
     if (failing === "start") {
       throw new Error("the first start fails");
@@ -676,7 +660,7 @@ const twoHooks = (realm: Realm, failing: "start" | "stop") => {
       throw new Error("the first stop fails");
     };
   });
-  onObserved($value, () => {
+  Source.onObserved($value, () => {
     events.push("second start");
     return () => events.push("second stop");
   });
@@ -686,10 +670,10 @@ const twoHooks = (realm: Realm, failing: "start" | "stop") => {
 describe("a hook that throws", () => {
   test("outside an update, a failing start does not stop the next hook, and its error is reported", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value, events } = twoHooks(realm, "start");
 
-    const release = observe($value);
+    const release = Source.observe($value);
     expect(events).toEqual(["first start", "second start"]);
     expect(errors).toEqual([new Error("the first start fails")]);
 
@@ -699,12 +683,12 @@ describe("a hook that throws", () => {
 
   test("inside an update, a failing start does not stop the next hook, and its error is reported", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value, events } = twoHooks(realm, "start");
 
     let release: () => void = () => {};
-    update(realm, () => {
-      release = observe($value);
+    Realm.update(realm, () => {
+      release = Source.observe($value);
     });
     expect(events).toEqual(["first start", "second start"]);
     expect(errors).toEqual([new Error("the first start fails")]);
@@ -715,16 +699,16 @@ describe("a hook that throws", () => {
 
   test("outside an update, a failing cleanup does not stop the next, its error is reported, and the hooks start again in step", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value, events } = twoHooks(realm, "stop");
 
-    const release = observe($value);
+    const release = Source.observe($value);
     release();
     expect(events).toEqual(["first start", "second start", "first stop", "second stop"]);
     expect(errors).toEqual([new Error("the first stop fails")]);
 
     events.length = 0;
-    const again = observe($value);
+    const again = Source.observe($value);
     expect(events).toEqual(["first start", "second start"]);
     again();
     expect(events).toEqual(["first start", "second start", "first stop", "second stop"]);
@@ -733,11 +717,11 @@ describe("a hook that throws", () => {
 
   test("inside an update, a failing cleanup does not stop the next, and its error is reported", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value, events } = twoHooks(realm, "stop");
 
-    const release = observe($value);
-    update(realm, () => {
+    const release = Source.observe($value);
+    Realm.update(realm, () => {
       release();
     });
     expect(events).toEqual(["first start", "second start", "first stop", "second stop"]);
@@ -747,32 +731,32 @@ describe("a hook that throws", () => {
   for (const failing of [false, true]) {
     test(`a cleanup that observes again${failing ? " and throws" : ""} leaves the next hook started`, () => {
       const errors: Array<unknown> = [];
-      const realm = createRealm({ onError: (error) => errors.push(error) });
-      const $value = box(realm, 0);
+      const realm = Realm.make({ onError: (error) => errors.push(error) });
+      const $value = Box.make(realm, 0);
       const live = new Set<string>();
       let hold: (() => void) | undefined;
-      onObserved($value, () => {
+      Source.onObserved($value, () => {
         live.add("first");
         return () => {
           live.delete("first");
           if (hold !== undefined) {
             return;
           }
-          hold = observe($value);
+          hold = Source.observe($value);
           if (failing) {
             throw new Error("the first stop fails");
           }
         };
       });
-      onObserved($value, () => {
+      Source.onObserved($value, () => {
         live.add("second");
         return () => live.delete("second");
       });
-      const release = observe($value);
+      const release = Source.observe($value);
 
       release();
       expect(errors).toEqual(failing ? [new Error("the first stop fails")] : []);
-      expect(inspect($value).observers).toBe(1);
+      expect(Source.inspect($value).observers).toBe(1);
       expect([...live].sort()).toEqual(["first", "second"]);
       hold?.();
       expect(live.size).toBe(0);
@@ -781,16 +765,16 @@ describe("a hook that throws", () => {
 
   test("two failing hooks: both errors are reported, in no promised order", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $value = box(realm, 0);
-    onObserved($value, () => {
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $value = Box.make(realm, 0);
+    Source.onObserved($value, () => {
       throw new Error("one");
     });
-    onObserved($value, () => {
+    Source.onObserved($value, () => {
       throw new Error("two");
     });
 
-    const release = observe($value);
+    const release = Source.observe($value);
     expect(errors).toHaveLength(2);
     expect(errors).toContainEqual(new Error("one"));
     expect(errors).toContainEqual(new Error("two"));
@@ -799,27 +783,27 @@ describe("a hook that throws", () => {
 
   test("a hook added to an observed observable reports its error, and its remove still works", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $value = box(realm, 0);
-    const release = observe($value);
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $value = Box.make(realm, 0);
+    const release = Source.observe($value);
     let starts = 0;
-    const remove = onObserved($value, () => {
+    const remove = Source.onObserved($value, () => {
       starts++;
       throw new Error("the start fails");
     });
     expect(errors).toEqual([new Error("the start fails")]);
     remove();
     release();
-    observe($value)();
+    Source.observe($value)();
     expect(starts).toBe(1);
   });
 
   test("removing a started hook reports its cleanup's error", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $value = box(realm, 0);
-    const release = observe($value);
-    const remove = onObserved($value, () => () => {
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $value = Box.make(realm, 0);
+    const release = Source.observe($value);
+    const remove = Source.onObserved($value, () => () => {
       throw new Error("the cleanup fails");
     });
     remove();
@@ -829,7 +813,7 @@ describe("a hook that throws", () => {
   });
 
   test("a reporter that throws does not stop the next hook, and its error is thrown after", () => {
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: () => {
         throw new Error("the reporter fails");
       },
@@ -837,8 +821,8 @@ describe("a hook that throws", () => {
     const { $value, events } = twoHooks(realm, "start");
 
     expect(() =>
-      update(realm, () => {
-        observe($value);
+      Realm.update(realm, () => {
+        Source.observe($value);
       }),
     ).toThrow("the reporter fails");
     expect(events).toEqual(["first start", "second start"]);
@@ -848,41 +832,41 @@ describe("a hook that throws", () => {
 describe("an observe or watch whose hook throws", () => {
   test("observe keeps the observable observed and returns its release", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value, events } = twoHooks(realm, "start");
 
-    const release = observe($value);
+    const release = Source.observe($value);
     expect(errors).toEqual([new Error("the first start fails")]);
-    expect(inspect($value).observers).toBe(1);
+    expect(Source.inspect($value).observers).toBe(1);
 
     release();
-    expect(inspect($value).observers).toBe(0);
+    expect(Source.inspect($value).observers).toBe(0);
     events.length = 0;
-    observe($value)();
+    Source.observe($value)();
     expect(events).toEqual(["first start", "second start", "second stop"]);
   });
 
   test("an autorun keeps every source it read, and its stop function stops them", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const events: Array<string> = [];
-    const $first = box(realm, 0);
-    const $second = box(realm, 0);
-    const $failing = box(realm, 0);
+    const $first = Box.make(realm, 0);
+    const $second = Box.make(realm, 0);
+    const $failing = Box.make(realm, 0);
     for (const [name, $box] of [
       ["first", $first],
       ["second", $second],
     ] as const) {
-      onObserved($box, () => {
+      Source.onObserved($box, () => {
         events.push(`${name} start`);
         return () => events.push(`${name} stop`);
       });
     }
-    onObserved($failing, () => {
+    Source.onObserved($failing, () => {
       throw new Error("the hook fails");
     });
 
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       read($first);
       read($second);
       read($failing);
@@ -890,23 +874,23 @@ describe("an observe or watch whose hook throws", () => {
     expect(errors).toEqual([new Error("the hook fails")]);
     expect(events).toEqual(["first start", "second start"]);
     for (const $box of [$first, $second, $failing]) {
-      expect(inspect($box).observers).toBe(1);
+      expect(Source.inspect($box).observers).toBe(1);
     }
 
     stop();
     expect(events).toEqual(["first start", "second start", "first stop", "second stop"]);
     for (const $box of [$first, $second, $failing]) {
-      expect(inspect($box).observers).toBe(0);
+      expect(Source.inspect($box).observers).toBe(0);
     }
   });
 
   test("a watch whose select reads a failing observable still watches it", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value } = twoHooks(realm, "start");
     const seen: Array<number> = [];
 
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($value),
       (value) => {
@@ -914,105 +898,105 @@ describe("an observe or watch whose hook throws", () => {
       },
     );
     expect(errors).toEqual([new Error("the first start fails")]);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($value, 1);
     });
     expect(seen).toEqual([1]);
 
     stop();
-    expect(inspect($value).observers).toBe(0);
+    expect(Source.inspect($value).observers).toBe(0);
   });
 
   test("an observed computed value keeps the source whose hook failed", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value } = twoHooks(realm, "start");
-    const $double = computed(realm, (read) => read($value) * 2);
+    const $double = Computed.make(realm, (read) => read($value) * 2);
 
-    const release = observe($double);
+    const release = Source.observe($double);
     expect(errors).toEqual([new Error("the first start fails")]);
-    expect(inspect($double).observers).toBe(1);
-    expect(inspect($value).observers).toBe(1);
+    expect(Source.inspect($double).observers).toBe(1);
+    expect(Source.inspect($value).observers).toBe(1);
 
     release();
-    expect(inspect($double).observers).toBe(0);
-    expect(inspect($value).observers).toBe(0);
+    expect(Source.inspect($double).observers).toBe(0);
+    expect(Source.inspect($value).observers).toBe(0);
   });
 
   test("a hook that fails leaves the hooks that started running until the release", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $value = box(realm, 0);
-    onObserved($value, () => () => {
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $value = Box.make(realm, 0);
+    Source.onObserved($value, () => () => {
       throw new Error("the cleanup fails");
     });
-    onObserved($value, () => {
+    Source.onObserved($value, () => {
       throw new Error("the hook fails");
     });
 
-    const release = observe($value);
+    const release = Source.observe($value);
     expect(errors).toEqual([new Error("the hook fails")]);
-    expect(inspect($value).observers).toBe(1);
+    expect(Source.inspect($value).observers).toBe(1);
 
     release();
     expect(errors).toEqual([new Error("the hook fails"), new Error("the cleanup fails")]);
-    expect(inspect($value).observers).toBe(0);
+    expect(Source.inspect($value).observers).toBe(0);
   });
 
   test("a hook that fails inside an observed computed value leaves its other sources started", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const events: Array<string> = [];
-    const $a = box(realm, 0);
-    const $b = box(realm, 0);
-    onObserved($a, () => {
+    const $a = Box.make(realm, 0);
+    const $b = Box.make(realm, 0);
+    Source.onObserved($a, () => {
       events.push("a start");
       return () => {
         events.push("a stop");
         throw new Error("the a cleanup fails");
       };
     });
-    onObserved($b, () => {
+    Source.onObserved($b, () => {
       events.push("b start");
       return () => events.push("b stop");
     });
-    onObserved($b, () => {
+    Source.onObserved($b, () => {
       throw new Error("the b hook fails");
     });
-    const $sum = computed(realm, (read) => read($a) + read($b));
+    const $sum = Computed.make(realm, (read) => read($a) + read($b));
 
-    const release = observe($sum);
+    const release = Source.observe($sum);
     expect(errors).toEqual([new Error("the b hook fails")]);
     expect(events).toEqual(["a start", "b start"]);
     for (const observable of [$sum, $a, $b]) {
-      expect(inspect(observable).observers).toBe(1);
+      expect(Source.inspect(observable).observers).toBe(1);
     }
 
     release();
     expect(errors).toEqual([new Error("the b hook fails"), new Error("the a cleanup fails")]);
     expect(events).toEqual(["a start", "b start", "a stop", "b stop"]);
     for (const observable of [$sum, $a, $b]) {
-      expect(inspect(observable).observers).toBe(0);
+      expect(Source.inspect(observable).observers).toBe(0);
     }
   });
 
   test("a release whose cleanups fail still stops every source and reports each error", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const events: Array<string> = [];
-    const $a = box(realm, 0);
-    const $b = box(realm, 0);
-    onObserved($a, () => () => {
+    const $a = Box.make(realm, 0);
+    const $b = Box.make(realm, 0);
+    Source.onObserved($a, () => () => {
       events.push("a stop");
       throw new Error("the a cleanup fails");
     });
-    onObserved($b, () => () => {
+    Source.onObserved($b, () => () => {
       events.push("b stop");
       throw new Error("the b cleanup fails");
     });
-    const $sum = computed(realm, (read) => read($a) + read($b));
+    const $sum = Computed.make(realm, (read) => read($a) + read($b));
 
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       read($a);
       read($b);
     });
@@ -1020,30 +1004,30 @@ describe("an observe or watch whose hook throws", () => {
     expect(errors).toEqual([new Error("the a cleanup fails"), new Error("the b cleanup fails")]);
 
     errors.length = 0;
-    const release = observe($sum);
+    const release = Source.observe($sum);
     release();
     expect(errors).toEqual([new Error("the a cleanup fails"), new Error("the b cleanup fails")]);
     expect(events).toEqual(["a stop", "b stop", "a stop", "b stop"]);
     for (const observable of [$sum, $a, $b]) {
-      expect(inspect(observable).observers).toBe(0);
+      expect(Source.inspect(observable).observers).toBe(0);
     }
   });
 
   test("inside an update, the hook's error goes to onError and the update's writes stay", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
     const { $value, events } = twoHooks(realm, "start");
-    const $other = box(realm, 0);
+    const $other = Box.make(realm, 0);
 
     let release: () => void = () => {};
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($other, 1);
-      release = observe($value);
+      release = Source.observe($value);
       write($value, 2);
     });
     expect(errors).toEqual([new Error("the first start fails")]);
-    expect(untracked(realm, (read) => [read($value), read($other)])).toEqual([2, 1]);
-    expect(inspect($value).observers).toBe(1);
+    expect(Realm.untracked(realm, (read) => [read($value), read($other)])).toEqual([2, 1]);
+    expect(Source.inspect($value).observers).toBe(1);
 
     release();
     expect(events).toEqual(["first start", "second start", "second stop"]);
@@ -1052,30 +1036,30 @@ describe("an observe or watch whose hook throws", () => {
 
 describe("a hook or cleanup that reenters", () => {
   test("a cleanup that observes the computed value being released keeps it whole", () => {
-    const realm = createRealm();
-    const $a = box(realm, 0);
-    const $b = box(realm, 0);
+    const realm = Realm.make();
+    const $a = Box.make(realm, 0);
+    const $b = Box.make(realm, 0);
     let hold: (() => void) | undefined;
-    onObserved($a, () => () => {
-      hold ??= observe($sum);
+    Source.onObserved($a, () => () => {
+      hold ??= Source.observe($sum);
     });
-    const $sum = computed(realm, (read) => read($a) + read($b));
+    const $sum = Computed.make(realm, (read) => read($a) + read($b));
     let runs = 0;
-    onObserved($sum, () => {
+    Source.onObserved($sum, () => {
       runs++;
       return undefined;
     });
 
-    observe($sum)();
+    Source.observe($sum)();
     expect(hold).toBeDefined();
     for (const observable of [$sum, $a, $b]) {
-      expect(inspect(observable).observers).toBe(1);
+      expect(Source.inspect(observable).observers).toBe(1);
     }
     expect(runs).toBe(1);
 
     hold?.();
     for (const observable of [$sum, $a, $b]) {
-      expect(inspect(observable).observers).toBe(0);
+      expect(Source.inspect(observable).observers).toBe(0);
     }
   });
 
@@ -1083,15 +1067,15 @@ describe("a hook or cleanup that reenters", () => {
   // settle goes on, so $b, lost and gained in that settle, restarts nothing.
   test("a cleanup that observes the computed value again while its observe stops restarts no other hook", () => {
     const errors: Array<unknown> = [];
-    const realm = createRealm({ onError: (error) => errors.push(error) });
-    const $a = box(realm, 0);
-    const $b = box(realm, 0);
-    const $c = box(realm, 0);
-    const $sum = computed(realm, (read) => read($a) + read($b) + read($c));
+    const realm = Realm.make({ onError: (error) => errors.push(error) });
+    const $a = Box.make(realm, 0);
+    const $b = Box.make(realm, 0);
+    const $c = Box.make(realm, 0);
+    const $sum = Computed.make(realm, (read) => read($a) + read($b) + read($c));
     const seen: Array<number> = [];
     let stop: (() => void) | undefined;
-    onObserved($a, () => () => {
-      stop ??= watch(
+    Source.onObserved($a, () => () => {
+      stop ??= Realm.watch(
         realm,
         (read) => read($sum),
         (value) => {
@@ -1100,7 +1084,7 @@ describe("a hook or cleanup that reenters", () => {
       );
     });
     let starts = 0;
-    onObserved($b, () => {
+    Source.onObserved($b, () => {
       starts++;
       if (starts === 2) {
         throw new Error("the b restart fails");
@@ -1108,13 +1092,13 @@ describe("a hook or cleanup that reenters", () => {
       return undefined;
     });
 
-    observe($sum)();
+    Source.observe($sum)();
     expect(errors).toEqual([]);
     expect(starts).toBe(1);
     for (const observable of [$sum, $a, $b, $c]) {
-      expect(inspect(observable).observers).toBe(1);
+      expect(Source.inspect(observable).observers).toBe(1);
     }
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($c, 5);
     });
     expect(seen).toEqual([5]);
@@ -1122,24 +1106,24 @@ describe("a hook or cleanup that reenters", () => {
   });
 
   test("an autorun does not rerun when a hook writes what it did not read", () => {
-    const realm = createRealm();
-    const tick = atom(realm);
+    const realm = Realm.make();
+    const tick = Atom.make(realm);
     let computes = 0;
-    const $clock = computed(realm, (read) => {
+    const $clock = Computed.make(realm, (read) => {
       read(tick);
       return ++computes;
     });
-    const $value = box(realm, 0);
-    const $unrelated = box(realm, 0);
-    onObserved($value, () => {
-      update(realm, (_read, write) => {
+    const $value = Box.make(realm, 0);
+    const $unrelated = Box.make(realm, 0);
+    Source.onObserved($value, () => {
+      Realm.update(realm, (_read, write) => {
         write($unrelated, 1);
       });
       return undefined;
     });
     let runs = 0;
 
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       read($clock);
       read($value);
       runs++;
@@ -1149,41 +1133,41 @@ describe("a hook or cleanup that reenters", () => {
   });
 
   test("a rerun whose error the reporter throws leaves the autorun stopped", () => {
-    const realm = createRealm({
+    const realm = Realm.make({
       onError: (error) => {
         throw error;
       },
     });
-    const $value = box(realm, 0);
-    onObserved($value, () => {
-      update(realm, (_read, write) => {
+    const $value = Box.make(realm, 0);
+    Source.onObserved($value, () => {
+      Realm.update(realm, (_read, write) => {
         write($value, 5);
       });
       return undefined;
     });
 
     expect(() =>
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         if (read($value) === 5) {
           throw new Error("five");
         }
       }),
     ).toThrow("five");
-    expect(inspect($value).observers).toBe(0);
+    expect(Source.inspect($value).observers).toBe(0);
   });
 
   test("an autorun reruns when a hook it started writes what it read", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
-    onObserved($value, () => {
-      update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
+    Source.onObserved($value, () => {
+      Realm.update(realm, (_read, write) => {
         write($value, 5);
       });
       return undefined;
     });
     const seen: Array<number> = [];
 
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(read($value));
     });
     expect(seen).toEqual([0, 5]);
@@ -1191,17 +1175,17 @@ describe("a hook or cleanup that reenters", () => {
   });
 
   test("a watch's effect runs when a hook its select started writes what it read", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
-    onObserved($value, () => {
-      update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
+    Source.onObserved($value, () => {
+      Realm.update(realm, (_read, write) => {
         write($value, 5);
       });
       return undefined;
     });
     const changes: Array<[number, number]> = [];
 
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($value),
       (value, previous) => {
@@ -1215,10 +1199,10 @@ describe("a hook or cleanup that reenters", () => {
 
 describe("observe", () => {
   test("holds a box observed until released, and a second release does nothing", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
 
-    const release = observe($value);
+    const release = Source.observe($value);
     release();
     release();
 
@@ -1226,11 +1210,11 @@ describe("observe", () => {
   });
 
   test("two holders release independently", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
 
-    const first = observe($value);
-    const second = observe($value);
+    const first = Source.observe($value);
+    const second = Source.observe($value);
     first();
     first();
     expect(events).toEqual(["start"]);
@@ -1239,79 +1223,79 @@ describe("observe", () => {
   });
 
   test("keeps a computed value cached and its sources observed", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
     let runs = 0;
-    const $double = computed(realm, (read) => {
+    const $double = Computed.make(realm, (read) => {
       runs++;
       return read($value) * 2;
     });
 
-    const release = observe($double);
+    const release = Source.observe($double);
     expect(events).toEqual(["start"]);
-    expect(untracked(realm, (read) => read($double))).toBe(0);
-    expect(untracked(realm, (read) => read($double))).toBe(0);
+    expect(Realm.untracked(realm, (read) => read($double))).toBe(0);
+    expect(Realm.untracked(realm, (read) => read($double))).toBe(0);
     expect(runs).toBe(1);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($value, 2);
     });
-    expect(untracked(realm, (read) => read($double))).toBe(4);
+    expect(Realm.untracked(realm, (read) => read($double))).toBe(4);
     expect(runs).toBe(2);
     release();
     expect(events).toEqual(["start", "stop"]);
   });
 
   test("a computed value that throws is held without the error escaping", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
-    const $failing = computed(realm, (read) => {
+    const $failing = Computed.make(realm, (read) => {
       if (read($value) === 0) {
         throw new Error("zero");
       }
       return read($value);
     });
 
-    const release = observe($failing);
+    const release = Source.observe($failing);
     expect(events).toEqual(["start"]);
     release();
     expect(events).toEqual(["start", "stop"]);
   });
 
   test("holds an atom observed", () => {
-    const realm = createRealm();
-    const $atom = atom(realm);
+    const realm = Realm.make();
+    const $atom = Atom.make(realm);
     const events: Array<string> = [];
-    onObserved($atom, () => {
+    Source.onObserved($atom, () => {
       events.push("start");
       return () => events.push("stop");
     });
 
-    const release = observe($atom);
+    const release = Source.observe($atom);
     release();
 
     expect(events).toEqual(["start", "stop"]);
   });
 
   test("works where reads are tracked, without subscribing what tracks", () => {
-    const realm = createRealm();
+    const realm = Realm.make();
     const { $value, events } = hooked(realm);
-    const $trigger = box(realm, 0);
+    const $trigger = Box.make(realm, 0);
     const releases: Array<() => void> = [];
     let runs = 0;
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => read($trigger),
       () => {
         runs++;
-        releases.push(observe($value));
+        releases.push(Source.observe($value));
       },
     );
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($trigger, 1);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($value, 5);
     });
 
@@ -1327,17 +1311,17 @@ describe("observe", () => {
 
 describe("isTracking", () => {
   test("is true while a computed value or a watch's select runs", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
     const seen: Array<boolean> = [];
-    const $tracked = computed(realm, (read) => {
-      seen.push(isTracking(realm));
+    const $tracked = Computed.make(realm, (read) => {
+      seen.push(Realm.isTracking(realm));
       return read($value);
     });
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => {
-        seen.push(isTracking(realm));
+        seen.push(Realm.isTracking(realm));
         return read($tracked);
       },
       () => {},
@@ -1348,28 +1332,28 @@ describe("isTracking", () => {
   });
 
   test("is false in an update, untracked, a watch effect, a hook, and at the top level", () => {
-    const realm = createRealm();
-    const $value = box(realm, 0);
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
     const seen: Record<string, boolean> = {};
-    seen["top level"] = isTracking(realm);
-    onObserved($value, () => {
-      seen["hook"] = isTracking(realm);
+    seen["top level"] = Realm.isTracking(realm);
+    Source.onObserved($value, () => {
+      seen["hook"] = Realm.isTracking(realm);
       return undefined;
     });
-    const stop = watch(
+    const stop = Realm.watch(
       realm,
       (read) => {
-        untracked(realm, () => {
-          seen["untracked"] = isTracking(realm);
+        Realm.untracked(realm, () => {
+          seen["untracked"] = Realm.isTracking(realm);
         });
         return read($value);
       },
       () => {
-        seen["effect"] = isTracking(realm);
+        seen["effect"] = Realm.isTracking(realm);
       },
     );
-    update(realm, (_read, write) => {
-      seen["update"] = isTracking(realm);
+    Realm.update(realm, (_read, write) => {
+      seen["update"] = Realm.isTracking(realm);
       write($value, 1);
     });
 
@@ -1381,5 +1365,38 @@ describe("isTracking", () => {
       update: false,
     });
     stop();
+  });
+});
+
+describe("a hook's remover belongs to its registration", () => {
+  test("calling an old remover again leaves a later registration of the same start live", () => {
+    const realm = Realm.make();
+    const $value = Box.make(realm, 0);
+    const release = Source.observe($value);
+    const listeners = new Set<(next: number) => void>();
+    const start = () => {
+      const receive = (next: number) =>
+        Realm.update(realm, (_read, write) => {
+          write($value, next);
+        });
+      listeners.add(receive);
+      return () => {
+        listeners.delete(receive);
+      };
+    };
+    const removeFirst = Source.onObserved($value, start);
+    removeFirst();
+    const removeSecond = Source.onObserved($value, start);
+    for (const receive of listeners) receive(1);
+    expect(Source.peek($value)).toBe(1);
+    removeFirst();
+    expect(listeners.size).toBe(1);
+    for (const receive of listeners) receive(2);
+    expect(Source.peek($value)).toBe(2);
+    removeSecond();
+    expect(listeners.size).toBe(0);
+    removeSecond();
+    release();
+    Realm.dispose(realm);
   });
 });

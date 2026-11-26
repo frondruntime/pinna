@@ -3,19 +3,11 @@
 // `effectBoxes.ts`.
 import { expect, test } from "bun:test";
 import { held } from "@frondruntime/pinna/testing";
-import {
-  computed,
-  createRealm,
-  decode,
-  observe,
-  schemaBox,
-  untracked,
-  update,
-} from "@frondruntime/pinna-effect";
+import { Box, Computed, Model, Realm, Source } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 import { $changeable, $today, Booking, booking, changeStay, realm } from "./effectBoxes.ts";
 
-const stayOf = () => untracked(realm, (read) => read(booking.$stay));
+const stayOf = () => Realm.untracked(realm, (read) => read(booking.$stay));
 
 test("a check runs on each write of a new value, never on a read or a recompute", () => {
   let checks = 0;
@@ -25,16 +17,16 @@ test("a check runs on each write of a new value, never on a read or a recompute"
       return true;
     }),
   );
-  const own = createRealm();
-  const $count = schemaBox(own, counted, 0);
-  const $double = computed(own, (read) => read($count) * 2);
-  using _ = held(observe($double));
+  const own = Realm.make();
+  const $count = Box.schema(own, counted, 0);
+  const $double = Computed.make(own, (read) => read($count) * 2);
+  using _ = held(Source.observe($double));
   const afterInitial = checks;
-  untracked(own, (read) => [read($count), read($double)]);
+  Realm.untracked(own, (read) => [read($count), read($double)]);
   expect(checks).toBe(afterInitial);
-  update(own, (_read, write) => write($count, 1));
+  Realm.update(own, (_read, write) => write($count, 1));
   expect(checks).toBe(afterInitial + 1);
-  untracked(own, (read) => [read($count), read($double)]);
+  Realm.untracked(own, (read) => [read($count), read($double)]);
   expect(checks).toBe(afterInitial + 1);
 });
 
@@ -42,7 +34,7 @@ test("one field of both dates checks them together, with the filter's message", 
   const before = stayOf();
   let thrown: unknown;
   try {
-    update(realm, (_read, write) =>
+    Realm.update(realm, (_read, write) =>
       write(booking.$stay, { checkIn: "2026-05-04", checkOut: "2026-05-03" }),
     );
   } catch (error) {
@@ -55,20 +47,23 @@ test("one field of both dates checks them together, with the filter's message", 
 
 test("decode checks the dates together too", () => {
   expect(() =>
-    decode(realm, Booking)({ id: "b2", stay: { checkIn: "2026-05-04", checkOut: "2026-05-03" } }),
+    Model.decode(
+      realm,
+      Booking,
+    )({ id: "b2", stay: { checkIn: "2026-05-04", checkOut: "2026-05-03" } }),
   ).toThrow("Check out after checking in");
 });
 
 test("a rule on today is checked as the input arrives, and eligibility follows today", () => {
-  using _ = held(observe($changeable));
-  expect(untracked(realm, (read) => read($changeable))).toBe(true);
+  using _ = held(Source.observe($changeable));
+  expect(Realm.untracked(realm, (read) => read($changeable))).toBe(true);
   expect(() => changeStay({ checkIn: "2026-04-19", checkOut: "2026-04-25" })).toThrow(
     "Check in after today",
   );
   changeStay({ checkIn: "2026-04-22", checkOut: "2026-04-25" });
   const kept = stayOf();
   // Today passes the check-in: the stay is not checked again, and is kept.
-  update(realm, (_read, write) => write($today, "2026-04-23"));
+  Realm.update(realm, (_read, write) => write($today, "2026-04-23"));
   expect(stayOf()).toBe(kept);
-  expect(untracked(realm, (read) => read($changeable))).toBe(false);
+  expect(Realm.untracked(realm, (read) => read($changeable))).toBe(false);
 });

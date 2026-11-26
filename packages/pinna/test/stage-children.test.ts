@@ -1,18 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  applyStage,
-  box,
-  collection,
-  computed,
-  dropStage,
-  inspectStage,
-  openStage,
-  stageRead,
-  stageStatus,
-  stageUpdate,
-  untracked,
-  update,
-} from "../src/index.ts";
+import { Box, Collection, Computed, Realm, Stage } from "../src/index.ts";
 import { record, testRealm } from "../src/testing/index.ts";
 
 /**
@@ -24,127 +11,127 @@ import { record, testRealm } from "../src/testing/index.ts";
 describe("a child stage", () => {
   test("a failed child replay restores the parent's read record with its overlay and journal", () => {
     using realm = testRealm();
-    const $gate = box(realm, false, { name: "gate" });
-    const $kept = box(realm, 1, { name: "kept" });
-    const $value = box(realm, 0, { name: "value" });
-    const $rows = collection<number, number>(realm, { keyOf: (value) => value });
-    const parent = openStage(realm, { conflicts: "fail" });
-    const child = openStage(parent);
+    const $gate = Box.make(realm, false, { name: "gate" });
+    const $kept = Box.make(realm, 1, { name: "kept" });
+    const $value = Box.make(realm, 0, { name: "value" });
+    const $rows = Collection.make<number, number>(realm, { keyOf: (value) => value });
+    const parent = Stage.make(realm, { conflicts: "fail" });
+    const child = Stage.make(parent);
     try {
-      stageUpdate(parent, (read, write) => {
+      Stage.update(parent, (read, write) => {
         write($value, read($kept) * 10);
         write.upsert($rows, 1);
       });
-      stageUpdate(child, (read, write) => {
+      Stage.update(child, (read, write) => {
         write($value, 20);
         write.upsert($rows, 2);
         read($kept);
         if (read($gate)) throw new Error("replay refused");
       });
-      const before = inspectStage(parent);
-      update(realm, (_read, write) => {
+      const before = Stage.inspect(parent);
+      Realm.update(realm, (_read, write) => {
         write($gate, true);
       });
-      expect(() => applyStage(child)).toThrow("replay refused");
-      expect(inspectStage(parent)).toEqual({ ...before, children: 0 });
-      expect(stageRead(parent, (read) => [read($value), read($rows.keys)])).toEqual([10, [1]]);
-      update(realm, (_read, write) => {
+      expect(() => Stage.apply(child)).toThrow("replay refused");
+      expect(Stage.inspect(parent)).toEqual({ ...before, children: 0 });
+      expect(Stage.read(parent, (read) => [read($value), read($rows.keys)])).toEqual([10, [1]]);
+      Realm.update(realm, (_read, write) => {
         write($gate, false);
       });
-      applyStage(parent);
-      expect(untracked(realm, (read) => [read($value), read($rows.keys)])).toEqual([10, [1]]);
+      Stage.apply(parent);
+      expect(Realm.untracked(realm, (read) => [read($value), read($rows.keys)])).toEqual([10, [1]]);
     } finally {
-      dropStage(parent);
+      Stage.drop(parent);
     }
   });
 
   test("a failed ordinary recipe still keeps its reads", () => {
     using realm = testRealm();
-    const $gate = box(realm, false, { name: "gate" });
-    const stage = openStage(realm, { conflicts: "fail" });
+    const $gate = Box.make(realm, false, { name: "gate" });
+    const stage = Stage.make(realm, { conflicts: "fail" });
     try {
       expect(() =>
-        stageUpdate(stage, (read) => {
+        Stage.update(stage, (read) => {
           read($gate);
           throw new Error("refused");
         }),
       ).toThrow("refused");
-      expect(inspectStage(stage).read).toEqual(["gate"]);
+      expect(Stage.inspect(stage).read).toEqual(["gate"]);
     } finally {
-      dropStage(stage);
+      Stage.drop(stage);
     }
   });
 
   test("reads through its parent, and applies into the parent, not the realm", () => {
     using realm = testRealm();
-    const $a = box(realm, 1);
-    const $b = box(realm, 1);
-    const $sum = computed(realm, (read) => read($a) + read($b));
-    const parent = openStage(realm, { name: "call" });
-    stageUpdate(parent, (_read, write) => {
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 1);
+    const $sum = Computed.make(realm, (read) => read($a) + read($b));
+    const parent = Stage.make(realm, { name: "call" });
+    Stage.update(parent, (_read, write) => {
       write($a, 2);
     });
-    const child = openStage(parent, { name: "section" });
-    expect(stageRead(child, (read) => read($a))).toBe(2);
-    stageUpdate(child, (read, write) => {
+    const child = Stage.make(parent, { name: "section" });
+    expect(Stage.read(child, (read) => read($a))).toBe(2);
+    Stage.update(child, (read, write) => {
       write($b, read($a) * 10);
     });
-    expect(stageRead(child, (read) => read($sum))).toBe(22);
-    expect(stageRead(parent, (read) => read($sum))).toBe(3);
-    applyStage(child);
-    expect(stageStatus(child)).toBe("applied");
-    expect(stageRead(parent, (read) => read($sum))).toBe(22);
-    expect(untracked(realm, (read) => read($sum))).toBe(2);
-    applyStage(parent);
-    expect(untracked(realm, (read) => read($sum))).toBe(22);
+    expect(Stage.read(child, (read) => read($sum))).toBe(22);
+    expect(Stage.read(parent, (read) => read($sum))).toBe(3);
+    Stage.apply(child);
+    expect(Stage.status(child)).toBe("applied");
+    expect(Stage.read(parent, (read) => read($sum))).toBe(22);
+    expect(Realm.untracked(realm, (read) => read($sum))).toBe(2);
+    Stage.apply(parent);
+    expect(Realm.untracked(realm, (read) => read($sum))).toBe(22);
   });
 
   test("dropped, it leaves the parent as it was: a caught section leaks nothing", () => {
     using realm = testRealm();
-    const $a = box(realm, 1);
-    const parent = openStage(realm);
-    const child = openStage(parent);
-    stageUpdate(child, (_read, write) => {
+    const $a = Box.make(realm, 1);
+    const parent = Stage.make(realm);
+    const child = Stage.make(parent);
+    Stage.update(child, (_read, write) => {
       write($a, 99);
     });
-    dropStage(child);
-    expect(stageRead(parent, (read) => read($a))).toBe(1);
-    applyStage(parent);
-    expect(untracked(realm, (read) => read($a))).toBe(1);
+    Stage.drop(child);
+    expect(Stage.read(parent, (read) => read($a))).toBe(1);
+    Stage.apply(parent);
+    expect(Realm.untracked(realm, (read) => read($a))).toBe(1);
   });
 
   test("replays into the parent's current values, and a throw on replay leaves the parent as it was", () => {
     using realm = testRealm();
-    const $a = box(realm, 1);
-    const $b = box(realm, 0);
-    const parent = openStage(realm);
-    const child = openStage(parent);
-    stageUpdate(child, (read, write) => {
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 0);
+    const parent = Stage.make(realm);
+    const child = Stage.make(parent);
+    Stage.update(child, (read, write) => {
       if (read($a) > 1) {
         throw new Error("the parent moved");
       }
       write($b, 1);
     });
-    stageUpdate(parent, (_read, write) => {
+    Stage.update(parent, (_read, write) => {
       write($a, 2);
     });
-    expect(() => applyStage(child)).toThrow("the parent moved");
-    expect(stageStatus(child)).toBe("dropped");
-    expect(stageRead(parent, (read) => [read($a), read($b)])).toEqual([2, 0]);
-    dropStage(parent);
+    expect(() => Stage.apply(child)).toThrow("the parent moved");
+    expect(Stage.status(child)).toBe("dropped");
+    expect(Stage.read(parent, (read) => [read($a), read($b)])).toEqual([2, 0]);
+    Stage.drop(parent);
   });
 
   test("a parent with an open child does not apply; dropping the parent drops the child", () => {
     using realm = testRealm();
-    const parent = openStage(realm);
-    const child = openStage(parent);
-    const grandchild = openStage(child);
-    expect(inspectStage(parent).children).toBe(1);
-    expect(() => applyStage(parent)).toThrow(
-      "pinna: applyStage runs on a stage while a child stage of it is open",
+    const parent = Stage.make(realm);
+    const child = Stage.make(parent);
+    const grandchild = Stage.make(child);
+    expect(Stage.inspect(parent).children).toBe(1);
+    expect(() => Stage.apply(parent)).toThrow(
+      "pinna: Stage.apply runs on a stage while a child stage of it is open",
     );
-    dropStage(parent);
-    expect([stageStatus(parent), stageStatus(child), stageStatus(grandchild)]).toEqual([
+    Stage.drop(parent);
+    expect([Stage.status(parent), Stage.status(child), Stage.status(grandchild)]).toEqual([
       "dropped",
       "dropped",
       "dropped",
@@ -153,72 +140,72 @@ describe("a child stage", () => {
 
   test("grandchildren apply up the chain, and collections follow", () => {
     using realm = testRealm();
-    const $rows = collection<string, string>(realm, { keyOf: (row) => row });
+    const $rows = Collection.make<string, string>(realm, { keyOf: (row) => row });
     using keys = record(realm, (read) => read($rows.keys));
-    const root = openStage(realm);
-    const child = openStage(root);
-    const grandchild = openStage(child);
-    stageUpdate(grandchild, (_read, write) => {
+    const root = Stage.make(realm);
+    const child = Stage.make(root);
+    const grandchild = Stage.make(child);
+    Stage.update(grandchild, (_read, write) => {
       write.upsert($rows, "c");
     });
-    stageUpdate(child, (_read, write) => {
+    Stage.update(child, (_read, write) => {
       write.upsert($rows, "b");
     });
-    applyStage(grandchild);
-    expect(stageRead(child, (read) => read($rows.keys))).toEqual(["c", "b"]);
-    applyStage(child);
-    expect(stageRead(root, (read) => read($rows.keys))).toEqual(["c", "b"]);
+    Stage.apply(grandchild);
+    expect(Stage.read(child, (read) => read($rows.keys))).toEqual(["c", "b"]);
+    Stage.apply(child);
+    expect(Stage.read(root, (read) => read($rows.keys))).toEqual(["c", "b"]);
     expect(keys.values).toEqual([]);
-    applyStage(root);
+    Stage.apply(root);
     expect(keys.values).toEqual([["c", "b"]]);
   });
 
   test("takes no conflicts option: its root checks what it read", () => {
     using realm = testRealm();
-    const parent = openStage(realm);
-    expect(() => openStage(parent, { conflicts: "fail" })).toThrow(
+    const parent = Stage.make(realm);
+    expect(() => Stage.make(parent, { conflicts: "fail" })).toThrow(
       "pinna: a child stage takes no conflicts option",
     );
-    dropStage(parent);
+    Stage.drop(parent);
   });
 });
 
 describe("several stages", () => {
   test("two stages that write one box: the second applied builds on the first", () => {
     using realm = testRealm();
-    const $count = box(realm, 0);
-    const first = openStage(realm);
-    const second = openStage(realm);
-    stageUpdate(first, (read, write) => {
+    const $count = Box.make(realm, 0);
+    const first = Stage.make(realm);
+    const second = Stage.make(realm);
+    Stage.update(first, (read, write) => {
       write($count, read($count) + 1);
     });
-    stageUpdate(second, (read, write) => {
+    Stage.update(second, (read, write) => {
       write($count, read($count) + 10);
     });
-    applyStage(second);
-    applyStage(first);
-    expect(untracked(realm, (read) => read($count))).toBe(11);
+    Stage.apply(second);
+    Stage.apply(first);
+    expect(Realm.untracked(realm, (read) => read($count))).toBe(11);
   });
 
   test("several stages in one update land in apply order, and watchers see the end state once", () => {
     using realm = testRealm();
-    const $log = box<ReadonlyArray<string>>(realm, []);
+    const $log = Box.make<ReadonlyArray<string>>(realm, []);
     using logs = record(realm, (read) => read($log));
-    const first = openStage(realm);
-    const second = openStage(realm);
-    stageUpdate(first, (_read, write) => {
+    const first = Stage.make(realm);
+    const second = Stage.make(realm);
+    Stage.update(first, (_read, write) => {
       write.modify($log, (log) => {
         log.push("first");
       });
     });
-    stageUpdate(second, (_read, write) => {
+    Stage.update(second, (_read, write) => {
       write.modify($log, (log) => {
         log.push("second");
       });
     });
-    update(realm, () => {
-      applyStage(second);
-      applyStage(first);
+    Realm.update(realm, () => {
+      Stage.apply(second);
+      Stage.apply(first);
     });
     expect(logs.values).toEqual([["second", "first"]]);
   });
@@ -227,22 +214,22 @@ describe("several stages", () => {
 describe("inspectStage", () => {
   test("reports the name, realm, parent, status, and what the stage holds", () => {
     using realm = testRealm({ name: "app" });
-    const $a = box(realm, 1, { name: "a" });
-    const $anonymous = box(realm, 1);
-    const $rows = collection<string, string>(realm, { keyOf: (row) => row, name: "rows" });
-    const $unnamed = collection<string, string>(realm, { keyOf: (row) => row });
-    const $price = box(realm, 1, { name: "price" });
-    const $readOnly = collection<string, string>(realm, { keyOf: (row) => row });
-    const $first = box(realm, 0);
-    const $second = box(realm, 0);
-    const stage = openStage(realm, { name: "save", conflicts: "fail" });
-    stageUpdate(stage, (read, write) => {
+    const $a = Box.make(realm, 1, { name: "a" });
+    const $anonymous = Box.make(realm, 1);
+    const $rows = Collection.make<string, string>(realm, { keyOf: (row) => row, name: "rows" });
+    const $unnamed = Collection.make<string, string>(realm, { keyOf: (row) => row });
+    const $price = Box.make(realm, 1, { name: "price" });
+    const $readOnly = Collection.make<string, string>(realm, { keyOf: (row) => row });
+    const $first = Box.make(realm, 0);
+    const $second = Box.make(realm, 0);
+    const stage = Stage.make(realm, { name: "save", conflicts: "fail" });
+    Stage.update(stage, (read, write) => {
       write($a, 2);
       write($anonymous, 2);
       write.upsert($rows, "x");
       write.upsert($unnamed, "y");
-      // The box reads the stage alone; the collection's order still depends
-      // on the realm order copied by its first upsert.
+      // Under "fail", each write records what it wrote; a later read of a
+      // written box reads the stage alone.
       read($a);
       read($unnamed.keys);
       read($price);
@@ -250,8 +237,8 @@ describe("inspectStage", () => {
       read($first);
       read($second);
     });
-    const child = openStage(stage);
-    expect(inspectStage(stage)).toEqual({
+    const child = Stage.make(stage);
+    expect(Stage.inspect(stage)).toEqual({
       name: "save",
       realm: "app",
       parent: undefined,
@@ -260,23 +247,35 @@ describe("inspectStage", () => {
       boxes: ["a", "<anonymous>"],
       collections: ["rows", "a collection"],
       // One entry for the collection's two boxes; one for each unnamed box.
-      read: ["a collection", "price", "a collection", "<anonymous>", "<anonymous>"],
+      read: [
+        "a",
+        "<anonymous>",
+        "rows",
+        "a collection",
+        "price",
+        "a collection",
+        "<anonymous>",
+        "<anonymous>",
+      ],
       recipes: 1,
       children: 1,
+      visible: false,
+      showing: false,
+      failure: undefined,
     });
-    expect(inspectStage(child)).toMatchObject({ name: undefined, parent: "save", recipes: 0 });
-    dropStage(stage);
-    expect(inspectStage(stage)).toMatchObject({
+    expect(Stage.inspect(child)).toMatchObject({ name: undefined, parent: "save", recipes: 0 });
+    Stage.drop(stage);
+    expect(Stage.inspect(stage)).toMatchObject({
       status: "dropped",
       boxes: [],
       read: [],
       recipes: 0,
     });
     using unchecked = testRealm();
-    const $zero = box(unchecked, 0);
-    const plain = openStage(unchecked);
-    stageRead(plain, (read) => read($zero));
-    expect(inspectStage(plain).read).toEqual([]);
-    dropStage(plain);
+    const $zero = Box.make(unchecked, 0);
+    const plain = Stage.make(unchecked);
+    Stage.read(plain, (read) => read($zero));
+    expect(Stage.inspect(plain).read).toEqual([]);
+    Stage.drop(plain);
   });
 });

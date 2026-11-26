@@ -1,4 +1,4 @@
-import { BoxField, CollectionField, SchemaModel } from "@frondruntime/pinna-effect";
+import { Model } from "@frondruntime/pinna-effect";
 import { Schema } from "effect";
 import { decimal, subtract } from "./decimal.ts";
 
@@ -61,14 +61,14 @@ export const OrderValue = Schema.Struct({
 );
 export type OrderValue = typeof OrderValue.Type;
 export const Identifier = Schema.String.check(Schema.isPattern(/^\S+$/));
-export class WorkingOrder extends SchemaModel<WorkingOrder>("Desk.WorkingOrder")({
+export class WorkingOrder extends Model.Schema<WorkingOrder>("Desk.WorkingOrder")({
   id: Identifier,
-  $value: BoxField(OrderValue),
+  $value: Model.boxField(OrderValue),
 }) {}
 export const OrderWire = Schema.Struct({ id: Identifier, value: OrderValue });
-export class OrderBook extends SchemaModel<OrderBook>("Desk.OrderBook")({
-  $orders: CollectionField(WorkingOrder, { keyOf: (order) => order.id }),
-  $acknowledgments: CollectionField(OrderWire, { keyOf: (order) => order.id }),
+export class OrderBook extends Model.Schema<OrderBook>("Desk.OrderBook")({
+  $orders: Model.collectionField(WorkingOrder, { keyOf: (order) => order.id }),
+  $acknowledgments: Model.collectionField(OrderWire, { keyOf: (order) => order.id }),
 }) {}
 export const OrderMessage = Schema.Struct({
   kind: Schema.Literals(["accepted", "amended", "partial", "filled", "cancelled", "expired"]),

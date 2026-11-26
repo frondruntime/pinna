@@ -9,7 +9,7 @@ A collection holds rows by key, a box for each key a reader reads, and one
 box for the order of the keys, so a write to one row reruns the readers of
 that row, not the readers of the list. A key's box is made on the first
 read of `row(key)` and kept while the key is present, so rows nobody reads
-alone cost no box. `collection` makes an empty one with no schema;
+alone cost no box. `Collection.make` makes an empty one with no schema;
 `undefined` rows are rejected.
 
 <!-- region collections.tsx#collection -->
@@ -24,7 +24,7 @@ reruns nothing here.
 
 <!-- region collections.tsx#row -->
 
-Where nothing tracks (an update's recipe, `untracked`, a watch's effect),
+Where nothing tracks (an update's recipe, `Realm.untracked`, a watch's effect),
 `read.row($items, key)` reads the row the collection holds and makes no box,
 so a lookup leaves nothing behind. In a tracked place it is
 `read($items.row(key))`.
@@ -46,8 +46,9 @@ A refetch writes every row at once with `write.replaceAll`. A row that
 
 <!-- region collections.tsx#replaceAll -->
 
-A value kept a row at a time, such as a sum or an index by another key,
-listens with `onRowChange`. The listener runs inside the update that wrote
+A value kept a row at a time listens with `Collection.onRowChange`; a
+sorted order, an index by another key, and a total per group are
+[views](./views.md). The listener runs inside the update that wrote
 the row, with that update's `read` and `write`, so what it writes takes effect
 and rolls back with the row.
 
@@ -65,6 +66,13 @@ and rolls back with the row.
   collections, even when the schema accepts `undefined`.
 - `upsert` replaces a held key's row in place and puts a new key first, or
   last with `{ at: "end" }`. `remove` of a missing key changes nothing.
+- Keys are equal as a `Map`'s are: `NaN` matches `NaN`, and `0` matches
+  `-0`. A key is stored as the `Map` stores it, so a row keyed `-0` is held
+  under `0`, and `keys`, a view's keys, a row listener's `key`, and a
+  record's row `key` hand out `0` on every path, base or staged. Without
+  this, `keys` kept the sign of the first write and a view or a listener
+  the sign of the latest row, so one row had two keys `Object.is` told
+  apart.
 - Adding or removing a key copies the key order, so its cost grows with the
   collection: about 15 µs at 1,000 rows and 120 µs at 10,000 on Hermes.
   Replacing the row of a held key costs the same at any size. The order is
@@ -84,21 +92,25 @@ and rolls back with the row.
   alone, so a hook on `keys` misses a reader of one row. A feed that writes
   the rows only while any of them is read hangs on a private atom that every
   public reader reads ([Live data](../guides/live-data.md)); a feed for a
-  list alone starts and stops with `keys`, through `onObserved` or, with
-  Effect, `whileObserved`.
+  list alone starts and stops with `keys`, through `Source.onObserved` or, with
+  Effect, `Program.whileObserved`.
 - `row(key)` returns the same computed value for a present key on every call;
   for a missing key, only while something observes it.
 - A lookup where nothing tracks reads through `read.row($items, key)`.
   `read($items.row(key))` there makes the key's computed value and box,
   and the collection keeps both until the key is removed.
 - `read.row` outside every place of its realm throws, as `read` does.
-- `onRowChange` reports each row `upsert`, `remove`, or `replaceAll` adds,
+- `Collection.onRowChange` reports each row `upsert`, `remove`, or `replaceAll` adds,
   replaces, or removes, `replaceAll` a row at a time, with the row `before`
   and `after` the write; one is `undefined` for an add or a removal. A write
   that keeps a row reports nothing.
+- `write.revert` and `write.replay` report a row only to a listener added
+  after the record's update, and to every view: the record already holds
+  what an older listener wrote, and restores it as written
+  ([Change stream](./changes.md)).
 - A listener first hears each row the collection holds, in key order, as
   added, so what it keeps starts in step with the rows. A throw there adds
-  no listener and reaches the caller of `onRowChange`. If settling watchers
+  no listener and reaches the caller of `Collection.onRowChange`. If settling watchers
   throws after replay commits, the listener is removed and the replay's
   writes stay committed: the caller received no function to remove it.
 - A listener writes other boxes and collections. A write to the collection
@@ -108,43 +120,43 @@ and rolls back with the row.
   of values the listener fills is not put back when the write fails; a
   `Map` of boxes is, since it holds the boxes and the boxes are put back.
 - A listener sees rows the collection replaces, never a write to a box
-  inside a row: a `SchemaModel` row whose box fields alone change is merged
-  in place and reports nothing. A sum over a `BoxField` is a `computed`.
+  inside a row: a `Model.Schema` row whose box fields alone change is merged
+  in place and reports nothing. A sum over a `Model.boxField` is a `Computed.make`.
 - `replaceAll` writes every row, then reports them a row at a time, so a
   listener that reads the collection sees rows ahead of their reports.
 - An index by another key deletes an entry only while it still names
   `change.key`: two rows that swap values report one at a time, and the
   second report would otherwise delete the first one's new entry.
-- Each `onRowChange` replays the held rows to its listener, so a host adds a
+- Each `Collection.onRowChange` replays the held rows to its listener, so a host adds a
   listener once, beside the boxes it fills. A listener added again, as a
   React effect in strict mode is after its cleanup, counts each row twice
   unless the host resets its boxes first.
-- The function `onRowChange` returns removes the listener for good: an
-  update that fails after calling it does not add it back, as with `watch`.
-- `onRowChange` in a computed value or a watch's select throws, as `update`
+- The function `Collection.onRowChange` returns removes the listener for good: an
+  update that fails after calling it does not add it back, as with `Realm.watch`.
+- `Collection.onRowChange` in a computed value or a watch's select throws, as `Realm.update`
   does there.
 - A list written one row at a time is a collection. A box of an array is
   written whole, and every write reruns every reader of the box. A list
-  written whole on each refetch can stay a box written through `reconcile`:
+  written whole on each refetch can stay a box written through `Collection.reconcile`:
   see [Updates](./updates.md).
 
 ## Answers
 
 | Call | Answers |
 | --- | --- |
-| `collection(realm, { keyOf, equals?, name? })` | An empty collection with no schema; `undefined` rows are rejected. `equals` defaults to `Object.is`. `name` names its `keys` (`<name>.keys`) and `rows` (`<name>.rows`) for `inspect` and errors, and the collection in a stage's conflict error and `inspectStage`. |
+| `Collection.make(realm, { keyOf, equals?, name? })` | An empty collection with no schema; `undefined` rows are rejected. `equals` defaults to `Object.is`. `name` names its `keys` (`<name>.keys`) and `rows` (`<name>.rows`) for `Source.inspect` and errors, and the collection in a stage's conflict error and `Stage.inspect`. |
 | `$items.row(key)` | A computed value of that row, or `undefined`. |
 | `read.row($items, key)` | That row, or `undefined`: tracked as `read($items.row(key))` in a tracked place, and read without making a box where nothing tracks. |
 | `$items.keys`, `$items.rows` | Computed values of the keys, and of every row, in order. |
 | `write.upsert($items, row, { at? })` | Replaces the row under its key, or adds it first, or last with `{ at: "end" }`. |
 | `write.remove($items, key)` | Removes the row under `key`. |
 | `write.replaceAll($items, rows)` | Makes `rows` the collection's rows, in their order, keeping each one that is unchanged. |
-| `onRowChange($items, (change, read, write) => ...)` | Calls the listener for each row a write adds, replaces, or removes, inside that write's update; `change` holds `key`, `before`, and `after`. Returns the function that removes the listener. |
+| `Collection.onRowChange($items, (change, read, write) => ...)` | Calls the listener for each row a write adds, replaces, or removes, inside that write's update, except a `write.revert` or `write.replay` of a record made after the listener was added; `change` holds `key`, `before`, and `after`. Returns the function that removes the listener. |
 
 ## Row selection
 
 The selected key is one box beside the collection, and each row reads a
-flag of its own from a `computedFunction`. Moving the selection
+flag of its own from a `Computed.fn`. Moving the selection
 from one row to another changes two flags, so it rerenders the row that
 lost the selection and the row that gained it, and a first selection changes
 one; every other row's flag recomputes to the same `false`, and its
@@ -162,30 +174,11 @@ The flag and the row's own computed value live for different spans.
   whether a row reads it or not, and the collection keeps the key's box
   until the key is removed.
 
-## Sorted rows
-
-Rows in sorted order sit in one box, and `onRowChange` places each change by
-binary search. A `computed` that sorts `rows` sorts every row on each
-change. `$orders` and `Order` are the ones from
-[Indexes and sets](../guides/row-indexes.md).
-
-<!-- region rowIndexes.ts#sorted -->
-
-- Give the order a tie-breaker, such as the key. Binary search then finds
-  one place for each row, and removing `before` removes that row and not
-  another with the same amount.
-- Find `before` by the value it was reported with, never by reading the
-  collection: `replaceAll` writes every row before its first report. The
-  box holds the rows as reported for this reason.
-- Each change copies the sorted array. A `replaceAll` that adds n rows
-  reports n adds, so filling the box from empty copies O(n²) rows. Where
-  that cost shows, a persistent balanced tree in the box copies one path,
-  O(log n), per change.
-
 ## See also
 
-- [Updates](./updates.md): the update every write runs in, and `reconcile`.
-- [Indexes and sets](../guides/row-indexes.md): a set of keys, an index by another key, and a sum per group, kept with `onRowChange`.
+- [Updates](./updates.md): the update every write runs in, and `Collection.reconcile`.
+- [Views](./views.md): a sorted, filtered order, the keys of each group, and a total per group, kept a row at a time.
+- [Indexes and sets](../guides/row-indexes.md): a set of keys and a value per key, kept with `Collection.onRowChange`.
 - [Hooks](../react/hooks.md): every way a component reads.
-- [Collection fields](../effect/collections.md): a collection as a field of a `SchemaModel`, each row checked against a schema.
+- [Collection fields](../effect/collections.md): a collection as a field of a `Model.Schema`, each row checked against a schema.
 - [Equality and hashing](../effect/equality.md): what `equals` counts as an unchanged row.

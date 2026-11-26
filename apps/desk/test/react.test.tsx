@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { observe, untracked } from "@frondruntime/pinna";
+import { Realm, Source } from "@frondruntime/pinna";
 import { held, record, testRealm } from "@frondruntime/pinna/testing";
 import { RealmService } from "@frondruntime/pinna-effect";
 import { Effect, Exit, Queue, Stream } from "effect";
@@ -357,7 +357,7 @@ test("unmounting the last tile clears its live quote; a later tile waits and rem
     first.unmount();
     yield* actEffect(TestClock.adjust(10));
     expect(exchange.subscriptionCount()).toBe(1);
-    const retained = untracked(realm, (read) => read(desk.$prices));
+    const retained = Realm.untracked(realm, (read) => read(desk.$prices));
     expect(retained.current).not.toBeNull();
     expect(
       second.container.querySelector<HTMLButtonElement>(".execution-buttons button")?.disabled,
@@ -368,7 +368,7 @@ test("unmounting the last tile clears its live quote; a later tile waits and rem
     const messages = memory.log.length;
     yield* TestClock.adjust(10000);
     expect(memory.log).toHaveLength(messages);
-    expect(untracked(realm, (read) => read(desk.$prices))).toEqual({
+    expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual({
       current: null,
       previous: null,
       error: null,
@@ -388,7 +388,7 @@ test("unmounting the last tile clears its live quote; a later tile waits and rem
     ];
     expect(buttons).toHaveLength(2);
     expect(buttons.every((button) => button.disabled)).toBe(true);
-    expect(untracked(realm, (read) => read(desk.$canExecute))).toBe(false);
+    expect(Realm.untracked(realm, (read) => read(desk.$canExecute))).toBe(false);
     const requests = memory.log.filter((entry) => entry.kind === "request").length;
     act(() => {
       for (const button of buttons) button.click();
@@ -398,9 +398,9 @@ test("unmounting the last tile clears its live quote; a later tile waits and rem
     expect(memory.log.filter((entry) => entry.kind === "request")).toHaveLength(requests);
     yield* actEffect(TestClock.adjust(10));
     expect(exchange.subscriptionCount()).toBe(1);
-    expect(untracked(realm, (read) => read(desk.$prices)).previous).toEqual(retained.current);
+    expect(Realm.untracked(realm, (read) => read(desk.$prices)).previous).toEqual(retained.current);
     expect(buttons.every((button) => !button.disabled)).toBe(true);
-    const current = untracked(realm, (read) => read(desk.$prices)).current;
+    const current = Realm.untracked(realm, (read) => read(desk.$prices)).current;
     if (!current) throw new Error("missing fresh quote");
     expect(
       [...again.container.querySelectorAll(".quotes strong")].map((quote) => quote.textContent),
@@ -456,7 +456,9 @@ test("closing a priced workspace tile for ten seconds requires a fresh quote bef
     ];
     expect(buttons).toHaveLength(2);
     expect(buttons.every((button) => button.disabled)).toBe(true);
-    expect(untracked(realm, (read) => read(workspace.tile("EURUSD").$prices).current)).toBeNull();
+    expect(
+      Realm.untracked(realm, (read) => read(workspace.tile("EURUSD").$prices).current),
+    ).toBeNull();
     const requests = memory.log.filter((entry) => entry.address === "/execute").length;
     act(() => {
       for (const button of buttons) button.click();
@@ -474,9 +476,9 @@ test("closing a priced workspace tile for ten seconds requires a fresh quote bef
     ).toEqual(["1.08020", "1.08030"]);
     expect(buttons.every((button) => !button.disabled)).toBe(true);
     expect(view.container.querySelector('[aria-label="Price up"]')).not.toBeNull();
-    expect(untracked(realm, (read) => read(workspace.tile("EURUSD").$prices).previous)).toEqual(
-      price,
-    );
+    expect(
+      Realm.untracked(realm, (read) => read(workspace.tile("EURUSD").$prices).previous),
+    ).toEqual(price);
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,
@@ -547,7 +549,7 @@ for (const failure of [
       yield* TestClock.adjust(0);
       memory.sendRaw("prices/EURUSD", failure.raw);
       yield* TestClock.adjust(0);
-      const failed = untracked(realm, (read) => read(desk.$prices));
+      const failed = Realm.untracked(realm, (read) => read(desk.$prices));
       expect(failed).toEqual({
         current,
         previous: null,
@@ -556,25 +558,25 @@ for (const failure of [
       expect(memory.subscriptionCount()).toBe(0);
       expect(prices.values).toEqual([{ current, previous: null, error: null }, failed]);
       {
-        using _another = held(observe(desk.$display));
+        using _another = held(Source.observe(desk.$display));
         yield* TestClock.adjust(10000);
-        expect(untracked(realm, (read) => read(desk.$prices))).toEqual(failed);
+        expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual(failed);
         expect(prices.values).toHaveLength(2);
         expect(memory.log.filter((entry) => entry.kind === "subscribe")).toHaveLength(1);
       }
       prices.stop();
-      expect(untracked(realm, (read) => read(desk.$prices))).toEqual({
+      expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual({
         current: null,
         previous: null,
         error: null,
       });
       yield* TestClock.adjust(0);
-      using _again = held(observe(desk.$prices));
+      using _again = held(Source.observe(desk.$prices));
       yield* TestClock.adjust(0);
       const next = { ...current, time: new Date(10001).toISOString() };
       memory.send("prices/EURUSD", next);
       yield* TestClock.adjust(0);
-      expect(untracked(realm, (read) => read(desk.$prices))).toEqual({
+      expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual({
         current: next,
         previous: current,
         error: null,
@@ -603,28 +605,28 @@ test("the first tick after the last observer leaves keeps the earlier run's last
     const last = { ...first, bid: "1.08020", ask: "1.08030", time: new Date(1).toISOString() };
     {
       using prices = record(realm, (read) => read(desk.$prices));
-      using _another = held(observe(desk.$display));
+      using _another = held(Source.observe(desk.$display));
       yield* TestClock.adjust(0);
-      expect(untracked(realm, (read) => read(desk.$prices))).toEqual(initial);
+      expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual(initial);
       memory.send("prices/EURUSD", first);
       yield* TestClock.adjust(0);
       memory.send("prices/EURUSD", last);
       yield* TestClock.adjust(0);
       prices.stop();
       yield* TestClock.adjust(0);
-      expect(untracked(realm, (read) => read(desk.$prices))).toEqual({
+      expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual({
         current: last,
         previous: first,
         error: null,
       });
       expect(memory.subscriptionCount()).toBe(1);
     }
-    expect(untracked(realm, (read) => read(desk.$prices))).toEqual(initial);
+    expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual(initial);
     yield* TestClock.adjust(0);
     expect(memory.subscriptionCount()).toBe(0);
     using prices = record(realm, (read) => read(desk.$prices));
     yield* TestClock.adjust(0);
-    expect(untracked(realm, (read) => read(desk.$prices))).toEqual(initial);
+    expect(Realm.untracked(realm, (read) => read(desk.$prices))).toEqual(initial);
     expect(prices.values).toEqual([]);
     const next = { ...last, bid: "1.08040", ask: "1.08050", time: new Date(2).toISOString() };
     memory.send("prices/EURUSD", next);
@@ -662,10 +664,10 @@ test("a malformed price is visible as an error and releases the subscription", a
         ),
     });
     const desk = (yield* makeDesk(memory.transport)).tile("EURUSD");
-    using _hold = held(observe(desk.$display));
+    using _hold = held(Source.observe(desk.$display));
     yield* TestClock.adjust(0);
     expect(subscribed).toBe(false);
-    expect(untracked(realm, (read) => read(desk.$display)).error).toContain("SchemaError");
+    expect(Realm.untracked(realm, (read) => read(desk.$display)).error).toContain("SchemaError");
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,
@@ -865,7 +867,7 @@ test("unmount mid-request interrupts client work, closes every topic, and writes
     const buy = view.container.querySelector("button");
     if (!buy) throw new Error("missing Buy button");
     act(() => buy.click());
-    expect(untracked(realm, (read) => read(desk.$execution))).toBe("pending");
+    expect(Realm.untracked(realm, (read) => read(desk.$execution))).toBe("pending");
     expect(interrupted).toBe(false);
     view.unmount();
     const executionCount = executionValues.values.length;
@@ -880,7 +882,7 @@ test("unmount mid-request interrupts client work, closes every topic, and writes
     expect(executionValues.values).toHaveLength(executionCount);
     expect(tradeValues.values).toHaveLength(tradeCount);
     expect(memory.log).toHaveLength(logLength);
-    expect(untracked(realm, (read) => read(desk.trades.$trades.rows))).toEqual([]);
+    expect(Realm.untracked(realm, (read) => read(desk.trades.$trades.rows))).toEqual([]);
   }).pipe(
     Effect.provideService(RealmService, realm),
     Effect.scoped,
@@ -1021,8 +1023,11 @@ test("window renders only entering or changed visible rows; controls and ticks s
     act(() => second.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true })));
     act(() => third.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
     act(() => second.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true })));
-    expect(untracked(realm, (read) => read(book.$selection))).toEqual(["window-8", "window-10"]);
-    const saved = untracked(realm, (read) => ({
+    expect(Realm.untracked(realm, (read) => read(book.$selection))).toEqual([
+      "window-8",
+      "window-10",
+    ]);
+    const saved = Realm.untracked(realm, (read) => ({
       sort: read(book.$sort),
       filter: read(book.$filter),
       scrollTop: read(book.$scrollTop),
@@ -1036,7 +1041,7 @@ test("window renders only entering or changed visible rows; controls and ticks s
     using remounted = mount(element);
     yield* actEffect(TestClock.adjust(0));
     expect(
-      untracked(realm, (read) => ({
+      Realm.untracked(realm, (read) => ({
         sort: read(book.$sort),
         filter: read(book.$filter),
         scrollTop: read(book.$scrollTop),

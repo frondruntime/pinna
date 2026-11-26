@@ -1,74 +1,80 @@
 /**
  * Pinna on Effect Schema. Every name of `@frondruntime/pinna` is re-exported
- * as it is, so `box`, `collection`, and `Model` check nothing here either.
- * The names this package adds say they use a schema: `schemaBox`,
- * `schemaCollection`, `SchemaModel` with its `BoxField` and
- * `CollectionField`, and `reconcileSchema`, whose `equals` defaults to the
- * schema's. `decode` reads wire data into a realm; a `FromContext` field
+ * as it is, so `Box.make`, `Collection.make`, and `Model` check nothing here either.
+ * The names this package adds say they use a schema: `Box.schema`,
+ * `Collection.schema`, `Model.Schema` with its `Model.boxField` and
+ * `Model.collectionField`, and `Collection.reconcile`, whose `equals` defaults to the
+ * schema's. `Model.decode` reads wire data into a realm, and `Model.restore`
+ * reads it into a held instance; a `Model.context` field
  * holds a service the caller provides, as any Effect service is. The Effect
- * programs live for the caller's scope: `watchScoped` and `observeScoped`
- * next to the plain `watch` and `observe`, `changes`, `fromStream`, and
- * `whileObserved`; `withStage` holds a section's writes in a stage until it
- * succeeds.
+ * programs live for the caller's scope: `Program.watchScoped` and `Source.observeScoped`
+ * next to the plain `Realm.watch` and `Source.observe`, `Program.changes`, `Program.updates`, `Program.fromStream`, and
+ * `Program.whileObserved`; `Stage.scoped` holds a section's writes in a stage until it
+ * succeeds, and fails with pinna's own `StageConflictError` on a conflict;
+ * `View.orderedScoped`, `View.groupedScoped`, and `View.totalsScoped` make a
+ * view that the scope disposes.
  */
 export type {
-  Atom,
-  Box,
-  Collection,
+  AutorunOptions,
+  BoxChange,
+  CollectionChange,
   CollectionOptions,
-  Computed,
   Draft,
   Equals,
+  GroupedView,
+  GroupedViewOptions,
+  GroupTotal,
   Inspection,
-  Options,
+  ModelData,
+  OrderedView,
+  OrderedViewOptions,
+  PinnaErrorByTag,
+  PinnaErrorTag,
+  PinnaUsageCode,
   Read,
-  Realm,
   RealmOptions,
-  Recipe,
+  RealmStatus,
   ReconcileOptions,
+  RestoreData,
   RowChange,
   RowListener,
-  Stage,
+  Scheduler,
+  Snapshot,
   StageInspection,
   StageOptions,
   StageStatus,
+  TotalArithmetic,
+  TotalsView,
+  TotalsViewOptions,
+  UpdateListener,
+  UpdateOptions,
+  UpdateRecipe,
+  UpdateRecord,
   UpsertOptions,
+  ValueOptions,
+  ViewStatus,
+  WatchOptions,
   Write,
 } from "@frondruntime/pinna";
 export {
-  applyStage,
-  atom,
-  autorun,
-  box,
-  collection,
-  computed,
-  computedFunction,
-  createRealm,
-  dropStage,
-  inspect,
-  inspectStage,
-  isTracking,
-  Model,
-  observe,
-  onObserved,
-  onRowChange,
-  openStage,
-  realmRead,
-  reconcile,
+  Atom,
+  type AtomModule,
+  Computed,
+  type ComputedModule,
+  isPinnaError,
+  PinnaError,
+  PinnaUsageError,
   StageClosedError,
   StageConflictError,
-  stageRead,
-  stageStatus,
-  stageUpdate,
-  untracked,
-  update,
-  watch,
+  ValueRejectedError,
 } from "@frondruntime/pinna";
-export { schemaBox } from "./box.ts";
-export { BoxField, CollectionField, SchemaModel } from "./class.ts";
-export { schemaCollection } from "./collection.ts";
-export { FromContext } from "./context.ts";
-export { decode, RealmService } from "./decode.ts";
-export { changes, fromStream, observeScoped, watchScoped, whileObserved } from "./programs.ts";
-export { reconcileSchema } from "./reconcile.ts";
-export { StageConflict, withStage } from "./stage.ts";
+export { DecodeError, RealmService } from "./decode.ts";
+export { Box, type BoxModule } from "./modules/box.ts";
+export { Collection, type CollectionModule } from "./modules/collection.ts";
+export { Model, type ModelModule } from "./modules/model.ts";
+export { Program, type ProgramModule } from "./modules/program.ts";
+export { Realm, type RealmModule } from "./modules/realm.ts";
+export { Source, type SourceModule } from "./modules/source.ts";
+export { Stage, type StageModule } from "./modules/stage.ts";
+export { View, type ViewModule } from "./modules/view.ts";
+export type { ScopedStageOptions } from "./stage.ts";

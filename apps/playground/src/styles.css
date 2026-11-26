@@ -4,11 +4,13 @@
   --muted: #777;
   --badge: #e8f0ff;
   --badge-text: #2451b3;
+  --error: #b3261e;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --badge: #1d2b4a;
     --badge-text: #9db8ff;
+    --error: #ff8a80;
   }
 }
 body {
@@ -51,4 +53,80 @@ pre {
   white-space: pre-wrap;
   word-break: break-all;
   font-size: 12px;
+}
+
+.sign-in {
+  display: grid;
+  gap: 12px;
+  max-width: 360px;
+}
+.field {
+  display: grid;
+  gap: 4px;
+}
+.field input {
+  font: inherit;
+  padding: 6px 8px;
+}
+.field input[aria-invalid="true"] {
+  border-color: var(--error);
+  outline-color: var(--error);
+}
+.field .reveal {
+  justify-self: start;
+}
+.error {
+  color: var(--error);
+  margin: 0;
+}
+.ticket {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+}
+.segmented {
+  display: flex;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.segmented button {
+  flex: 1;
+}
+.input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.input-row input {
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.unit {
+  color: var(--muted);
+}
+.summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.summary dd {
+  margin: 0;
+  text-align: right;
+}
+.price {
+  font-variant-numeric: tabular-nums;
+}
+.check {
+  display: flex;
+  align-items: center;
+}
+button.buy,
+button.sell {
+  padding: 8px;
+  font-weight: bold;
 }

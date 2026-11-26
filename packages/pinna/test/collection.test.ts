@@ -1,25 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
-  type Collection,
-  collection,
-  computed,
-  computedFunction,
-  createRealm,
-  observe,
-  onObserved,
+  Collection,
+  Computed,
   type Read,
-  type Realm,
-  untracked,
-  update,
+  Realm,
+  Source,
+  Stage,
+  View,
   type Write,
-  watch,
 } from "../src/index.ts";
+import { retainedKeys } from "../src/testing/index.ts";
 import { keptRead, keptWrite } from "./kept.ts";
 import { expectRealmAtRest } from "./rest.ts";
 
 /**
- * The plain `collection` has no schema and compares rows by `equals`, or by
- * identity without one. Its tracking is pinna-effect's `CollectionField`'s,
+ * The plain `Collection.make` has no schema and compares rows by `equals`, or by
+ * identity without one. Its tracking is pinna-effect's `Model.collectionField`'s,
  * tested there in full; these tests cover what the plain entry adds.
  */
 
@@ -39,7 +35,7 @@ const watchAll = <Name extends string>(
   const stops = (Object.keys(selects) as Array<Name>).map((name) => {
     const values: Array<unknown> = [];
     seen[name] = values;
-    return watch(realm, selects[name], (value) => {
+    return Realm.watch(realm, selects[name], (value) => {
       values.push(value);
     });
   });
@@ -54,25 +50,25 @@ const watchAll = <Name extends string>(
 };
 
 const keysOf = (realm: Realm, rows: Collection<string, Row>) =>
-  untracked(realm, (read) => read(rows.keys));
+  Realm.untracked(realm, (read) => read(rows.keys));
 const priceOf = (realm: Realm, rows: Collection<string, Row>, id: string) =>
-  untracked(realm, (read) => read(rows.row(id))?.price);
+  Realm.untracked(realm, (read) => read(rows.row(id))?.price);
 
 describe("collection", () => {
-  for (const materialized of [false, true]) {
+  for (const wasRead of [false, true]) {
     for (const operation of ["upsert", "replaceAll"] as const) {
-      test(`${operation} rejects undefined and rolls back with a cell ${materialized}`, () => {
-        const realm = createRealm();
-        const rows = collection<number, number | undefined>(realm, { keyOf: () => 1 });
-        update(realm, (_read, write) => {
+      test(`${operation} rejects undefined and rolls back ${wasRead ? "on a row that was read" : "on a row never read"}`, () => {
+        const realm = Realm.make();
+        const rows = Collection.make<number, number | undefined>(realm, { keyOf: () => 1 });
+        Realm.update(realm, (_read, write) => {
           write.upsert(rows, 7);
         });
-        if (materialized) {
-          untracked(realm, (read) => read(rows.row(1)));
+        if (wasRead) {
+          Realm.untracked(realm, (read) => read(rows.row(1)));
         }
 
         expect(() =>
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write.upsert(rows, 8);
             if (operation === "upsert") {
               write.upsert(rows, undefined);
@@ -81,20 +77,22 @@ describe("collection", () => {
             }
           }),
         ).toThrow("pinna: a collection row cannot be undefined");
-        expect(untracked(realm, (read) => read(rows.rows))).toEqual([7]);
-        expect(untracked(realm, (read) => read.row(rows, 1))).toBe(7);
+        expect(Realm.untracked(realm, (read) => read(rows.rows))).toEqual([7]);
+        expect(Realm.untracked(realm, (read) => read.row(rows, 1))).toBe(7);
         expectRealmAtRest(realm);
       });
     }
   }
 
   test("replaceAll rejects undefined before changing rows when caught inside the update", () => {
-    const realm = createRealm();
-    const rows = collection<number, number | undefined>(realm, { keyOf: (value) => value ?? 0 });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<number, number | undefined>(realm, {
+      keyOf: (value) => value ?? 0,
+    });
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, 7);
     });
-    update(realm, (read, write) => {
+    Realm.update(realm, (read, write) => {
       expect(() => write.replaceAll(rows, [8, undefined])).toThrow(
         "pinna: a collection row cannot be undefined",
       );
@@ -105,22 +103,22 @@ describe("collection", () => {
   });
 
   test("starts empty and takes rows from upsert, remove, and replaceAll", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
     expect(keysOf(realm, rows)).toEqual([]);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 1 });
       write.upsert(rows, { id: "b", price: 2 }, { at: "end" });
     });
     expect(keysOf(realm, rows)).toEqual(["a", "b"]);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.remove(rows, "a");
     });
     expect(keysOf(realm, rows)).toEqual(["b"]);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "c", price: 3 },
         { id: "b", price: 4 },
@@ -128,14 +126,16 @@ describe("collection", () => {
     });
     expect(keysOf(realm, rows)).toEqual(["c", "b"]);
     expect(priceOf(realm, rows, "b")).toBe(4);
-    expect(untracked(realm, (read) => read(rows.rows).map((row) => row.price))).toEqual([3, 4]);
+    expect(Realm.untracked(realm, (read) => read(rows.rows).map((row) => row.price))).toEqual([
+      3, 4,
+    ]);
     expectRealmAtRest(realm);
   });
 
   test("a write to one key notifies that key's readers only", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -147,7 +147,7 @@ describe("collection", () => {
       keys: (read) => read(rows.keys),
     });
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 10 });
     });
 
@@ -156,18 +156,18 @@ describe("collection", () => {
   });
 
   test("without equals, a new object under a key notifies its readers", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
     const a = { id: "a", price: 1 };
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, a);
     });
     const { seen, stop } = watchAll(realm, { a: (read) => read(rows.row("a")) });
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, a);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 1 });
     });
 
@@ -176,36 +176,36 @@ describe("collection", () => {
   });
 
   test("with equals, an equal row notifies nobody and the collection keeps the row it holds", () => {
-    const realm = createRealm();
-    const rows = collection(realm, {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, {
       keyOf,
       equals: (previous, next) => previous.price === next.price,
     });
     const a = { id: "a", price: 1 };
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, a);
     });
     const { seen, stop } = watchAll(realm, { a: (read) => read(rows.row("a")) });
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 1 });
       write.replaceAll(rows, [{ id: "a", price: 1 }]);
     });
 
     expect(seen.a).toEqual([]);
-    expect(untracked(realm, (read) => read(rows.row("a")))).toBe(a);
+    expect(Realm.untracked(realm, (read) => read(rows.row("a")))).toBe(a);
     stop();
   });
 
   test("a repeated key throws from replaceAll and writes nothing", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 1 });
     });
 
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.replaceAll(rows, [
           { id: "b", price: 1 },
           { id: "b", price: 2 },
@@ -217,9 +217,9 @@ describe("collection", () => {
   });
 
   test("a failed update puts back the keys and every row", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -231,7 +231,7 @@ describe("collection", () => {
     });
 
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.upsert(rows, { id: "a", price: 10 });
         write.remove(rows, "b");
         write.upsert(rows, { id: "c", price: 3 });
@@ -248,12 +248,12 @@ describe("collection", () => {
   });
 
   test("a row read inside a failed update for a key the update added reads as missing after", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
     const { seen, stop } = watchAll(realm, { c: (read) => read(rows.row("c"))?.price });
 
     expect(() =>
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write.upsert(rows, { id: "c", price: 3 });
         expect(read(rows.row("c"))?.price).toBe(3);
         throw new Error("the recipe fails");
@@ -262,7 +262,7 @@ describe("collection", () => {
 
     expect(priceOf(realm, rows, "c")).toBeUndefined();
     expect(keysOf(realm, rows)).toEqual([]);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "c", price: 4 });
     });
     expect(priceOf(realm, rows, "c")).toBe(4);
@@ -272,14 +272,14 @@ describe("collection", () => {
   });
 
   test("a row first read inside a failed update after a write reads its old value after", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "a", price: 1 }]);
     });
 
     expect(() =>
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write.upsert(rows, { id: "a", price: 10 });
         expect(read(rows.row("a"))?.price).toBe(10);
         throw new Error("the recipe fails");
@@ -288,7 +288,7 @@ describe("collection", () => {
 
     expect(priceOf(realm, rows, "a")).toBe(1);
     const { seen, stop } = watchAll(realm, { a: (read) => read(rows.row("a"))?.price });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 5 });
     });
     expect(seen).toEqual({ a: [5] });
@@ -297,14 +297,14 @@ describe("collection", () => {
   });
 
   test("a failed replaceAll puts back a row first read inside it", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "a", price: 1 }]);
     });
 
     expect(() =>
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write.replaceAll(rows, [
           { id: "a", price: 10 },
           { id: "b", price: 2 },
@@ -317,14 +317,14 @@ describe("collection", () => {
 
     expect(priceOf(realm, rows, "a")).toBe(1);
     expect(priceOf(realm, rows, "b")).toBeUndefined();
-    expect(untracked(realm, (read) => read(rows.rows))).toEqual([{ id: "a", price: 1 }]);
+    expect(Realm.untracked(realm, (read) => read(rows.rows))).toEqual([{ id: "a", price: 1 }]);
     expectRealmAtRest(realm);
   });
 
   test("a failed update puts back a removed row its readers read", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -337,7 +337,7 @@ describe("collection", () => {
       (write: Write) => write.replaceAll(rows, [{ id: "a", price: 1 }]),
     ]) {
       expect(() =>
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           remove(write);
           throw new Error("the recipe fails");
         }),
@@ -346,7 +346,7 @@ describe("collection", () => {
 
     expect(seen).toEqual({ b: [] });
     expect(priceOf(realm, rows, "b")).toBe(2);
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "b", price: 7 });
     });
     expect(seen).toEqual({ b: [7] });
@@ -355,9 +355,9 @@ describe("collection", () => {
   });
 
   test("a reader of every row reruns on a write to a row nobody reads alone", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -367,10 +367,10 @@ describe("collection", () => {
       prices: (read) => read(rows.rows).map((row) => row.price),
     });
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "b", price: 5 });
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 6 },
         { id: "b", price: 5 },
@@ -388,54 +388,54 @@ describe("collection", () => {
   });
 
   test("a key's row keeps its identity through a failed update", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "a", price: 1 }]);
     });
     const row = rows.row("a");
 
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.remove(rows, "a");
         throw new Error("the recipe fails");
       }),
     ).toThrow("the recipe fails");
     expect(() =>
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write.replaceAll(rows, []);
         throw new Error("the recipe fails");
       }),
     ).toThrow("the recipe fails");
 
     expect(rows.row("a")).toBe(row);
-    expect(untracked(realm, (read) => read(row))?.price).toBe(1);
+    expect(Realm.untracked(realm, (read) => read(row))?.price).toBe(1);
     expectRealmAtRest(realm);
   });
 
   test("a write kept past its update throws", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
     const write = keptWrite(realm);
 
-    expect(() => write.upsert(rows, { id: "a", price: 1 })).toThrow("inside update");
-    expect(() => write.remove(rows, "a")).toThrow("inside update");
-    expect(() => write.replaceAll(rows, [])).toThrow("inside update");
+    expect(() => write.upsert(rows, { id: "a", price: 1 })).toThrow("inside Realm.update");
+    expect(() => write.remove(rows, "a")).toThrow("inside Realm.update");
+    expect(() => write.replaceAll(rows, [])).toThrow("inside Realm.update");
     expectRealmAtRest(realm);
   });
 });
 
 describe("a collection's keys", () => {
   test("are observed while anything reads the collection, so a feed can run for exactly that long", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf: (row) => row.id });
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf: (row) => row.id });
     const log: Array<string> = [];
-    onObserved(rows.keys, () => {
+    Source.onObserved(rows.keys, () => {
       log.push("start");
       return () => log.push("stop");
     });
     for (const reader of [rows.keys, rows.rows, rows.row("a")]) {
-      const release = observe(reader);
+      const release = Source.observe(reader);
       expect(log.at(-1)).toBe("start");
       release();
       expect(log.at(-1)).toBe("stop");
@@ -456,19 +456,19 @@ const keptBy = (rows: Collection<string, Row>) => {
 };
 
 describe("read.row", () => {
-  test("where nothing tracks, it reads the held row and makes no cell or row computed", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+  test("where nothing tracks, an untracked read of a held row starts nothing", () => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
       ]);
     });
 
-    expect(untracked(realm, (read) => read.row(rows, "a")?.price)).toBe(1);
-    expect(untracked(realm, (read) => read.row(rows, "c"))).toBeUndefined();
-    update(realm, (read, write) => {
+    expect(Realm.untracked(realm, (read) => read.row(rows, "a")?.price)).toBe(1);
+    expect(Realm.untracked(realm, (read) => read.row(rows, "c"))).toBeUndefined();
+    Realm.update(realm, (read, write) => {
       const row = read.row(rows, "b");
       if (row !== undefined) {
         write.upsert(rows, { ...row, price: row.price + 1 });
@@ -476,31 +476,31 @@ describe("read.row", () => {
       expect(read.row(rows, "b")?.price).toBe(3);
     });
 
-    expect(untracked(realm, (read) => read.row(rows, "b")?.price)).toBe(3);
+    expect(Realm.untracked(realm, (read) => read.row(rows, "b")?.price)).toBe(3);
     expect(keptBy(rows)).toEqual({ cells: 0, rows: 0 });
     expectRealmAtRest(realm);
   });
 
   test("with equals, it reads the row the collection kept", () => {
-    const realm = createRealm();
-    const rows = collection(realm, {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, {
       keyOf,
       equals: (left: Row, right: Row) => left.price === right.price,
     });
     const first = { id: "a", price: 1 };
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, first);
       write.upsert(rows, { id: "a", price: 1 });
     });
 
-    expect(untracked(realm, (read) => read.row(rows, "a"))).toBe(first);
+    expect(Realm.untracked(realm, (read) => read.row(rows, "a"))).toBe(first);
     expectRealmAtRest(realm);
   });
 
   test("after a failed update, it reads every row as it was before", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -508,7 +508,7 @@ describe("read.row", () => {
     });
 
     expect(() =>
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write.upsert(rows, { id: "a", price: 10 });
         write.remove(rows, "b");
         write.upsert(rows, { id: "c", price: 3 });
@@ -519,17 +519,17 @@ describe("read.row", () => {
       }),
     ).toThrow("the recipe fails");
 
-    expect(untracked(realm, (read) => read.row(rows, "a")?.price)).toBe(1);
-    expect(untracked(realm, (read) => read.row(rows, "b")?.price)).toBe(2);
-    expect(untracked(realm, (read) => read.row(rows, "c"))).toBeUndefined();
+    expect(Realm.untracked(realm, (read) => read.row(rows, "a")?.price)).toBe(1);
+    expect(Realm.untracked(realm, (read) => read.row(rows, "b")?.price)).toBe(2);
+    expect(Realm.untracked(realm, (read) => read.row(rows, "c"))).toBeUndefined();
     expect(keptBy(rows)).toEqual({ cells: 0, rows: 0 });
     expectRealmAtRest(realm);
   });
 
   test("in a tracked place, it tracks that key alone", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -540,16 +540,16 @@ describe("read.row", () => {
       c: (read) => read.row(rows, "c")?.price,
     });
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "b", price: 20 });
     });
     expect(seen).toEqual({ a: [], c: [] });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 10 });
       write.upsert(rows, { id: "c", price: 3 });
     });
     expect(seen).toEqual({ a: [10], c: [3] });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.remove(rows, "a");
     });
     expect(seen).toEqual({ a: [10, undefined], c: [3] });
@@ -558,18 +558,18 @@ describe("read.row", () => {
   });
 
   test("a reader that comes after an untracked read.row of a key still reruns on its writes", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 1 });
     });
-    expect(untracked(realm, (read) => read.row(rows, "a")?.price)).toBe(1);
+    expect(Realm.untracked(realm, (read) => read.row(rows, "a")?.price)).toBe(1);
     const { seen, stop } = watchAll(realm, {
       a: (read) => read(rows.row("a"))?.price,
       rowA: (read) => read.row(rows, "a")?.price,
     });
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 2 });
     });
     expect(seen).toEqual({ a: [2], rowA: [2] });
@@ -578,36 +578,36 @@ describe("read.row", () => {
   });
 
   test("it throws outside every place, and for a collection of another realm", () => {
-    const realm = createRealm();
-    const other = createRealm({ name: "other" });
-    const rows = collection(realm, { keyOf });
+    const realm = Realm.make();
+    const other = Realm.make({ name: "other" });
+    const rows = Collection.make(realm, { keyOf });
     const read = keptRead(realm);
 
     expect(() => read.row(rows, "a")).toThrow("read.row($collection, key) runs outside a place");
-    expect(() => untracked(other, (read) => read.row(rows, "a"))).toThrow(
+    expect(() => Realm.untracked(other, (read) => read.row(rows, "a"))).toThrow(
       "read.row($observable) is handed an observable of another realm",
     );
-    expect(untracked(realm, () => read.row(rows, "a"))).toBeUndefined();
+    expect(Realm.untracked(realm, () => read.row(rows, "a"))).toBeUndefined();
     expectRealmAtRest(realm);
     expectRealmAtRest(other);
   });
 
   test("in a computed value nothing observes, it reads the row as of each read", () => {
-    const realm = createRealm();
-    const rows = collection(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 1 });
     });
-    const price = computed(realm, (read) => read.row(rows, "a")?.price);
-    const priceOf = computedFunction(realm, (read, id: string) => read.row(rows, id)?.price);
+    const price = Computed.make(realm, (read) => read.row(rows, "a")?.price);
+    const priceOf = Computed.fn(realm, (read, id: string) => read.row(rows, id)?.price);
 
-    expect(untracked(realm, (read) => [read(price), read(priceOf("a"))])).toEqual([1, 1]);
-    update(realm, (_read, write) => {
+    expect(Realm.untracked(realm, (read) => [read(price), read(priceOf("a"))])).toEqual([1, 1]);
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 2 });
     });
-    expect(untracked(realm, (read) => [read(price), read(priceOf("a"))])).toEqual([2, 2]);
+    expect(Realm.untracked(realm, (read) => [read(price), read(priceOf("a"))])).toEqual([2, 2]);
     const { seen, stop } = watchAll(realm, { price: (read) => read(price) });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "a", price: 3 });
     });
     expect(seen).toEqual({ price: [3] });
@@ -627,19 +627,19 @@ const keptValueOf = (value: unknown): unknown =>
 
 describe("a collection's rows", () => {
   test("nothing observing them, a write that changes the rows lets go of the rows read before", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
       ]);
     });
     const reader = rows.rows;
-    const before = untracked(realm, (read) => read(reader));
+    const before = Realm.untracked(realm, (read) => read(reader));
     expect(keptRowsOf(rows)).toBe(before);
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 3 },
         { id: "c", price: 4 },
@@ -648,7 +648,7 @@ describe("a collection's rows", () => {
     // A `replaceAll` would otherwise keep the whole earlier generation alive.
     expect(keptRowsOf(rows)).toBeUndefined();
     expect(rows.rows).toBe(reader);
-    expect(untracked(realm, (read) => read(reader))).toEqual([
+    expect(Realm.untracked(realm, (read) => read(reader))).toEqual([
       { id: "a", price: 3 },
       { id: "c", price: 4 },
     ]);
@@ -658,20 +658,20 @@ describe("a collection's rows", () => {
       (w: Write) => w.upsert(rows, { id: "a", price: 6 }),
       (w: Write) => w.remove(rows, "c"),
     ]) {
-      untracked(realm, (read) => read(reader));
-      update(realm, (_read, w) => {
+      Realm.untracked(realm, (read) => read(reader));
+      Realm.update(realm, (_read, w) => {
         write(w);
       });
       expect(keptRowsOf(rows)).toBeUndefined();
     }
-    expect(untracked(realm, (read) => read(reader).map((row) => row.price))).toEqual([5, 6]);
+    expect(Realm.untracked(realm, (read) => read(reader).map((row) => row.price))).toEqual([5, 6]);
     expectRealmAtRest(realm);
   });
 
   test("nothing observing it, a key's row lets go of the row a write replaced", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -685,12 +685,12 @@ describe("a collection's rows", () => {
       ).rowsByKey.get(key)?.source.value;
     const a = rows.row("a");
     const b = rows.row("b");
-    untracked(realm, (read) => [read(a), read(b)]);
+    Realm.untracked(realm, (read) => [read(a), read(b)]);
     // A row read while observed and then released keeps its value as well.
-    observe(b)();
+    Source.observe(b)();
     expect(keptRowOf("a")).toEqual({ id: "a", price: 1 });
 
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 3 },
         { id: "b", price: 2 },
@@ -698,45 +698,45 @@ describe("a collection's rows", () => {
     });
     // Same key, new row: the row computed would otherwise keep the old one.
     expect(keptRowOf("a")).toBeUndefined();
-    expect(untracked(realm, (read) => read(a))).toEqual({ id: "a", price: 3 });
+    expect(Realm.untracked(realm, (read) => read(a))).toEqual({ id: "a", price: 3 });
     expect(keptRowOf("b")).toBeUndefined();
 
-    untracked(realm, (read) => read(b));
-    update(realm, (_read, write) => {
+    Realm.untracked(realm, (read) => read(b));
+    Realm.update(realm, (_read, write) => {
       write.upsert(rows, { id: "b", price: 4 });
     });
     expect(keptRowOf("b")).toBeUndefined();
     expect(keptRowOf("a")).toEqual({ id: "a", price: 3 });
-    expect(untracked(realm, (read) => read(b))).toEqual({ id: "b", price: 4 });
+    expect(Realm.untracked(realm, (read) => read(b))).toEqual({ id: "b", price: 4 });
     expectRealmAtRest(realm);
   });
 
   test("a write that changes nothing keeps the rows read before", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf });
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
     const row = { id: "a", price: 1 };
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [row]);
     });
-    const before = untracked(realm, (read) => read(rows.rows));
-    update(realm, (_read, write) => {
+    const before = Realm.untracked(realm, (read) => read(rows.rows));
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [row]);
       write.upsert(rows, row);
     });
     expect(keptRowsOf(rows)).toBe(before);
-    expect(untracked(realm, (read) => read(rows.rows))).toBe(before);
+    expect(Realm.untracked(realm, (read) => read(rows.rows))).toBe(before);
   });
 
   test("observed, they keep their value and report each write", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "a", price: 1 }]);
     });
     const { seen, stop } = watchAll(realm, {
       prices: (read) => read(rows.rows).map((row) => row.price),
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "b", price: 2 }]);
     });
     expect(keptRowsOf(rows)).toEqual([{ id: "b", price: 2 }]);
@@ -746,15 +746,15 @@ describe("a collection's rows", () => {
   });
 
   test("a failed update that let go of them reads the rows it put back", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "a", price: 1 }]);
     });
-    untracked(realm, (read) => read(rows.rows));
+    Realm.untracked(realm, (read) => read(rows.rows));
     let inside: ReadonlyArray<Row> = [];
     expect(() =>
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write.replaceAll(rows, [{ id: "b", price: 2 }]);
         inside = read(rows.rows);
         write.upsert(rows, { id: "c", price: 3 });
@@ -762,14 +762,14 @@ describe("a collection's rows", () => {
       }),
     ).toThrow("the recipe fails");
     expect(inside).toEqual([{ id: "b", price: 2 }]);
-    expect(untracked(realm, (read) => read(rows.rows))).toEqual([{ id: "a", price: 1 }]);
+    expect(Realm.untracked(realm, (read) => read(rows.rows))).toEqual([{ id: "a", price: 1 }]);
     expectRealmAtRest(realm);
   });
 
   test("a row computed a caller holds lets go of the row of a key that left", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [
         { id: "a", price: 1 },
         { id: "b", price: 2 },
@@ -777,23 +777,23 @@ describe("a collection's rows", () => {
     });
     const a = rows.row("a");
     const b = rows.row("b");
-    untracked(realm, (read) => [read(a), read(b)]);
-    update(realm, (_read, write) => {
+    Realm.untracked(realm, (read) => [read(a), read(b)]);
+    Realm.update(realm, (_read, write) => {
       write.remove(rows, "a");
     });
     expect(keptValueOf(a)).toBeUndefined();
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "c", price: 3 }]);
     });
     expect(keptValueOf(b)).toBeUndefined();
-    expect(untracked(realm, (read) => [read(a), read(b)])).toEqual([undefined, undefined]);
+    expect(Realm.untracked(realm, (read) => [read(a), read(b)])).toEqual([undefined, undefined]);
     expectRealmAtRest(realm);
   });
 
   test("a failed update lets go of the rows read inside it", () => {
-    const realm = createRealm();
-    const rows = collection<string, Row>(realm, { keyOf });
-    update(realm, (_read, write) => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(rows, [{ id: "a", price: 1 }]);
     });
     const a = rows.row("a");
@@ -803,7 +803,7 @@ describe("a collection's rows", () => {
       (w: Write) => w.remove(rows, "a"),
     ]) {
       expect(() =>
-        update(realm, (read, w) => {
+        Realm.update(realm, (read, w) => {
           write(w);
           read(a);
           read(rows.rows);
@@ -813,11 +813,133 @@ describe("a collection's rows", () => {
       // The rolled-back rows would otherwise stay reachable until the next read.
       expect(keptValueOf(a)).toBeUndefined();
       expect(keptRowsOf(rows)).toBeUndefined();
-      expect(untracked(realm, (read) => [read(a), read(rows.rows)])).toEqual([
+      expect(Realm.untracked(realm, (read) => [read(a), read(rows.rows)])).toEqual([
         { id: "a", price: 1 },
         [{ id: "a", price: 1 }],
       ]);
     }
     expectRealmAtRest(realm);
+  });
+});
+
+describe("prototype-named keys", () => {
+  const names = ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf"] as const;
+
+  test("a key named like an Object.prototype member is held, read, and removed as any other", () => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    Realm.update(realm, (_read, write) => {
+      for (const [index, id] of names.entries()) {
+        write.upsert(rows, { id, price: index }, { at: "end" });
+      }
+    });
+    expect(keysOf(realm, rows)).toEqual([...names]);
+    expect(names.map((id) => priceOf(realm, rows, id))).toEqual([0, 1, 2, 3, 4]);
+    expect(priceOf(realm, rows, "missing")).toBeUndefined();
+
+    Realm.update(realm, (_read, write) => {
+      write.remove(rows, "__proto__");
+    });
+    expect(keysOf(realm, rows)).toEqual(names.slice(1));
+    expect(Realm.untracked(realm, (read) => read(rows.row("__proto__")))).toBeUndefined();
+    expectRealmAtRest(realm);
+  });
+
+  test("a row read under a prototype-named key it does not hold is undefined, and follows a later upsert", () => {
+    const realm = Realm.make();
+    const rows = Collection.make<string, Row>(realm, { keyOf });
+    const seen: Array<number | undefined> = [];
+    const stop = Realm.watch(
+      realm,
+      (read) => read(rows.row("constructor"))?.price,
+      (price) => {
+        seen.push(price);
+      },
+    );
+    expect(Realm.untracked(realm, (read) => read(rows.row("toString")))).toBeUndefined();
+    Realm.update(realm, (_read, write) => {
+      write.upsert(rows, { id: "constructor", price: 9 });
+    });
+    expect(seen).toEqual([9]);
+    stop();
+    expectRealmAtRest(realm);
+  });
+});
+
+describe("a key stored as the Map stores it", () => {
+  test("keys, a view, a row listener, and a record hand out 0 for a row keyed -0, base or staged", () => {
+    const realm = Realm.make();
+    const $rows = Collection.make(realm, { keyOf: (row: { id: number; value: number }) => row.id });
+    const view = View.ordered($rows, { compare: () => (left, right) => left.value - right.value });
+    const heard: Array<unknown> = [];
+    const recorded: Array<unknown> = [];
+    Collection.onRowChange($rows, (change) => {
+      heard.push(change.key);
+    });
+    Realm.onUpdate(realm, (record) => {
+      for (const change of record.collections)
+        for (const row of change.rows) recorded.push(row.key);
+    });
+    const keysNow = () =>
+      Realm.untracked(realm, (read) => [...read($rows.keys), ...read(view.keys)]);
+    Realm.update(realm, (_read, write) => write.upsert($rows, { id: -0, value: 1 }));
+    Realm.update(realm, (_read, write) => write.upsert($rows, { id: 0, value: 2 }));
+    Realm.update(realm, (_read, write) => write.upsert($rows, { id: -0, value: 3 }));
+    expect(keysNow().every((key) => Object.is(key, 0))).toBe(true);
+    const guess = Stage.make(realm, { visible: true });
+    Stage.update(guess, (_read, write) => write.upsert($rows, { id: -0, value: 4 }));
+    expect(keysNow().every((key) => Object.is(key, 0))).toBe(true);
+    Stage.apply(guess);
+    Realm.update(realm, (_read, write) => write.remove($rows, -0));
+    expect(heard.length).toBeGreaterThan(4);
+    expect(heard.every((key) => Object.is(key, 0))).toBe(true);
+    expect(recorded.every((key) => Object.is(key, 0))).toBe(true);
+    expect(keysNow()).toEqual([]);
+    View.dispose(view);
+    Realm.dispose(realm);
+  });
+});
+
+describe("what a collection keeps past an update", () => {
+  test("an order changed in place after a copy keeps no removed key once the update ends", () => {
+    const realm = Realm.make();
+    const $rows = Collection.make(realm, { keyOf: (row: object) => row });
+    const removed: Array<object> = [];
+    for (let round = 0; round < 12; round++) {
+      Realm.update(realm, (read, write) => {
+        // The read makes the first write copy the order; the rest change it in place.
+        read($rows.keys);
+        const first = {};
+        const second = {};
+        removed.push(first, second);
+        write.upsert($rows, first);
+        write.upsert($rows, second);
+        write.remove($rows, second);
+        write.remove($rows, first);
+        expect(retainedKeys($rows).size).toBeGreaterThan(0);
+      });
+      expect(retainedKeys($rows).size).toBe(0);
+    }
+    expect(Source.peek($rows.keys)).toEqual([]);
+    Realm.dispose(realm);
+  });
+
+  test("a rolled-back remove by an equal key puts back the key the order held, stored as the Map stores it", () => {
+    const realm = Realm.make();
+    const $rows = Collection.make(realm, { keyOf: (value: number) => value });
+    Realm.update(realm, (_read, write) => {
+      write.upsert($rows, -0);
+    });
+    expect(() =>
+      Realm.update(realm, (_read, write) => {
+        write.remove($rows, 0);
+        throw new Error("cancel");
+      }),
+    ).toThrow("cancel");
+    // `-0` is stored as `0`, as the Map stores it; the row keeps its own `-0`.
+    const [key] = Source.peek($rows.keys);
+    expect(Object.is(key, 0)).toBe(true);
+    expect(Object.is(Source.peek($rows.row(0)), -0)).toBe(true);
+    Realm.dispose(realm);
   });
 });

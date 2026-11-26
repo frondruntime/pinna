@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { transformAsync } from "@babel/core";
-import { createRealm, update } from "@frondruntime/pinna-effect";
+import { Realm } from "@frondruntime/pinna-effect";
 import type { FunctionComponent } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -93,17 +93,17 @@ describe("React Compiler", () => {
     // The one read is the read function's body; a read the compiler hoisted
     // into the render would throw on mount.
     expect(compiled.match(/\bread\(\w+\.\$\w+\)/g)).toEqual(["read(portfolio.$response)"]);
-    const portfolio = new Portfolio(createRealm());
+    const portfolio = new Portfolio(Realm.make());
     portfolio.load(positionsJson(2));
     expect(mount(portfolio).querySelector("p")?.textContent).toBe("USD/30 USD");
   });
 
   test("useValues follows each change", () => {
-    const portfolio = new Portfolio(createRealm());
+    const portfolio = new Portfolio(Realm.make());
     portfolio.load(positionsJson(2));
     const view = mount(portfolio);
     act(() =>
-      update(portfolio.realm, (_read, write) => {
+      Realm.update(portfolio.realm, (_read, write) => {
         write(portfolio.$currency, "EUR");
       }),
     );
@@ -113,7 +113,7 @@ describe("React Compiler", () => {
   });
 
   test("a row that passes its position to a helper shows each tick", () => {
-    const portfolio = new Portfolio(createRealm());
+    const portfolio = new Portfolio(Realm.make());
     portfolio.load(positionsJson(3));
     const view = mount(portfolio);
     act(() => portfolio.tick({ id: "p1", price: 20 }));
@@ -123,7 +123,7 @@ describe("React Compiler", () => {
   });
 
   test("the list follows removals", () => {
-    const portfolio = new Portfolio(createRealm());
+    const portfolio = new Portfolio(Realm.make());
     portfolio.load(positionsJson(3));
     const view = mount(portfolio);
     act(() => portfolio.close("p0"));

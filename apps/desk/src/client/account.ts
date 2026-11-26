@@ -1,5 +1,5 @@
-import { box, computed, Model, type Realm, untracked, update } from "@frondruntime/pinna";
-import { BoxField, decode, reconcileSchema, SchemaModel } from "@frondruntime/pinna-effect";
+import { Box, Computed, Realm } from "@frondruntime/pinna";
+import { Collection, Model } from "@frondruntime/pinna-effect";
 import { Effect, Schema } from "effect";
 import type { Transport } from "../transport.ts";
 import { FormField } from "./form-field.ts";
@@ -16,10 +16,10 @@ export const DefaultNotionals = Schema.Struct({
   AUDUSD: Amount,
   EURGBP: Amount,
 });
-export class AccountSettings extends SchemaModel<AccountSettings>("Desk.AccountSettings")({
-  $displayName: BoxField(DisplayName),
-  $defaultNotionals: BoxField(DefaultNotionals),
-  $confirmationThreshold: BoxField(Amount),
+export class AccountSettings extends Model.Schema<AccountSettings>("Desk.AccountSettings")({
+  $displayName: Model.boxField(DisplayName),
+  $defaultNotionals: Model.boxField(DefaultNotionals),
+  $confirmationThreshold: Model.boxField(Amount),
 }) {}
 export const defaultSettings = {
   displayName: "Trader",
@@ -37,10 +37,10 @@ export const SettingsAnswer = Schema.Union([
   Schema.Struct({ ok: Schema.Literal(false), errors: FieldErrors }),
   Schema.Struct({ ok: Schema.Literal(true), settings: Schema.Unknown }),
 ]);
-export class Account extends Model {
-  readonly settings = decode(this.realm, AccountSettings)(defaultSettings);
-  readonly $dropped = box<readonly Diagnostic[]>(this.realm, []);
-  readonly $form = box<AccountForm | null>(this.realm, null);
+export class Account extends Model.Class {
+  readonly settings = Model.decode(this.realm, AccountSettings)(defaultSettings);
+  readonly $dropped = Box.make<readonly Diagnostic[]>(this.realm, []);
+  readonly $form = Box.make<AccountForm | null>(this.realm, null);
   load(value: unknown) {
     const raw = object(value);
     const dropped: Diagnostic[] = [];
@@ -69,7 +69,7 @@ export class Account extends Model {
         defaultNotionals[symbol],
         `defaultNotionals.${symbol}`,
       );
-    const fresh = decode(
+    const fresh = Model.decode(
       this.realm,
       AccountSettings,
     )({
@@ -82,18 +82,18 @@ export class Account extends Model {
         "confirmationThreshold",
       ),
     });
-    update(this.realm, (_read, write) => {
-      reconcileSchema([this.settings], [fresh], { keyOf: () => "account" });
+    Realm.update(this.realm, (_read, write) => {
+      Collection.reconcile([this.settings], [fresh], { keyOf: () => "account" });
       write(this.$dropped, dropped);
     });
   }
   open() {
     const form = new AccountForm(this.realm, this, this.transport);
-    update(this.realm, (_read, write) => write(this.$form, form));
+    Realm.update(this.realm, (_read, write) => write(this.$form, form));
     return form;
   }
   close() {
-    update(this.realm, (_read, write) => write(this.$form, null));
+    Realm.update(this.realm, (_read, write) => write(this.$form, null));
   }
   constructor(
     realm: Realm,
@@ -102,13 +102,13 @@ export class Account extends Model {
     super(realm);
   }
 }
-export class AccountForm extends Model {
+export class AccountForm extends Model.Class {
   readonly displayName;
   readonly defaultNotionals;
   readonly confirmationThreshold;
-  readonly $pending = box(this.realm, false);
-  readonly $message = box<string | null>(this.realm, null);
-  readonly $valid = computed(this.realm, (read) =>
+  readonly $pending = Box.make(this.realm, false);
+  readonly $message = Box.make<string | null>(this.realm, null);
+  readonly $valid = Computed.make(this.realm, (read) =>
     this.fields().every(([, field]) => read(field.$error) === null),
   );
   constructor(
@@ -155,9 +155,9 @@ export class AccountForm extends Model {
   save() {
     const form = this;
     return Effect.gen(function* () {
-      if (!untracked(form.realm, (read) => read(form.$valid) && !read(form.$pending))) return;
+      if (!Realm.untracked(form.realm, (read) => read(form.$valid) && !read(form.$pending))) return;
       // Encode a schema model: runtime fields and realm never enter the request.
-      const candidate = untracked(form.realm, (read) =>
+      const candidate = Realm.untracked(form.realm, (read) =>
         AccountSettings.make({
           realm: form.realm,
           displayName: read(form.displayName.$accepted),
@@ -170,7 +170,7 @@ export class AccountForm extends Model {
         }),
       );
       const body = JSON.stringify(Schema.encodeSync(AccountSettings)(candidate));
-      update(form.realm, (_read, write) => {
+      Realm.update(form.realm, (_read, write) => {
         write(form.$pending, true);
         write(form.$message, null);
       });
@@ -187,9 +187,9 @@ export class AccountForm extends Model {
                 return;
               }
               // A save is strict; partial recovery is only the startup policy.
-              const fresh = decode(form.realm, AccountSettings)(answer.settings);
-              update(form.realm, (_read, write) => {
-                reconcileSchema([form.account.settings], [fresh], { keyOf: () => "account" });
+              const fresh = Model.decode(form.realm, AccountSettings)(answer.settings);
+              Realm.update(form.realm, (_read, write) => {
+                Collection.reconcile([form.account.settings], [fresh], { keyOf: () => "account" });
                 write(form.$message, "Settings saved.");
               });
             },
@@ -198,11 +198,13 @@ export class AccountForm extends Model {
         ),
         Effect.catch((error) =>
           Effect.sync(() =>
-            update(form.realm, (_read, write) => write(form.$message, String(error))),
+            Realm.update(form.realm, (_read, write) => write(form.$message, String(error))),
           ),
         ),
         Effect.ensuring(
-          Effect.sync(() => update(form.realm, (_read, write) => write(form.$pending, false))),
+          Effect.sync(() =>
+            Realm.update(form.realm, (_read, write) => write(form.$pending, false)),
+          ),
         ),
       );
     });

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { autorun as mobxAutorun, observable, runInAction } from "mobx";
-import { autorun, box, createRealm, update } from "../../../src/index.ts";
+import { Box, Realm } from "../../../src/index.ts";
 
 /**
- * An application's `runInAction` uses, beside `update`: an outer batch around
+ * An application's `runInAction` uses, beside `Realm.update`: an outer batch around
  * several writes, and test fixtures that write a model.
  */
 
@@ -29,15 +29,15 @@ describe("runInAction", () => {
   });
 
   test("Pinna: nested updates join the outermost one", () => {
-    const realm = createRealm();
-    const $count = box(realm, 0);
+    const realm = Realm.make();
+    const $count = Box.make(realm, 0);
     const seen: Array<number> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(read($count));
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($count, 1);
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($count, 2);
       });
       write($count, 3);
@@ -77,17 +77,17 @@ describe("a recipe that throws inside a batch", () => {
   });
 
   test("Pinna: the earlier recipe's write stays and the throwing update's write is rolled back", () => {
-    const realm = createRealm();
-    const $first = box(realm, 0);
-    const $second = box(realm, 0);
+    const realm = Realm.make();
+    const $first = Box.make(realm, 0);
+    const $second = Box.make(realm, 0);
     const seen: Array<string> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(`${read($first)}/${read($second)}`);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($first, 1);
       try {
-        update(realm, (_read, write) => {
+        Realm.update(realm, (_read, write) => {
           write($second, 1);
           throw new Error("jammed");
         });

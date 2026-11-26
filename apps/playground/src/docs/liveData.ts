@@ -1,20 +1,7 @@
 // The site's docs print the regions of this file (docs/public/guides/live-data.md), so
 // `bun run typecheck` compiles what the page shows. The same feed on Effect is
 // `liveDataEffect.ts`.
-import {
-  atom,
-  box,
-  collection,
-  computed,
-  computedFunction,
-  createRealm,
-  Model,
-  onObserved,
-  type Realm,
-  reconcile,
-  update,
-  watch,
-} from "@frondruntime/pinna";
+import { Atom, Box, Collection, Computed, Model, Realm, Source } from "@frondruntime/pinna";
 
 // #region message
 interface Quote {
@@ -87,34 +74,34 @@ type Status = "connecting" | "open" | "closed";
 
 const quotesUrl = "wss://example.com/quotes";
 
-class QuoteFeed extends Model {
+class QuoteFeed extends Model.Class {
   // Stands for the socket: observing any public field below opens it.
-  private readonly $socket = atom(this.realm);
-  private readonly $state = box<Status>(this.realm, "closed");
-  private readonly $rows = collection(this.realm, {
+  private readonly $socket = Atom.make(this.realm);
+  private readonly $state = Box.make<Status>(this.realm, "closed");
+  private readonly $rows = Collection.make(this.realm, {
     keyOf: (quote: Quote) => quote.symbol,
     // A snapshot builds new objects; a quote with the same prices is kept.
     equals: (previous, next) => previous.bid === next.bid && previous.ask === next.ask,
   });
 
-  readonly $status = computed(this.realm, (read) => {
+  readonly $status = Computed.make(this.realm, (read) => {
     read(this.$socket);
     return read(this.$state);
   });
 
-  readonly $symbols = computed(this.realm, (read) => {
+  readonly $symbols = Computed.make(this.realm, (read) => {
     read(this.$socket);
     return read(this.$rows.keys);
   });
 
-  readonly quote = computedFunction(this.realm, (read, symbol: string) => {
+  readonly quote = Computed.fn(this.realm, (read, symbol: string) => {
     read(this.$socket);
     return read.row(this.$rows, symbol);
   });
 
   constructor(realm: Realm) {
     super(realm);
-    onObserved(this.$socket, () => this.connect());
+    Source.onObserved(this.$socket, () => this.connect());
   }
 
   // Opens the socket, and reopens it after each drop: 0.5 s after the
@@ -153,7 +140,7 @@ class QuoteFeed extends Model {
   }
 
   private setStatus(status: Status): void {
-    update(this.realm, (_read, write) => write(this.$state, status));
+    Realm.update(this.realm, (_read, write) => write(this.$state, status));
   }
 
   private receive(data: unknown): void {
@@ -164,7 +151,7 @@ class QuoteFeed extends Model {
       return;
     }
     // One update per message: a reader sees all of it or none of it.
-    update(this.realm, (_read, write) => {
+    Realm.update(this.realm, (_read, write) => {
       switch (message.type) {
         case "snapshot":
           // A quote equal to the one held keeps its row and notifies nobody.
@@ -180,11 +167,11 @@ class QuoteFeed extends Model {
 // #endregion
 
 // #region observe
-const realm = createRealm();
+const realm = Realm.make();
 const feed = new QuoteFeed(realm);
 
 // The first observer opens the socket; stopping the last one closes it.
-const stop = watch(
+const stop = Realm.watch(
   realm,
   (read) => read(feed.$status),
   (status) => {
@@ -217,9 +204,9 @@ const toPosition = (value: unknown): Position => {
   throw new TypeError("positions: a row is not a position");
 };
 
-class Positions extends Model {
-  readonly $rows = box<ReadonlyArray<Position>>(this.realm, []);
-  readonly $load = box<Load>(this.realm, { state: "loading" });
+class Positions extends Model.Class {
+  readonly $rows = Box.make<ReadonlyArray<Position>>(this.realm, []);
+  readonly $load = Box.make<Load>(this.realm, { state: "loading" });
   private controller: AbortController | undefined;
 
   // Loads the account's positions. A newer call aborts this one, and an
@@ -229,7 +216,7 @@ class Positions extends Model {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
-    update(this.realm, (_read, write) => write(this.$load, { state: "loading" }));
+    Realm.update(this.realm, (_read, write) => write(this.$load, { state: "loading" }));
     try {
       const response = await fetch(`${positionsUrl}/${encodeURIComponent(account)}`, {
         signal: controller.signal,
@@ -245,11 +232,11 @@ class Positions extends Model {
       if (controller.signal.aborted) {
         return;
       }
-      update(this.realm, (read, write) => {
+      Realm.update(this.realm, (read, write) => {
         // Unchanged positions keep their instance; nothing changed keeps the array.
         write(
           this.$rows,
-          reconcile(read(this.$rows), next, {
+          Collection.reconcile(read(this.$rows), next, {
             keyOf: (position) => position.id,
             equals: (previous, current) =>
               previous.symbol === current.symbol && previous.quantity === current.quantity,
@@ -262,7 +249,7 @@ class Positions extends Model {
       if (controller.signal.aborted) {
         return;
       }
-      update(this.realm, (_read, write) => write(this.$load, { state: "failed", error }));
+      Realm.update(this.realm, (_read, write) => write(this.$load, { state: "failed", error }));
     }
   }
 }

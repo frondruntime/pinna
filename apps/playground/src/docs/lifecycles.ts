@@ -1,16 +1,16 @@
 // The site's docs print the regions of this file (docs/public/state/lifecycles.md), so
 // `bun run typecheck` compiles what the pages show.
-import { atom, box, computed, createRealm, observe, onObserved, update } from "@frondruntime/pinna";
+import { Atom, Box, Computed, Realm, Source } from "@frondruntime/pinna";
 
 // #region onObserved
-const realm = createRealm();
+const realm = Realm.make();
 
-const $online = box(realm, true);
+const $online = Box.make(realm, true);
 
 // Listens to the browser only while something observes $online.
-onObserved($online, () => {
+Source.onObserved($online, () => {
   const sync = () => {
-    update(realm, (_read, write) => write($online, navigator.onLine));
+    Realm.update(realm, (_read, write) => write($online, navigator.onLine));
   };
   sync(); // the value may have changed while no one listened
   window.addEventListener("online", sync);
@@ -24,16 +24,16 @@ onObserved($online, () => {
 
 // #region atom
 // The clock is state kept outside Pinna: the atom stands for it.
-const $clock = atom(realm);
+const $clock = Atom.make(realm);
 
-onObserved($clock, () => {
+Source.onObserved($clock, () => {
   const timer = setInterval(() => {
-    update(realm, (_read, write) => write.changed($clock));
+    Realm.update(realm, (_read, write) => write.changed($clock));
   }, 1000);
   return () => clearInterval(timer);
 });
 
-const $time = computed(realm, (read) => {
+const $time = Computed.make(realm, (read) => {
   read($clock);
   return new Date().toLocaleTimeString();
 });
@@ -41,8 +41,32 @@ const $time = computed(realm, (read) => {
 
 // #region observe
 // The clock ticks, and $time stays cached, until release runs.
-const release = observe($time);
+const release = Source.observe($time);
 
 // #endregion
 
-export { release };
+// #region dispose
+// A screen's realm, made when the screen opens and disposed when it closes.
+const screen = Realm.make({ name: "screen" });
+const $quote = Box.make(screen, 0);
+
+Source.onObserved($quote, () => {
+  const socket = new WebSocket("wss://quotes.example/feed");
+  socket.onmessage = (message) => {
+    Realm.update(screen, (_read, write) => write($quote, Number(message.data)));
+  };
+  return () => socket.close();
+});
+
+const stopQuote = Source.observe($quote);
+
+// Closes the socket: every begun hook's cleanup runs once. Afterward a read
+// returns the last quote, and an update throws pinna/realm-disposed.
+const closeScreen = () => {
+  Realm.dispose(screen);
+  Realm.status(screen); // "disposed"
+};
+
+// #endregion
+
+export { closeScreen, release, stopQuote };

@@ -8,20 +8,11 @@ import {
   onBecomeUnobserved,
   runInAction,
 } from "mobx";
-import {
-  autorun,
-  box,
-  computed,
-  createRealm,
-  onObserved,
-  type Realm,
-  untracked,
-  update,
-} from "../../../src/index.ts";
+import { Box, Computed, Realm, Source } from "../../../src/index.ts";
 
 /**
  * Ported from MobX's `packages/mobx/__tests__/base/become-observed.ts` at
- * `mobx@7.1.0`, beside `onObserved`, under MobX's license:
+ * `mobx@7.1.0`, beside `Source.onObserved`, under MobX's license:
  *
  * The MIT License (MIT)
  *
@@ -53,7 +44,7 @@ import {
  * same rule. Where a trace differs only in that order, each side keeps its
  * own and the values seen are shared.
  *
- * Not ported: `keepAlive` (caseC to caseF; `observe` is a different
+ * Not ported: `keepAlive` (caseC to caseF; `Source.observe` is a different
  * primitive, which starts the held value's own hooks), observable maps and
  * sets, decorators, and the `observers_` internals.
  */
@@ -61,7 +52,7 @@ import {
 /** A realm whose errors with no caller are kept, to assert on. */
 const pinnaRealm = (): { readonly realm: Realm; readonly errors: Array<unknown> } => {
   const errors: Array<unknown> = [];
-  return { realm: createRealm({ onError: (error) => errors.push(error) }), errors };
+  return { realm: Realm.make({ onError: (error) => errors.push(error) }), errors };
 };
 
 /** Logs "<name> observed" and "<name> unobserved" for `source`. */
@@ -77,9 +68,9 @@ const mobxHooks = (
 const pinnaHooks = (
   events: Array<string>,
   name: string,
-  source: Parameters<typeof onObserved>[0],
+  source: Parameters<typeof Source.onObserved>[0],
 ) =>
-  onObserved(source, () => {
+  Source.onObserved(source, () => {
     events.push(`${name} observed`);
     return () => events.push(`${name} unobserved`);
   });
@@ -106,19 +97,19 @@ describe("#2309 an untracked read starts no hook", () => {
   test("Pinna: a read in an update or untracked", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $prop = box(realm, 42);
-    const doubled = computed(realm, (read) => read($prop) * 2);
-    const quadrupled = computed(realm, (read) => read(doubled) * 2);
+    const $prop = Box.make(realm, 42);
+    const doubled = Computed.make(realm, (read) => read($prop) * 2);
+    const quadrupled = Computed.make(realm, (read) => read(doubled) * 2);
     pinnaHooks(events, "prop", $prop);
     pinnaHooks(events, "doubled", doubled);
-    update(realm, (read) => {
+    Realm.update(realm, (read) => {
       read($prop);
     });
     events.push("--");
-    update(realm, (read) => {
+    Realm.update(realm, (read) => {
       read(doubled);
     });
-    untracked(realm, (read) => read(quadrupled));
+    Realm.untracked(realm, (read) => read(quadrupled));
     expect({ events, errors }).toEqual({ events: trace, errors: [] });
   });
 });
@@ -146,13 +137,13 @@ describe("#2309 caseE: a chain of derived values observed by an autorun", () => 
   test("Pinna: from the source up", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $o = box(realm, 1);
-    const ca = computed(realm, (read) => read($o));
-    const cb = computed(realm, (read) => read(ca) * 2);
+    const $o = Box.make(realm, 1);
+    const ca = Computed.make(realm, (read) => read($o));
+    const cb = Computed.make(realm, (read) => read(ca) * 2);
     pinnaHooks(events, "o", $o);
     pinnaHooks(events, "ca", ca);
     pinnaHooks(events, "cb", cb);
-    autorun(realm, (read) => {
+    Realm.autorun(realm, (read) => {
       read(cb);
     })();
     const fromSource = [...nodes].reverse();
@@ -198,9 +189,9 @@ describe("#2686 a source a derived value reads only after a write", () => {
   test("Pinna: the hook starts once the autorun's run is linked", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $lowerValue = box(realm, -1);
+    const $lowerValue = Box.make(realm, -1);
     let isObserved = false;
-    onObserved($lowerValue, () => {
+    Source.onObserved($lowerValue, () => {
       events.push("observed");
       isObserved = true;
       return () => {
@@ -208,15 +199,15 @@ describe("#2686 a source a derived value reads only after a write", () => {
         isObserved = false;
       };
     });
-    const $lower = box(realm, undefined as unknown);
-    const upper = computed(realm, (read) => {
+    const $lower = Box.make(realm, undefined as unknown);
+    const upper = Computed.make(realm, (read) => {
       const lower = read($lower) as typeof $lowerValue | undefined;
       return lower === undefined ? -Infinity : read(lower);
     });
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       events.push(`value: ${read(upper)}`);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($lower, $lowerValue);
     });
     expect(isObserved).toBe(true);
@@ -273,38 +264,38 @@ describe("#2686 - 3: a derived value made by a derived value", () => {
     ]);
   });
 
-  test("Pinna: the hook starts once the run is linked", () => {
+  test("Pinna: the hook starts once the autorun's first run finishes", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $first = box(realm, 2);
-    const $model = box(realm, undefined as unknown);
-    const load = computed(realm, (read) => {
+    const $first = Box.make(realm, 2);
+    const $model = Box.make(realm, undefined as unknown);
+    const load = Computed.make(realm, (read) => {
       const current = read($model) as { readonly suffix: string } | undefined;
       if (current === undefined) {
         return undefined;
       }
-      const half = computed(realm, (read) => {
+      const half = Computed.make(realm, (read) => {
         events.push("recalculating");
         return Math.round(read($first) / 2) + current.suffix;
       });
-      onObserved(half, () => {
+      Source.onObserved(half, () => {
         events.push("observing");
         return undefined;
       });
       return half;
     });
-    const result = computed(realm, (read) => {
+    const result = Computed.make(realm, (read) => {
       const loaded = read(load);
       return (loaded === undefined ? undefined : read(loaded)) ?? "loading";
     });
-    autorun(realm, (read) => {
+    Realm.autorun(realm, (read) => {
       events.push(`result: ${read(result)}`);
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($model, { suffix: "$" });
     });
     for (const value of [3, 4, 5]) {
-      update(realm, (_read, write) => {
+      Realm.update(realm, (_read, write) => {
         write($first, value);
       });
     }
@@ -369,14 +360,14 @@ describe("#2667 a hook that loads what it guards", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<unknown> = [];
     const makeList = (name: string, lazy: ReadonlyArray<string>) => {
-      const $items = box(realm, undefined as unknown);
-      onObserved($items, () => {
-        update(realm, (_read, write) => {
+      const $items = Box.make(realm, undefined as unknown);
+      Source.onObserved($items, () => {
+        Realm.update(realm, (_read, write) => {
           write($items, lazy);
         });
         events.push(`observed ${name}`);
         return () => {
-          update(realm, (_read, write) => {
+          Realm.update(realm, (_read, write) => {
             write($items, undefined);
           });
           events.push(`unobserved ${name}`);
@@ -385,16 +376,16 @@ describe("#2667 a hook that loads what it guards", () => {
       return { $items, name };
     };
     type List = ReturnType<typeof makeList>;
-    const $list = box(realm, makeList("initial", ["a, b, c"]) as unknown);
-    const items = computed(
+    const $list = Box.make(realm, makeList("initial", ["a, b, c"]) as unknown);
+    const items = Computed.make(
       realm,
       (read) => read((read($list) as List).$items) as ReadonlyArray<string> | undefined,
     );
-    const name = computed(realm, (read) => (read($list) as List).name);
-    const stop = autorun(realm, (read) => {
+    const name = Computed.make(realm, (read) => (read($list) as List).name);
+    const stop = Realm.autorun(realm, (read) => {
       events.push(read(items)?.length ?? "-", read(name));
     });
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write($list, makeList("new", ["b, c, a"]));
     });
     stop();
@@ -437,15 +428,15 @@ describe("#3954 cleanups that each stop the next autorun", () => {
 
   test("Pinna: the whole chain stops", () => {
     const { realm, errors } = pinnaRealm();
-    const boxes = Array.from({ length }, () => box(realm, 0));
+    const boxes = Array.from({ length }, () => Box.make(realm, 0));
     const stops = boxes.map(($box) =>
-      autorun(realm, (read) => {
+      Realm.autorun(realm, (read) => {
         read($box);
       }),
     );
     let stopped = 0;
     boxes.forEach(($box, index) => {
-      onObserved($box, () => () => {
+      Source.onObserved($box, () => () => {
         stopped++;
         stops[index + 1]?.();
       });
@@ -458,7 +449,7 @@ describe("#3954 cleanups that each stop the next autorun", () => {
 describe("#3954 a cleanup that throws", () => {
   // A later, unrelated stop still runs its cleanup. MobX throws the error to
   // the caller that stopped the autorun; Pinna passes it to `onError`, as
-  // `onObserved` documents.
+  // `Source.onObserved` documents.
 
   test("MobX: the error reaches the caller", () => {
     const first = observable.box(0);
@@ -479,20 +470,20 @@ describe("#3954 a cleanup that throws", () => {
 
   test("Pinna: the error reaches onError", () => {
     const { realm, errors } = pinnaRealm();
-    const $first = box(realm, 0);
-    const stopFirst = autorun(realm, (read) => {
+    const $first = Box.make(realm, 0);
+    const stopFirst = Realm.autorun(realm, (read) => {
       read($first);
     });
-    onObserved($first, () => () => {
+    Source.onObserved($first, () => () => {
       throw new Error("boom");
     });
     expect(() => stopFirst()).not.toThrow();
-    const $second = box(realm, 0);
-    const stopSecond = autorun(realm, (read) => {
+    const $second = Box.make(realm, 0);
+    const stopSecond = Realm.autorun(realm, (read) => {
       read($second);
     });
     let stopped = false;
-    onObserved($second, () => () => {
+    Source.onObserved($second, () => () => {
       stopped = true;
     });
     stopSecond();
@@ -529,17 +520,17 @@ describe("#4547 a cached derived value that gains a reader", () => {
     test(`Pinna: through ${depth} derived value${depth === 1 ? "" : "s"}`, () => {
       const { realm, errors } = pinnaRealm();
       const events: Array<string> = [];
-      const $o = box(realm, 1);
-      onObserved($o, () => {
+      const $o = Box.make(realm, 1);
+      Source.onObserved($o, () => {
         events.push("BO");
         return () => events.push("BUO");
       });
-      const inner = computed(realm, (read) => read($o));
-      const outer = depth === 1 ? inner : computed(realm, (read) => read(inner));
+      const inner = Computed.make(realm, (read) => read($o));
+      const outer = depth === 1 ? inner : Computed.make(realm, (read) => read(inner));
       let stop: () => void = () => {};
-      update(realm, (read) => {
+      Realm.update(realm, (read) => {
         read(outer);
-        stop = autorun(realm, (read) => {
+        stop = Realm.autorun(realm, (read) => {
           read(outer);
         });
       });
@@ -573,17 +564,17 @@ describe("#3674 a source an observed derived value gains in an update", () => {
   test("Pinna", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $enabled = box(realm, false);
-    const $resource = box(realm, 1);
-    onObserved($resource, () => {
+    const $enabled = Box.make(realm, false);
+    const $resource = Box.make(realm, 1);
+    Source.onObserved($resource, () => {
       events.push("BO");
       return () => events.push("BUO");
     });
-    const derived = computed(realm, (read) => (read($enabled) ? read($resource) : null));
-    const stop = autorun(realm, (read) => {
+    const derived = Computed.make(realm, (read) => (read($enabled) ? read($resource) : null));
+    const stop = Realm.autorun(realm, (read) => {
       read(derived);
     });
-    update(realm, (read, write) => {
+    Realm.update(realm, (read, write) => {
       write($enabled, true);
       read(derived);
     });
@@ -613,15 +604,15 @@ describe("a derived value read in an update with no reader starts no hook", () =
   test("Pinna", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $enabled = box(realm, false);
-    const $resource = box(realm, 1);
-    onObserved($resource, () => {
+    const $enabled = Box.make(realm, false);
+    const $resource = Box.make(realm, 1);
+    Source.onObserved($resource, () => {
       events.push("BO");
       return () => events.push("BUO");
     });
-    const inner = computed(realm, (read) => (read($enabled) ? read($resource) : null));
-    const outer = computed(realm, (read) => read(inner));
-    update(realm, (read, write) => {
+    const inner = Computed.make(realm, (read) => (read($enabled) ? read($resource) : null));
+    const outer = Computed.make(realm, (read) => read(inner));
+    Realm.update(realm, (read, write) => {
       read(outer);
       write($enabled, true);
       read(inner);
@@ -663,20 +654,20 @@ describe("observers removed and added again, three times", () => {
   test("Pinna", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $box = box(realm, 1);
-    const double = computed(realm, (read) => read($box) * 2);
+    const $box = Box.make(realm, 1);
+    const double = Computed.make(realm, (read) => read($box) * 2);
     pinnaHooks(events, "box", $box);
     pinnaHooks(events, "double", double);
     const increment = () =>
-      update(realm, (read, write) => {
+      Realm.update(realm, (read, write) => {
         write($box, read($box) + 1);
       });
     for (const round of rounds) {
       const values: Array<number> = [];
-      const stopDouble = autorun(realm, (read) => {
+      const stopDouble = Realm.autorun(realm, (read) => {
         values.push(read(double));
       });
-      const stopBox = autorun(realm, (read) => {
+      const stopBox = Realm.autorun(realm, (read) => {
         values.push(read($box));
       });
       increment();
@@ -716,18 +707,18 @@ describe("a branch read, dropped, and read again", () => {
   test("Pinna", () => {
     const { realm, errors } = pinnaRealm();
     const events: Array<string> = [];
-    const $condition = box(realm, true);
-    const $a = box(realm, "a1");
-    const $b = box(realm, "b1");
+    const $condition = Box.make(realm, true);
+    const $a = Box.make(realm, "a1");
+    const $b = Box.make(realm, "b1");
     pinnaHooks(events, "a", $a);
     const seen: Array<string> = [];
-    const stop = autorun(realm, (read) => {
+    const stop = Realm.autorun(realm, (read) => {
       seen.push(read($condition) ? read($a) : read($b));
     });
-    update(realm, (_read, write) => write($condition, false));
-    update(realm, (_read, write) => write($a, "a2"));
-    update(realm, (_read, write) => write($condition, true));
-    update(realm, (_read, write) => write($a, "a3"));
+    Realm.update(realm, (_read, write) => write($condition, false));
+    Realm.update(realm, (_read, write) => write($a, "a2"));
+    Realm.update(realm, (_read, write) => write($condition, true));
+    Realm.update(realm, (_read, write) => write($a, "a3"));
     stop();
     expect({ seen, events, errors }).toEqual({ ...trace, errors: [] });
   });

@@ -234,6 +234,7 @@ const bench = Command.make(
 
         const started = new Date();
         const loadBefore = loadavg()[0] as number;
+        yield* warnOnLoad("before the run", loadBefore);
         const commit = (yield* output("git", ["rev-parse", "HEAD"])).trim();
         // Only what a cell runs counts: the packages and the lockfile. An
         // untracked note or worktree elsewhere does not mark a run dirty.
@@ -322,6 +323,8 @@ const bench = Command.make(
         }
 
         const seconds = (Date.now() - started.getTime()) / 1000;
+        const loadAfter = loadavg()[0] as number;
+        yield* warnOnLoad("after the run", loadAfter);
         const results = yield* Schema.encodeEffect(Results)({
           commit,
           dirty,
@@ -345,7 +348,7 @@ const bench = Command.make(
             cores: cpus().length,
             memory: totalmem(),
           },
-          load: { before: loadBefore, after: loadavg()[0] as number },
+          load: { before: loadBefore, after: loadAfter },
           runtimes: Object.fromEntries(runtimes.map((runtime) => [runtime.name, runtime.version])),
           libraries: yield* libraryVersions(pickedLibraries),
           seconds,
@@ -383,6 +386,23 @@ const bench = Command.make(
       }),
     ),
 );
+
+/**
+ * The share of the cores the one-minute load average may hold before a
+ * warning. Each cell runs on one core, but past this share the cores it runs
+ * beside are busy, and a run of 2026-11-25 at a load of 10 on 10 cores could
+ * not tell a 5% change from noise.
+ */
+const loadPerCoreLimit = 0.5;
+
+/** Warns when the machine is too busy for differences of a few percent to show. */
+const warnOnLoad = (when: string, load: number) =>
+  load / cpus().length > loadPerCoreLimit
+    ? Console.error(
+        `warning: one-minute load ${load.toFixed(1)} on ${cpus().length} cores ${when}; ` +
+          "results on a busy machine cannot resolve differences of a few percent",
+      )
+    : Effect.void;
 
 Command.run(bench, { version: "0.0.0" }).pipe(
   Effect.provide(BunServices.layer),

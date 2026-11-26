@@ -21,13 +21,13 @@ reads `keys`.
 
 <!-- region liveData.ts#feed -->
 
-A watch, an autorun, `observe`, or a mounted `useValue(feed.$symbols)` opens
+A watch, an autorun, `Source.observe`, or a mounted `useValue(feed.$symbols)` opens
 the socket.
 
 <!-- region liveData.ts#observe -->
 
 A request is the same shape without a socket. An `AbortController` cancels
-the request a newer one replaces, and `reconcile` keeps each unchanged row's
+the request a newer one replaces, and `Collection.reconcile` keeps each unchanged row's
 instance, so a refetch that changed nothing notifies nobody. The parser
 reuses `isRecord` and `isPrice` from the first sample and throws on a body
 that does not fit, and the status ends in `"failed"`.
@@ -57,9 +57,9 @@ that does not fit, and the status ends in `"failed"`.
   made without `onError` also reports. A realm made with `onError` does not
   see it.
 
-`onObserved` and atoms are on [Lifecycles](../state/lifecycles.md), the
+`Source.onObserved` and atoms are on [Lifecycles](../state/lifecycles.md), the
 writes to a collection on [Collections](../state/collections.md), and
-`reconcile` on [Updates](../state/updates.md).
+`Collection.reconcile` on [Updates](../state/updates.md).
 
 ## With Effect
 
@@ -69,7 +69,7 @@ that does not fit.
 
 <!-- region liveDataEffect.ts#schema -->
 
-The watchlist is a `BoxField`, checked on every write: people type it, and
+The watchlist is a `Model.boxField`, checked on every write: people type it, and
 it is saved with the board. The quotes are a plain collection and the status
 a plain box, written only from messages the decode checked, so nothing checks
 them twice ([Plain or schema boxes](../start/index.md#plain-or-schema-boxes)).
@@ -85,7 +85,7 @@ and a drop fails the stream with `SocketClosed`.
 
 <!-- region liveDataEffect.ts#socket -->
 
-`changes` streams the watchlist, and `Stream.switchMap` closes the socket
+`Program.changes` streams the watchlist, and `Stream.switchMap` closes the socket
 of the previous list and opens one for the new list. `Stream.retry` reopens
 the socket after a drop, and its schedule resets once a message passes
 through. Each message is decoded, then written in one update; a message
@@ -96,7 +96,7 @@ that fails either step is logged and dropped.
 A layer provides the realm. The fiber owns the feed: the socket is open
 while the fiber runs, whether or not anything observes the board, and
 interrupting the fiber closes it. A value that should run only while a
-screen shows it is owned by observation instead, through `fromStream`
+screen shows it is owned by observation instead, through `Program.fromStream`
 ([Programs](../effect/programs.md#lifetimes)).
 
 <!-- region liveDataEffect.ts#run -->
@@ -112,9 +112,9 @@ screen shows it is owned by observation instead, through `fromStream`
 
 ## See also
 
-- [Lifecycles](../state/lifecycles.md): `onObserved`, atoms, and `observe`.
+- [Lifecycles](../state/lifecycles.md): `Source.onObserved`, atoms, and `Source.observe`.
 - [Collections](../state/collections.md): `keys`, `row(key)`, and `equals`.
 - [Updates](../state/updates.md): what an update undoes when it throws.
-- [Programs](../effect/programs.md): `changes`, `watchScoped`, `fromStream`, and who owns a feed.
-- [Classes](../effect/classes.md): `SchemaModel`, `BoxField`, and `decode`.
+- [Programs](../effect/programs.md): `Program.changes`, `Program.watchScoped`, `Program.fromStream`, and who owns a feed.
+- [Classes](../effect/classes.md): `Model.Schema`, `Model.boxField`, and `Model.decode`.
 - [Hooks](../react/hooks.md): `useValue` and a list that rerenders one row.

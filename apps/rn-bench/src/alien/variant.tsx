@@ -1,13 +1,13 @@
 /**
  * The alien-signals variant. alien-signals has no React binding (README,
  * "Derived Projects", lists third-party ones; none is installed), so a small
- * hook wraps a component's read in a `computed` and subscribes to it with an
+ * hook wraps a component's read in a `Computed.make` and subscribes to it with an
  * `effect` through `useSyncExternalStore`: the read reruns only when a signal
  * it read changed, and the component rerenders only when the result is a new
  * value.
  *
  * Followed:
- * - README "Basic APIs": `computed(() => ...)` is a cached derived value read
+ * - README "Basic APIs": `Computed.make(() => ...)` is a cached derived value read
  *   by calling it; `effect(() => ...)` runs now and again when a signal it
  *   read changes, and returns the function that stops it.
  * - README "Effect Scope": not used. Each effect is stopped by the function

@@ -1,7 +1,7 @@
 /**
  * Stage benchmark on Bun: what a stage costs over the update it replaces.
- * A refetch of `rows` rows lands through `update` once, and through a stage
- * twice, staged and replayed; a refetch of `SchemaModel` rows merges into
+ * A refetch of `rows` rows lands through `Realm.update` once, and through a stage
+ * twice, staged and replayed; a refetch of `Model.Schema` rows merges into
  * the held instances in both passes. A computed value read through a stage
  * runs outside the graph, cached until the stage or the realm changes.
  * Times are medians of `runs` runs, in milliseconds; no ceilings, so it
@@ -10,20 +10,9 @@
  * bun run bench:stage
  */
 
-import {
-  applyStage,
-  box,
-  collection,
-  computed,
-  createRealm,
-  openStage,
-  stageRead,
-  stageUpdate,
-  untracked,
-  update,
-} from "@frondruntime/pinna";
+import { Box, Collection, Computed, Realm, Stage } from "@frondruntime/pinna";
 import { Schema } from "effect";
-import { BoxField, CollectionField, decode, SchemaModel } from "../src/index.ts";
+import { Model } from "../src/index.ts";
 
 const rows = 10_000;
 const runs = 15;
@@ -58,33 +47,33 @@ const plainRows = (offset: number): ReadonlyArray<Row> =>
   Array.from({ length: rows }, (_, index) => ({ id: index, price: index + offset }));
 
 const plainState = () => {
-  const realm = createRealm();
-  const $rows = collection<number, Row>(realm, { keyOf: (row) => row.id, name: "rows" });
-  update(realm, (_read, write) => {
+  const realm = Realm.make();
+  const $rows = Collection.make<number, Row>(realm, { keyOf: (row) => row.id, name: "rows" });
+  Realm.update(realm, (_read, write) => {
     write.replaceAll($rows, plainRows(0));
   });
   return { realm, $rows, next: plainRows(1) };
 };
 
-class Quote extends SchemaModel<Quote>("Quote")({
+class Quote extends Model.Schema<Quote>("Quote")({
   id: Schema.Number,
   symbol: Schema.String,
-  $price: BoxField(Schema.Number),
+  $price: Model.boxField(Schema.Number),
 }) {}
 
-class Book extends SchemaModel<Book>("Book")({
-  $quotes: CollectionField(Quote, { keyOf: (quote) => quote.id, name: "quotes" }),
+class Book extends Model.Schema<Book>("Book")({
+  $quotes: Model.collectionField(Quote, { keyOf: (quote) => quote.id, name: "quotes" }),
 }) {}
 
 const quotesJson = (offset: number) =>
   Array.from({ length: rows }, (_, id) => ({ id, symbol: `S${id}`, price: id + offset }));
 
 const schemaState = () => {
-  const realm = createRealm();
-  const book = decode(realm, Book)({ quotes: quotesJson(0) });
+  const realm = Realm.make();
+  const book = Model.decode(realm, Book)({ quotes: quotesJson(0) });
   // Decoded before the stage: a recipe that decodes would make the instances twice.
-  const fresh = decode(realm, Book)({ quotes: quotesJson(1) });
-  const next = untracked(realm, (read) => read(fresh.$quotes.rows));
+  const fresh = Model.decode(realm, Book)({ quotes: quotesJson(1) });
+  const next = Realm.untracked(realm, (read) => read(fresh.$quotes.rows));
   return { realm, book, next };
 };
 
@@ -93,7 +82,7 @@ const results: Array<readonly [string, number]> = [];
 results.push([
   `replaceAll of ${rows} rows, update`,
   time(plainState, ({ realm, $rows, next }) => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll($rows, next);
     });
   }),
@@ -102,18 +91,18 @@ results.push([
 results.push([
   `replaceAll of ${rows} rows, stage and apply`,
   time(plainState, ({ realm, $rows, next }) => {
-    const stage = openStage(realm);
-    stageUpdate(stage, (_read, write) => {
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => {
       write.replaceAll($rows, next);
     });
-    applyStage(stage);
+    Stage.apply(stage);
   }),
 ]);
 
 results.push([
   `refetch of ${rows} SchemaModel rows, update (merge)`,
   time(schemaState, ({ realm, book, next }) => {
-    update(realm, (_read, write) => {
+    Realm.update(realm, (_read, write) => {
       write.replaceAll(book.$quotes, next);
     });
   }),
@@ -122,29 +111,29 @@ results.push([
 results.push([
   `refetch of ${rows} SchemaModel rows, stage and apply (merge twice)`,
   time(schemaState, ({ realm, book, next }) => {
-    const stage = openStage(realm);
-    stageUpdate(stage, (_read, write) => {
+    const stage = Stage.make(realm);
+    Stage.update(stage, (_read, write) => {
       write.replaceAll(book.$quotes, next);
     });
-    applyStage(stage);
+    Stage.apply(stage);
   }),
 ]);
 
 const sumState = () => {
   const state = plainState();
-  const $sum = computed(state.realm, (read) =>
+  const $sum = Computed.make(state.realm, (read) =>
     read(state.$rows.rows).reduce((total, row) => total + row.price, 0),
   );
-  const $tax = box(state.realm, 0);
+  const $tax = Box.make(state.realm, 0);
   return { ...state, $sum, $tax };
 };
 
 results.push([
   `computed sum over ${rows} rows, read 100 times through a stage (cached)`,
   time(sumState, ({ realm, $sum }) => {
-    const stage = openStage(realm);
+    const stage = Stage.make(realm);
     for (let read = 0; read < 100; read++) {
-      stageRead(stage, (stagedRead) => stagedRead($sum));
+      Stage.read(stage, (stagedRead) => stagedRead($sum));
     }
   }),
 ]);
@@ -152,12 +141,12 @@ results.push([
 results.push([
   `computed sum over ${rows} rows, 100 writes each followed by a read through a stage`,
   time(sumState, ({ realm, $sum, $tax }) => {
-    const stage = openStage(realm);
+    const stage = Stage.make(realm);
     for (let round = 0; round < 100; round++) {
-      stageUpdate(stage, (_read, write) => {
+      Stage.update(stage, (_read, write) => {
         write($tax, round);
       });
-      stageRead(stage, (stagedRead) => stagedRead($sum));
+      Stage.read(stage, (stagedRead) => stagedRead($sum));
     }
   }),
 ]);

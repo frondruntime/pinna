@@ -13,7 +13,7 @@
  *   formatter, whose output may follow reactive state such as a locale.
  */
 import { BigDecimal, Context, Schema } from "effect";
-import { FromContext, type Read } from "../../src/index.ts";
+import { Model, type Read } from "../../src/index.ts";
 
 /**
  * The date formatter the caller passes in the decode context. It takes the
@@ -90,7 +90,7 @@ export class Position extends Schema.Class<Position>("Position")({
   estimate: Schema.optionalKey(Estimate),
   settlement: Schema.optionalKey(Settlement),
   chart: Schema.optionalKey(Schema.Array(ChartPoint)),
-  dates: FromContext(Dates),
+  dates: Model.context(Dates),
 }) {
   openedAtFormatted(read: Read): string {
     return this.dates.formatDateTime(read, this.openedAt);

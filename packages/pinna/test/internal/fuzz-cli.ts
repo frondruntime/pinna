@@ -8,11 +8,13 @@
  * first (default 1). `PINNA_FUZZ_IGNORE_RUNS=1` ignores how often computed
  * values ran. `PINNA_FUZZ_IGNORE_ORDER=1` ignores the order of the entries
  * within one top-level operation, and makes every watch effect log only
- * (`compare.ts`). Exits 1 on the first mismatch, after printing it shrunk.
+ * (`compare.ts`). The graph checker of `pinna-core` runs on this checkout
+ * after every operation (`graph-check.ts`). Exits 1 on the first mismatch, after printing it shrunk.
  */
 import * as ours from "../../src/index.ts";
-import { checkSeed, report } from "./compare.ts";
-import type { Api } from "./interpret.ts";
+import { checkSeed, report } from "../fuzz/compare.ts";
+import type { Api } from "../fuzz/interpret.ts";
+import { graphCheck } from "./graph-check.ts";
 
 const referenceRoot = process.env["PINNA_REFERENCE"];
 if (referenceRoot === undefined || referenceRoot === "") {
@@ -26,7 +28,7 @@ const reference = (await import(`${referenceRoot}/packages/pinna/src/index.ts`))
 
 const started = performance.now();
 for (let seed = first; seed < first + count; seed++) {
-  const mismatch = checkSeed(seed, ours, reference);
+  const mismatch = checkSeed(seed, ours, reference, graphCheck);
   if (mismatch !== undefined) {
     console.log(report(mismatch));
     console.log(`caught after ${seed - first + 1} seeds`);

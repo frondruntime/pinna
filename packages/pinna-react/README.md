@@ -4,7 +4,7 @@ React hooks for Pinna. A component reads observables through `useValue`,
 `useValues`, or `useSelect`, and rerenders when what it read changes. There
 is no `observer` wrapper, and the hooks work with the React Compiler.
 
-0.0.1 is a pre-1.0 release: any version may change the API.
+0.2.0 is a pre-1.0 release: any version may change the API.
 
 ## Install
 
@@ -17,15 +17,15 @@ React 19 or later is a peer dependency.
 ## Example
 
 ```tsx
-import { box, computed, createRealm, update } from "@frondruntime/pinna";
+import { Box, Computed, Realm } from "@frondruntime/pinna";
 import { useValue } from "@frondruntime/pinna-react";
 
-const realm = createRealm();
-const $count = box(realm, 0, { name: "count" });
-const $double = computed(realm, (read) => read($count) * 2, { name: "double" });
+const realm = Realm.make();
+const $count = Box.make(realm, 0, { name: "count" });
+const $double = Computed.make(realm, (read) => read($count) * 2, { name: "double" });
 
 const increment = () => {
-  update(realm, (read, write) => {
+  Realm.update(realm, (read, write) => {
     write($count, read($count) + 1);
   });
 };

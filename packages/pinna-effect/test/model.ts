@@ -4,7 +4,7 @@
  * value runs.
  */
 import { Schema } from "effect";
-import { BoxField, computed, decode, Model, SchemaModel, schemaBox, update } from "../src/index.ts";
+import { Box, Computed, Model, Realm } from "../src/index.ts";
 
 export const runs = { value: 0, total: 0 };
 
@@ -14,13 +14,13 @@ export class Quote extends Schema.Class<Quote>("Quote")({
   at: Schema.String,
 }) {}
 
-export class Position extends SchemaModel<Position>("Position")({
+export class Position extends Model.Schema<Position>("Position")({
   id: Schema.String,
   ticker: Schema.String,
   amount: Schema.Number,
-  $quote: BoxField(Quote),
+  $quote: Model.boxField(Quote),
 }) {
-  readonly $value = computed(this.realm, (read) => {
+  readonly $value = Computed.make(this.realm, (read) => {
     runs.value++;
     return this.amount * read(this.$quote).price;
   });
@@ -30,14 +30,14 @@ export class Position extends SchemaModel<Position>("Position")({
   }
 }
 
-export class PositionsResponse extends SchemaModel<PositionsResponse>("PositionsResponse")({
+export class PositionsResponse extends Model.Schema<PositionsResponse>("PositionsResponse")({
   items: Schema.Array(Position),
 }) {
   get byId(): ReadonlyMap<string, Position> {
     return new Map(this.items.map((position) => [position.id, position]));
   }
 
-  readonly $total = computed(this.realm, (read) => {
+  readonly $total = Computed.make(this.realm, (read) => {
     runs.total++;
     return this.items.reduce((sum, position) => sum + read(position.$value), 0);
   });
@@ -49,26 +49,26 @@ export interface Tick {
 }
 
 /** A model with no wire shape of its own: it is never decoded, so it extends Model. */
-export class Portfolio extends Model {
-  readonly $response = schemaBox(
+export class Portfolio extends Model.Class {
+  readonly $response = Box.schema(
     this.realm,
     PositionsResponse,
     PositionsResponse.make({ items: [], realm: this.realm }),
   );
-  readonly $currency = schemaBox(this.realm, Schema.Literals(["USD", "EUR"]), "USD");
-  readonly $totalLabel = computed(
+  readonly $currency = Box.schema(this.realm, Schema.Literals(["USD", "EUR"]), "USD");
+  readonly $totalLabel = Computed.make(
     this.realm,
     (read) => `${read(read(this.$response).$total)} ${read(this.$currency)}`,
   );
 
   load(json: unknown): void {
-    update(this.realm, (_read, write) => {
-      write(this.$response, decode(this.realm, PositionsResponse)(json));
+    Realm.update(this.realm, (_read, write) => {
+      write(this.$response, Model.decode(this.realm, PositionsResponse)(json));
     });
   }
 
   tick(tick: Tick): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const position = read(this.$response).byId.get(tick.id);
       if (position !== undefined) {
         write(position.$quote, Quote.make({ price: tick.price, at: "2026-10-27T10:00:01Z" }));
@@ -77,7 +77,7 @@ export class Portfolio extends Model {
   }
 
   close(id: string): void {
-    update(this.realm, (read, write) => {
+    Realm.update(this.realm, (read, write) => {
       const current = read(this.$response);
       write(
         this.$response,

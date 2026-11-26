@@ -31,7 +31,7 @@ import {
   reaction,
   runInAction,
 } from "mobx";
-import { box, computed, createRealm, untracked, update, type Write, watch } from "../src/index.ts";
+import { Box, Computed, Realm, type Write } from "../src/index.ts";
 
 const runs = 9;
 
@@ -57,15 +57,15 @@ export interface Library {
 /**
  * Pinna through the verbs a place hands out, `read` and `write`. The
  * interface reads through `get` with no verb in hand, so the adapter keeps
- * the read `untracked` hands out and the write an update hands out: a verb
+ * the read `Realm.untracked` hands out and the write an update hands out: a verb
  * checks, when called, that a place of its realm is open, not which place
  * handed it out. test/kept.ts holds the same helpers for the tests.
  */
 const pinna = (): Library => {
-  const realm = createRealm();
-  const read = untracked(realm, (read) => read);
+  const realm = Realm.make();
+  const read = Realm.untracked(realm, (read) => read);
   const kept: { write?: Write } = {};
-  update(realm, (_read, write) => {
+  Realm.update(realm, (_read, write) => {
     kept.write = write;
   });
   const write = kept.write;
@@ -74,7 +74,7 @@ const pinna = (): Library => {
   }
   return {
     source: (initial) => {
-      const $box = box<unknown>(realm, initial);
+      const $box = Box.make<unknown>(realm, initial);
       return {
         get: () => read($box) as never,
         set: (value) => {
@@ -83,12 +83,12 @@ const pinna = (): Library => {
       };
     },
     computed: (compute) => {
-      const value = computed(realm, compute);
+      const value = Computed.make(realm, compute);
       return () => read(value);
     },
-    watch: (select, changed) => watch(realm, select, changed),
+    watch: (select, changed) => Realm.watch(realm, select, changed),
     batch: (run) =>
-      update(realm, () => {
+      Realm.update(realm, () => {
         run();
       }),
   };
@@ -104,7 +104,7 @@ const alien = (): Library => ({
   computed: (compute) => alienComputed(compute),
   // alien-signals has no reaction: an effect runs at once. The first run
   // only records the value, and later runs call `changed` untracked when the
-  // value changed, as Pinna's `watch` and MobX's `reaction` do. The active
+  // value changed, as Pinna's `Realm.watch` and MobX's `reaction` do. The active
   // subscriber is cleared and restored inline, so a notification makes no
   // closure.
   watch: <Value>(read: () => Value, changed: (value: Value) => undefined) => {
@@ -179,7 +179,7 @@ const timers = (): void => {
 /**
  * Legend's `observe` runs at once; the adapter skips that run and calls
  * `changed` only when the value changed, as MobX's `reaction` and Pinna's
- * `watch` do.
+ * `Realm.watch` do.
  */
 const legend = (): Library => {
   timers();

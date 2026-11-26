@@ -2,14 +2,7 @@
 // Backs the claims docs/public/effect/programs.md makes about the samples in
 // `programs.ts`.
 import { expect, test } from "bun:test";
-import {
-  changes,
-  observe,
-  observeScoped,
-  RealmService,
-  untracked,
-  update,
-} from "@frondruntime/pinna-effect";
+import { Program, Realm, RealmService, Source } from "@frondruntime/pinna-effect";
 import { Effect, Exit, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import {
@@ -25,10 +18,10 @@ import {
   showRate,
 } from "./programs.ts";
 
-const resetOrder = () => update(realm, (_read, write) => write($orderStatus, "idle"));
-const statusNow = () => untracked(realm, (read) => read($orderStatus));
+const resetOrder = () => Realm.update(realm, (_read, write) => write($orderStatus, "idle"));
+const statusNow = () => Realm.untracked(realm, (read) => read($orderStatus));
 const firstStatus = (wanted: OrderStatus) =>
-  changes($orderStatus).pipe(
+  Program.changes($orderStatus).pipe(
     Stream.filter((status) => status === wanted),
     Stream.runHead,
   );
@@ -37,8 +30,8 @@ test("a value from fromStream runs its stream with the services it was made with
   const seen = await Effect.gen(function* () {
     // `rate` was made with Rates provided; this program provides none.
     const $rate = yield* rate;
-    yield* observeScoped($rate);
-    return yield* changes($rate).pipe(
+    yield* Source.observeScoped($rate);
+    return yield* Program.changes($rate).pipe(
       Stream.filter((value) => value !== undefined),
       Stream.runHead,
     );
@@ -52,16 +45,16 @@ test("a failure mapped into the union ends the stream on it, and the value shows
     const $state = yield* showRate(
       Stream.make(1.1).pipe(Stream.concat(Stream.fail(new RateUnavailable({ reason: "offline" })))),
     );
-    const release = observe($state);
-    const last = yield* changes($state).pipe(
+    const release = Source.observe($state);
+    const last = yield* Program.changes($state).pipe(
       Stream.filter((state: RateState) => state._tag === "Unavailable"),
       Stream.runHead,
     );
     // Still shown after the stream ended.
     yield* Effect.yieldNow;
-    const held = untracked(realm, (read) => read($state));
+    const held = Realm.untracked(realm, (read) => read($state));
     release();
-    const released = untracked(realm, (read) => read($state));
+    const released = Realm.untracked(realm, (read) => read($state));
     return { last, held, released };
   }).pipe(Effect.scoped, Effect.provideService(RealmService, realm), Effect.runPromise);
   expect(final.last._tag).toBe("Some");
@@ -75,7 +68,7 @@ test("a command runs in the application's scope, not an observer's", async () =>
     const application = yield* Scope.make();
     const { send } = yield* orders.pipe(Scope.provide(application));
 
-    const release = observe($orderStatus);
+    const release = Source.observe($orderStatus);
     send(10);
     yield* firstStatus("sending");
     // The last observer leaving interrupts nothing.
@@ -109,7 +102,7 @@ test("startImmediately runs the fiber up to its first wait before the next line"
   resetOrder();
   const deferred = await Effect.gen(function* () {
     yield* Effect.forkScoped(sendOrder(10));
-    return untracked(realm, (read) => read($orderStatus));
+    return Realm.untracked(realm, (read) => read($orderStatus));
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.runPromise);
   expect(deferred).toBe("idle");
 });

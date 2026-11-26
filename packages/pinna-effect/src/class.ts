@@ -1,15 +1,15 @@
 /**
- * `SchemaModel`: an Effect `Schema.Class` whose fields are plain, `readonly`
- * data. A field named `$name` must be a `BoxField` or a `CollectionField`: it
+ * `Model.Schema`: an Effect `Schema.Class` whose fields are plain, `readonly`
+ * data. A field named `$name` must be a `Model.boxField` or a `Model.collectionField`: it
  * holds a box or a keyed collection, and its wire key is `name`. No other
  * field may hold one.
  *
  * Every instance has a `realm` field: the realm its boxes and computed
- * values belong to. `decode` fills it, and `make` takes it by hand. It
+ * values belong to. `Model.decode` fills it, and `make` takes it by hand. It
  * is never on the wire, so field initializers can use `this.realm`.
  *
  * One key space: a caller writes wire keys (`done` for `$done`), and the
- * instance alone has `$` keys. `decode` takes the wire value and the realm
+ * instance alone has `$` keys. `Model.decode` takes the wire value and the realm
  * from `RealmService`; `make` and `new` take each `$` field's starting value
  * under its wire key, never a box, and the realm; encoding gives wire keys.
  * A model nested in another schema's `make` takes an instance. Each path
@@ -17,13 +17,26 @@
  * another realm's box or another instance's.
  */
 
-import type { Box, Collection, Read, Realm, Write } from "@frondruntime/pinna";
+import {
+  type Box,
+  type Collection,
+  type ModelData,
+  PinnaUsageError,
+  type Read,
+  type Realm,
+  type RestoreData,
+  type Snapshot,
+  type Write,
+} from "@frondruntime/pinna";
 import {
   BoxCell,
   type ClassInstance,
   KeyedCollection,
+  type ModelField,
+  type ModelShape,
+  modelShapeKey,
   ObservableRealm,
-  peekCell,
+  readerNow,
   repeatedKey,
   repeatedKeyMessage,
 } from "@frondruntime/pinna/internal";
@@ -36,17 +49,21 @@ import {
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
+import { contextFields, type FromContext } from "./context.ts";
 import { RealmService } from "./decode.ts";
 import { type MergeWrites, mergeKey, planMerge, realmOfMergeable } from "./merge.ts";
 import { checkOf, equalsOf } from "./schema.ts";
 
-/** How a `BoxField` or `CollectionField` goes to and from its wire value. */
+/** How a `Model.boxField` or `Model.collectionField` goes to and from its wire value. */
 interface FieldCodec {
   /** The schema of the wire value; its type side is the value `make` takes. */
   readonly wire: Schema.Top;
   /** Builds the box from a value its schema decoded or made, and checked. */
   readonly make: (realm: ObservableRealm, value: unknown) => unknown;
-  /** The box's value, for its schema to encode. */
+  /**
+   * The box's value, for its schema to encode, read where the encode runs:
+   * tracked in a tracked place, the stage's in a stage recipe.
+   */
   readonly read: (box: unknown) => unknown;
   /**
    * The writes that bring the `held` box to the value of the `fresh` one,
@@ -56,7 +73,7 @@ interface FieldCodec {
 }
 
 /**
- * The field schemas `BoxField` and `CollectionField` made, so `SchemaModel`
+ * The field schemas `Model.boxField` and `Model.collectionField` made, so `Model.Schema`
  * can require one under every `$` key, and build the boxes once it has the
  * realm.
  */
@@ -71,13 +88,13 @@ type MadeFrom<Field extends Schema.Top, Value> = Omit<Field, "~type.make"> & {
 };
 
 /**
- * A field schema whose type side is a box. Only `SchemaModel` decodes and
+ * A field schema whose type side is a box. Only `Model.Schema` decodes and
  * encodes it, through `codec`, under the wire key without `$`. In any other
  * schema the field's own decode and encode fail: they would put the `$` key
  * on the wire.
  */
 const codecFieldSchema = <Wire extends Schema.Top, Value>(
-  kind: "BoxField" | "CollectionField",
+  kind: "Model.boxField" | "Model.collectionField",
   codec: FieldCodec & { readonly wire: Wire },
   isHeld: (input: unknown) => input is Value,
 ) => {
@@ -85,7 +102,7 @@ const codecFieldSchema = <Wire extends Schema.Top, Value>(
     Effect.fail(
       new SchemaIssue.InvalidValue(
         {
-          message: `pinna: ${kind} is a SchemaModel field; declare it in SchemaModel(...), never in another schema`,
+          message: `pinna: ${kind} is a Model.Schema field; declare it in Model.Schema(...), never in another schema`,
         },
         input,
       ),
@@ -104,7 +121,7 @@ const codecFieldSchema = <Wire extends Schema.Top, Value>(
 };
 
 /**
- * A `SchemaModel` field that holds a box of `schema`'s values. Decoding puts the decoded
+ * A `Model.Schema` field that holds a box of `schema`'s values. Decoding puts the decoded
  * value in a new box of the decoding realm, and `make` the value it is given;
  * encoding writes the box's current value. The box checks every write against
  * `schema` and compares values with its equivalence.
@@ -113,12 +130,15 @@ export const BoxField = <S extends Schema.Top>(schema: S) => {
   const check = checkOf(schema);
   const equals = equalsOf<S["Type"]>(schema);
   return codecFieldSchema(
-    "BoxField",
+    "Model.boxField",
     {
       wire: schema,
       // The decode or make before this one checked `value` against `schema`.
       make: (realm, value) => new BoxCell(realm, check, value as S["Type"], equals, true),
-      read: (box) => peekCell((box as BoxCell<S["Type"]>).source),
+      read: (box) => {
+        const cell = box as BoxCell<S["Type"]>;
+        return readerNow(cell.realm)(cell);
+      },
       merge: (held, fresh, read, write) => {
         const target = held as BoxCell<S["Type"]>;
         const value = read(fresh as BoxCell<S["Type"]>);
@@ -170,15 +190,24 @@ const sameRows = <Key, Value>(
   return true;
 };
 
+/** Whether `schema` is a `Model.Schema` class, whose rows a restore never makes from plain data. */
+export const isModelSchema = (schema: Schema.Top): boolean => {
+  const prototype = (schema as { readonly prototype?: unknown }).prototype;
+  return typeof prototype === "object" && prototype !== null && modelShapeKey in prototype;
+};
+
 const realmOfService = (realm: unknown): ObservableRealm => {
   if (!(realm instanceof ObservableRealm)) {
-    throw new Error("pinna: expected a realm made by createRealm()");
+    throw new PinnaUsageError(
+      "pinna-effect/not-a-realm",
+      "pinna: expected a realm made by Realm.make()",
+    );
   }
   return realm;
 };
 
 /**
- * A `SchemaModel` field that holds a keyed collection of `schema`'s values, one cell per
+ * A `Model.Schema` field that holds a keyed collection of `schema`'s values, one cell per
  * key. On the wire, and in `make`, it is a plain array in key order; a key
  * that appears twice fails the decode or the make. Rows are checked against
  * `schema` and compare with its equivalence.
@@ -187,12 +216,13 @@ export const CollectionField = <S extends Schema.Top, Key>(
   schema: S,
   options: {
     readonly keyOf: (value: S["Type"]) => Key;
-    /** Names every instance's collection, as `collection`'s `name` does. */
+    /** Names every instance's collection, as `Collection.make`'s `name` does. */
     readonly name?: string;
   },
 ) => {
   const check = checkOf(schema);
   const equals = equalsOf<S["Type"]>(schema);
+  const holdsModels = isModelSchema(schema);
   const { keyOf, name } = options;
   // The undefined row fails here, before `keyOf` runs on it and before
   // `make` builds the collection, whose constructor would throw a defect.
@@ -202,11 +232,11 @@ export const CollectionField = <S extends Schema.Top, Key>(
     return repeated === undefined ? undefined : repeatedKeyMessage(repeated.key);
   });
   return codecFieldSchema(
-    "CollectionField",
+    "Model.collectionField",
     {
       wire: Schema.Array(schema).check(noRepeatedKey),
-      make: (realm, values) =>
-        new KeyedCollection<Key, S["Type"]>(
+      make: (realm, values) => {
+        const collection = new KeyedCollection<Key, S["Type"]>(
           realm,
           check,
           equals,
@@ -214,8 +244,14 @@ export const CollectionField = <S extends Schema.Top, Key>(
           values as ReadonlyArray<S["Type"]>,
           planMerge,
           name,
-        ),
-      read: (collection) => (collection as KeyedCollection<Key, S["Type"]>).values(),
+        );
+        collection.holdsModels = holdsModels;
+        return collection;
+      },
+      read: (collection) => {
+        const keyed = collection as KeyedCollection<Key, S["Type"]>;
+        return readerNow(keyed.realm)(keyed.rows);
+      },
       merge: (held, fresh, read, write) => {
         const target = held as KeyedCollection<Key, S["Type"]>;
         const incoming = fresh as KeyedCollection<Key, S["Type"]>;
@@ -261,7 +297,24 @@ const noRealm = SchemaTransformation.transformEffect<
   encode: Effect.succeed,
 });
 
-const isBoxKey = (key: string): boolean => key.startsWith("$");
+const isBoxKey = (key: PropertyKey): key is string =>
+  typeof key === "string" && key.startsWith("$");
+
+/** A field key as an error names it. */
+const fieldName = (key: PropertyKey): string => String(key);
+
+/**
+ * The keys of a model's fields: its own enumerable string keys, then its
+ * own enumerable symbol keys, as `Schema.Struct.Fields` declares them. A
+ * symbol key is a plain field's: a box field is named by a `$` string.
+ */
+const fieldKeys = (fields: object): Array<PropertyKey> => {
+  const keys: Array<PropertyKey> = Object.keys(fields);
+  for (const key of Object.getOwnPropertySymbols(fields)) {
+    if (Object.prototype.propertyIsEnumerable.call(fields, key)) keys.push(key);
+  }
+  return keys;
+};
 
 /**
  * An instance that defines `[Equal.symbol]` decides its own equality; one
@@ -279,32 +332,48 @@ const ownEqualOr =
 export const SchemaModel =
   <Self = never>(identifier: string) =>
   <const Fields extends Schema.Struct.Fields>(fields: Fields) => {
-    const keys = Object.keys(fields);
-    const wireKeys = keys.map((key) => (isBoxKey(key) ? key.slice(1) : key));
+    const keys = fieldKeys(fields);
+    const fieldOf = (key: PropertyKey): Schema.Top =>
+      (fields as unknown as Readonly<Record<PropertyKey, Schema.Top>>)[key] as Schema.Top;
+    const wireKeys: Array<PropertyKey> = keys.map((key) => (isBoxKey(key) ? key.slice(1) : key));
     // Each field reads its own wire key: two on one key would leave one field's schema unchecked.
-    const fieldOfWireKey = new Map<string, string>();
+    const fieldOfWireKey = new Map<PropertyKey, PropertyKey>();
     for (const [index, key] of keys.entries()) {
-      const wireKey = wireKeys[index] as string;
+      const wireKey = wireKeys[index] as PropertyKey;
       if (wireKey === "realm") {
-        throw new Error(
-          `pinna: ${identifier}.${key} reads "realm", the realm the instance belongs to; rename the field`,
+        throw new PinnaUsageError(
+          "pinna-effect/field-named-realm",
+          `pinna: ${identifier}.${fieldName(key)} reads "realm", the realm the instance belongs to; rename the field`,
+        );
+      }
+      // A plain own property named `__proto__` cannot be set by assignment: the
+      // value would be lost with no error. A box field `$__proto__` is unaffected.
+      if (key === "__proto__") {
+        throw new PinnaUsageError(
+          "pinna-effect/reserved-field-name",
+          `pinna: ${identifier}.__proto__ cannot hold a plain field, which would be lost on decode; rename the field or declare it $__proto__ as a box field`,
         );
       }
       const other = fieldOfWireKey.get(wireKey);
       if (other !== undefined) {
-        throw new Error(
-          `pinna: ${identifier}.${other} and ${identifier}.${key} both read "${wireKey}"; rename one`,
+        throw new PinnaUsageError(
+          "pinna-effect/wire-key-twice",
+          `pinna: ${identifier}.${fieldName(other)} and ${identifier}.${fieldName(key)} both read "${fieldName(wireKey)}"; rename one`,
         );
       }
       fieldOfWireKey.set(wireKey, key);
-      const holdsBox = fieldCodecs.has(fields[key] as Schema.Top);
+      const holdsBox = fieldCodecs.has(fieldOf(key));
       if (isBoxKey(key) && !holdsBox) {
-        throw new Error(
-          `pinna: ${identifier}.${key} is named as a box; declare it BoxField(...) or CollectionField(...)`,
+        throw new PinnaUsageError(
+          "pinna-effect/box-field-undeclared",
+          `pinna: ${identifier}.${key} is named as a box; declare it Model.boxField(...) or Model.collectionField(...)`,
         );
       }
       if (!isBoxKey(key) && holdsBox) {
-        throw new Error(`pinna: ${identifier}.${key} holds a box; name it $${key}`);
+        throw new PinnaUsageError(
+          "pinna-effect/box-field-unprefixed",
+          `pinna: ${identifier}.${fieldName(key)} holds a box; name it $${fieldName(key)}`,
+        );
       }
     }
     /**
@@ -370,7 +439,9 @@ export const SchemaModel =
         return Effect.succeed(wire);
       },
     });
-    const heldKeys = keys.filter((_key, index) => codecOf[index] !== undefined);
+    const heldKeys = keys.filter(
+      (key, index): key is string => codecOf[index] !== undefined && isBoxKey(key),
+    );
     const heldWireKeys = heldKeys.map((key) => key.slice(1));
     const heldCodecs = codecOf.filter((codec) => codec !== undefined);
     // What `make` checks before it builds the boxes: each `$` field's value under its wire key, and the realm.
@@ -380,14 +451,22 @@ export const SchemaModel =
     }
     const madeValues = Schema.Struct(madeValueFields);
     // What a merge compares: the plain fields alone, not the boxes or the realm.
-    const plainFields: Record<string, Schema.Top> = {};
+    const plainFields: Record<PropertyKey, Schema.Top> = {};
     for (const [index, key] of keys.entries()) {
       if (codecOf[index] === undefined) {
-        plainFields[key] = fields[key] as Schema.Top;
+        plainFields[key] = fieldOf(key);
       }
     }
+    // A `Model.context` field holds the caller's service: never in a snapshot.
+    const isContextField = keys.map((key) => contextFields.has(fields[key] as Schema.Top));
+    // What a restore compares a plain field with: its schema's equivalence.
+    const equalsOfField = keys.map((key, index) =>
+      codecOf[index] === undefined
+        ? equalsOf<unknown>(fields[key] as Schema.Top)
+        : (_self: unknown, _that: unknown) => true,
+    );
     const samePlainFields: (self: unknown, that: unknown) => boolean =
-      Object.keys(plainFields).length === 0 ? () => true : equalsOf(Schema.Struct(plainFields));
+      Reflect.ownKeys(plainFields).length === 0 ? () => true : equalsOf(Schema.Struct(plainFields));
     const allFields = { ...fields, realm: realmField };
     // The fields' equivalence compares the struct type, and Self extends it.
     const baseFields = Schema.Struct(allFields);
@@ -401,7 +480,10 @@ export const SchemaModel =
       // Effect also caches one AST per Schema.Class factory, capturing its first receiver.
       const getter = Object.getOwnPropertyDescriptor(makeBase(), "ast")?.get;
       if (getter === undefined) {
-        throw new Error("pinna: Schema.Class no longer exposes its ast as a getter");
+        throw new PinnaUsageError(
+          "pinna-effect/schema-class-changed",
+          "pinna: Schema.Class no longer exposes its ast as a getter",
+        );
       }
       return getter.call(self);
     };
@@ -411,9 +493,12 @@ export const SchemaModel =
       options?: Schema.MakeOptions,
     ) => Record<string, unknown>;
     const sealed = (name: string, instead: string): never => {
-      throw new Error(`pinna: ${identifier}.${name} is not supported; ${instead}`);
+      throw new PinnaUsageError(
+        "pinna-effect/unsupported-static",
+        `pinna: ${identifier}.${name} is not supported; ${instead}`,
+      );
     };
-    const anotherModel = "declare another SchemaModel with every field it needs";
+    const anotherModel = "declare another Model.Schema with every field it needs";
     const makeInstead = "call make, which throws the schema error, or decode";
     class PinnaClass extends BaseConstructor {
       constructor(input?: Readonly<Record<string, unknown>>, options?: Schema.MakeOptions) {
@@ -424,7 +509,7 @@ export const SchemaModel =
         if (payload !== undefined) {
           // Decode passes the value `fromWire` built. Another schema's `make` passes the plain object it was given, whose boxes are another instance's or none.
           if (!builtFromWire.has(payload.value as object)) {
-            throw new Error(takesAnInstance);
+            throw new PinnaUsageError("pinna-effect/make-takes-instance", takesAnInstance);
           }
           super(input, options);
         } else {
@@ -436,7 +521,8 @@ export const SchemaModel =
             const wireKey = heldWireKeys[index] as string;
             // A box passed in, or spread from another instance, would be shared with its owner.
             if (Object.hasOwn(given, key)) {
-              throw new Error(
+              throw new PinnaUsageError(
+                "pinna-effect/make-takes-wire-key",
                 `pinna: ${identifier}.make takes the value of ${key} under "${wireKey}", never a box under "${key}"`,
               );
             }
@@ -489,8 +575,8 @@ export const SchemaModel =
         let writes: Array<() => void> | undefined;
         for (const [index, key] of heldKeys.entries()) {
           const fieldWrites = (heldCodecs[index] as FieldCodec).merge(
-            this[key],
-            (fresh as Record<string, unknown>)[key],
+            (this as unknown as Record<PropertyKey, unknown>)[key],
+            (fresh as Record<PropertyKey, unknown>)[key],
             read,
             write,
           );
@@ -508,6 +594,25 @@ export const SchemaModel =
             write();
           }
         };
+      }
+      /**
+       * The fields this instance holds, for `read.snapshot` and
+       * `write.restore`: each under its wire key, a `$` field's box or
+       * collection, and a plain field's value with its schema's equivalence.
+       */
+      [modelShapeKey](): ModelShape {
+        const held: Array<ModelField> = [];
+        for (const [index, key] of keys.entries()) {
+          if (Object.hasOwn(this, key) && !isContextField[index]) {
+            held.push({
+              key: wireKeys[index] as PropertyKey,
+              value: (this as unknown as Record<PropertyKey, unknown>)[key],
+              state: codecOf[index] !== undefined,
+              equals: equalsOfField[index] as ModelField["equals"],
+            });
+          }
+        }
+        return { name: identifier, realm: this["realm"] as ObservableRealm, fields: held };
       }
       static make(input?: Readonly<Record<string, unknown>>, options?: Schema.MakeOptions): object {
         // biome-ignore lint/complexity/noThisInStatic: `this` is the subclass the application declared, which make builds.
@@ -534,7 +639,8 @@ export const SchemaModel =
           // Effect's class schema decodes its struct, then builds the instance without checking it again.
           const trusted = base.encoding?.[0]?.transformation;
           if (base.encoding?.length !== 1 || !SchemaTransformation.isTransformation(trusted)) {
-            throw new Error(
+            throw new PinnaUsageError(
+              "pinna-effect/schema-class-changed",
               "pinna: Schema.Class no longer builds its instance in one transformation",
             );
           }
@@ -558,11 +664,11 @@ export const SchemaModel =
         return ast;
       }
     }
-    // The instance type carries ClassInstance, so a draft leaves its fields read-only.
+    // The instance type carries ClassInstance, so a draft leaves its fields read-only, and its snapshot's data.
     return PinnaClass as unknown as Schema.Class<
       Self,
       ClassStruct<typeof allFields, Fields>,
-      ClassInstance
+      ClassInstance & ModelData<ModelSnapshot<Fields>, ModelRestoreData<Fields>>
     > &
       Sealed;
   };
@@ -578,6 +684,40 @@ interface Sealed {
   readonly makeOption: never;
   readonly makeEffect: never;
 }
+
+/**
+ * A model's snapshot: its fields under their wire keys, each `$` field's
+ * snapshot in place of its box or collection, and each plain field as held.
+ * A `Model.context` field is the caller's service, so it is left out.
+ */
+export type ModelSnapshot<Fields extends Schema.Struct.Fields> = {
+  readonly [Key in keyof Schema.Struct.Type<Fields> as Key extends keyof Fields
+    ? Fields[Key] extends FromContext<infer _Identifier, infer _Shape>
+      ? never
+      : Key extends `$${infer Name}`
+        ? Name
+        : Key
+    : never]: Key extends `$${string}`
+    ? Snapshot<Schema.Struct.Type<Fields>[Key]>
+    : Schema.Struct.Type<Fields>[Key];
+};
+
+/**
+ * What `write.restore` takes for a model: its snapshot's keys, where each `$`
+ * field takes what a restore of its box or collection takes, so a model row
+ * may be an instance.
+ */
+export type ModelRestoreData<Fields extends Schema.Struct.Fields> = {
+  readonly [Key in keyof Schema.Struct.Type<Fields> as Key extends keyof Fields
+    ? Fields[Key] extends FromContext<infer _Identifier, infer _Shape>
+      ? never
+      : Key extends `$${infer Name}`
+        ? Name
+        : Key
+    : never]: Key extends `$${string}`
+    ? RestoreData<Schema.Struct.Type<Fields>[Key]>
+    : Schema.Struct.Type<Fields>[Key];
+};
 
 /** The fields under their wire keys: `$name` becomes `name`. */
 type WireFields<Fields extends Schema.Struct.Fields> = {

@@ -1,12 +1,4 @@
-import {
-  box,
-  type Collection,
-  Model,
-  onRowChange,
-  type Read,
-  type Realm,
-  type Write,
-} from "@frondruntime/pinna";
+import { Box, Collection, Model, type Read, type Realm, type Write } from "@frondruntime/pinna";
 import { add, type Decimal, decimal, multiply, negate, zero } from "./decimal.ts";
 import { type PairSymbol, symbols, type Trade } from "./wire.ts";
 
@@ -16,8 +8,8 @@ export interface Aggregate {
   readonly cost: Decimal;
 }
 const empty: Aggregate = { count: 0, net: zero, cost: zero };
-export class PositionLedger extends Model {
-  readonly $aggregate = box(this.realm, empty);
+export class PositionLedger extends Model.Class {
+  readonly $aggregate = Box.make(this.realm, empty);
   constructor(
     realm: Realm,
     readonly symbol: PairSymbol,
@@ -32,7 +24,7 @@ export class PositionBook implements Disposable {
   private readonly stop: () => void;
   constructor(realm: Realm, $trades: Collection<string, Trade>) {
     this.ledgers = symbols.map((symbol) => new PositionLedger(realm, symbol));
-    this.stop = onRowChange($trades, ({ before, after }, read, write) => {
+    this.stop = Collection.onRowChange($trades, ({ before, after }, read, write) => {
       this.change(read, write, before, after);
     });
   }
