@@ -122,7 +122,7 @@ declared.
   no such record: a listener added to an empty collection, which wrote
   nothing; and a history that dropped the registration's record, as a new
   write after an undo past it does. A listener that keeps numbers or
-  strings, and a view, are not affected. Open (ruling 74).
+  strings, and a view, are not affected. This limit is not yet settled.
 - A computed value is not in a record. It is derived, so replaying its
   sources reproduces it.
 - An atom carries no value. Its entry says it changed; replay and revert

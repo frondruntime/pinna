@@ -1794,6 +1794,58 @@ them wraps `Realm.update` or walks the state.
 Kept in the private repository: `pinna-devtools` and
 `pinna-devtools-react` are not published.
 
+## Agent skills
+
+Seven agent skills under `skills/` give an agent writing an application on
+Pinna the rules for one kind of work at a time, and none of them can drift
+from the code: each is generated from `packages/pinna/AGENTS.md` (the hub)
+and `docs/public`, and `scripts/skills/build.test.ts` fails when the
+committed files differ from what `scripts/skills/build.ts` writes (ruling
+76). `npx skills add frondruntime/pinna` installs them.
+
+The hub is read whole. A skill loads its work's 76 to 141 lines and carries
+that work's docs pages as references, opened on the condition the page's
+own `description` states.
+
+| Skill | Hub | References |
+| --- | --- | --- |
+| `pinna-state` | rules 1 to 6 (models without Effect, collections, views, row listeners, reconcile), rule 10, `read.row` | `start/index`, `state/boxes`, `state/updates` (to "Stages", and "Effects after the update"), `state/collections`, `state/views`, `guides/row-indexes`, `state/reacting`, `start/principles` |
+| `pinna-react-components` | rule 9, "In a component", "No lint rule" | `react/hooks` |
+| `pinna-with-effect` | rule 4, the Effect bullets of rules 6, 7, 8, 12, and rule 9 | `effect/boxes`, `effect/classes`, `effect/collections`, `effect/equality`, `effect/programs` (two parts), `guides/live-data` ("With Effect") |
+| `pinna-stages-and-live-data` | rules 7, 8, 9 | `state/updates` ("Stages", "Visible stages"), `state/lifecycles`, `guides/live-data`, `guides/async-state` |
+| `pinna-saving-and-history` | rules 11, 12 | `state/snapshots`, `guides/saving`, `state/changes` |
+| `pinna-testing-and-errors` | "In a test", "When it throws" | `guides/testing`, `effect/programs` ("Testing"), `reference/errors`, `guides/errors` |
+| `pinna-from-mobx` | "MobX habits that do not carry over" | `start/mobx` |
+
+The mechanism: `scripts/skills/manifest.ts` names, per skill, the hub's
+rules and the blocks of a rule or section by their opening words, the
+`## ` sections of each page it carries, its neighbors, and its trigger
+prompts. `slices.ts` cuts the hub into a rule's lead and bullets and a
+section's blocks; an opening that starts no block, or two, fails.
+`apps/site/scripts/regions.ts`, shared with `sync-docs`, expands each
+region marker, so a skill prints the code `bun run typecheck` compiles. A
+link to a page or section a reference of the same skill carries points at
+that file; any other points at the page on the site. `names.ts` builds a
+TypeScript program over the published packages through the `source`
+condition and resolves every `Module.member`, `read.x`, `write.x`,
+`use...`, error class, and `pinna/...` a skill, the hub, or a page prints.
+`skills.sh.json` groups the seven on skills.sh; the test fails when it
+names a skill that does not exist or leaves one out.
+
+The cost: a skill says nothing the hub and the docs do not say, so a
+sentence a skill needs is written into the hub or a page, where the
+tarball and the site get it too; and the name check adds about two
+seconds to `bun test ./scripts`. Each skill repeats the hub's first
+paragraph, and all but `pinna-state` rules 1 to 3, about 30 lines, so a
+skill read alone still reads `read` and `write` as verbs and not as
+methods. Seven skills load about twice the lines per task that thirteen
+did, and overlap less: a prompt about Effect, saving, or a failing test
+fits one skill, where thirteen offered two.
+
+The decision: skills are a build product of the hub and the docs, checked
+like the site's samples, and shipped as `skills/` at the root of the
+public repository.
+
 ## Open questions
 
 - `useSyncExternalStore` takes no part in transitions: a store change during

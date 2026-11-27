@@ -74,7 +74,7 @@ the stage would land it.
   `pinna/restore-shape` on a data row.
 - An instance in the data whose plain fields match the row held under its
   key restores that row in place; one whose plain fields differ replaces
-  it, as a refetch does (ruling 51).
+  it, as a refetch does.
 - A restore never makes a model. A row the collection lacks is added from an
   instance in the data; plain data for a `Model.Schema` row throws
   `pinna/restore-cannot-make-row`. Make the instance with `Model.decode` or

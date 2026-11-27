@@ -13,6 +13,7 @@
     "test": "bun run --cwd packages/pinna-core test && bun run --cwd packages/pinna test && bun run --cwd packages/pinna-effect test && bun run --cwd packages/pinna-react test && bun run --cwd packages/pinna-bench test && bun run --cwd apps/rn-bench test && bun run --cwd apps/desk test && bun run --cwd apps/playground test && bun test ./scripts",
     "typecheck": "bunx tsc -p tsconfig.json && bun run --cwd packages/pinna-core typecheck && bun run --cwd packages/pinna typecheck && bun run --cwd packages/pinna-effect typecheck && bun run --cwd packages/pinna-react typecheck && bun run --cwd packages/pinna-bench typecheck && bun run --cwd apps/playground typecheck && bun run --cwd apps/rn-bench typecheck && bun run --cwd apps/site typecheck && bun run --cwd apps/desk typecheck",
     "lint": "bunx biome check .",
+    "skills": "bun scripts/skills/build.ts",
     "format": "bunx biome format . --write",
     "dev": "bun run --cwd apps/playground dev",
     "bench": "bun run --cwd packages/pinna-bench bench",

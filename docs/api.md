@@ -1396,6 +1396,79 @@ there too.
         when equal values move to other observables; `useSelect` renders
         again only when its result changes.
 
+76. **Agent skills, generated from the hub and the docs** (2026-11-27, the
+    owner asked for a series of focused skills, not one, then chose seven
+    over the thirteen first built; `docs/design.md`, "Agent skills"). Seven
+    skills under `skills/`, one per kind of work an agent does while writing
+    an application on Pinna, in the Agent Skills layout (`SKILL.md` with
+    `name` and `description`, and `references/`). `scripts/skills/build.ts`
+    writes every file from `scripts/skills/manifest.ts`,
+    `packages/pinna/AGENTS.md` (the hub), and `docs/public`;
+    `scripts/skills/build.test.ts` fails when `skills/` differs from what it
+    writes. `npx skills add frondruntime/pinna` installs them, and
+    `skills.sh.json` groups them on skills.sh. Decisions, each by ruling 71:
+    - **Seven skills, by the owner's word** (2026-11-27): state with
+      collections and watches; React components; Effect, schema and
+      programs together; stages with live data; saving with history;
+      testing with errors; moving from MobX. Lost: thirteen, one per rule
+      group, whose bodies were half the size and whose triggers overlapped
+      on "Effect", "save" and "sync", and a failing test.
+    - **The hub stays the hub; there is no core-rules skill** (test 4: two
+      always-relevant texts do one job). Every skill prints the hub's first
+      paragraph, and every skill but `pinna-state`, which prints them under
+      its own rules, prints rules 1 to 3, so a skill read without the hub
+      does not read a call as a method on a box (test 5). Every skill ends
+      on the line that the installed `AGENTS.md` wins where it differs
+      (test 3); no skill prints a version.
+    - **No codemod skill, and no skill for the unpublished packages**
+      (test 5 and ruling 72). Lost: `pinna-upgrading`, `skills-private/`.
+    - **No skill is named after a package** (rule 10, one term per
+      concept): `pinna-with-effect`, not `pinna-effect`.
+    - **Skills are generated and compared, never written by hand** (test
+      4: `sync-docs` and the export already fail on text not found).
+      References are copies with the samples expanded by
+      `apps/site/scripts/regions.ts`, so rule 9 covers every sample a skill
+      prints (test 3: a link to the deployed site can differ from the
+      installed version). Lost: hand-written skills with a lint of names.
+    - **A slice of a rule always prints the rule's lead**, the rule's own
+      conclusion, and names its bullets by their opening words, found once
+      (test 3: a reworded bullet fails the build instead of dropping out).
+      Rules print before sections, so a rule never reads as part of the
+      section above it.
+    - **Every name is resolved.** A code span `Module.member`, `read.x`,
+      `write.x`, `use...`, an error class, and `pinna/...` must resolve,
+      through the TypeScript checker, in the published packages, React, or
+      `PinnaUsageCode`; the hub and `docs/public` pass the same check.
+      Names the docs print for another library are listed in
+      `scripts/skills/names.ts`. A skill that names `pinna-form`,
+      `pinna-devtools`, or their modules fails. The check found
+      `pinna/stage-visible-option` thrown and documented but missing from
+      `PinnaUsageCode` (a bug by ruling 67, fixed).
+    - **Every hub block and every docs section has a skill.** A hub rule,
+      bullet, or section block in no skill, and a `## ` section of a
+      `docs/public` page carried by no skill or by two, fail the build, so
+      a new rule cannot ship without an owner.
+    - **Links stay in the skill where they can.** A link to a page or a
+      section a reference of the same skill carries points at that file;
+      any other points at the page on the site; an anchor no heading has
+      fails the build.
+    - **Sizes have budgets**: a description of at most 300 characters, a
+      body within the budget in the manifest, a reference of at most 450
+      lines with its samples expanded.
+    - **The trigger prompts are data.** Each skill lists prompts that load
+      it and prompts that load a named neighbor or none; the test checks
+      that they agree. Running them against a model is not part of `bun run
+      check`: a model call from the workspace is a new network host
+      (absolute rule D). Open (test 7): one prompt per skill was run
+      against a model before the first public release; the full run sends
+      each prompt once to a fresh session and reruns three times only the
+      prompts that failed; a failure changes the description, never the
+      prompt.
+    - **skills.sh groups them** through `skills.sh.json` at the repository
+      root, which changes the listing only, never the install;
+      `build.test.ts` fails when it names a skill that does not exist or
+      leaves one out.
+
 ## Build slices
 
 Built in order, each with its tests: 0, housekeeping (Effect 4.1.0, the

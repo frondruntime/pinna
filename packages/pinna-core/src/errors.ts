@@ -105,6 +105,7 @@ export type PinnaUsageCode =
   | "pinna/stage-read-writes"
   | "pinna/stage-child-open"
   | "pinna/stage-conflicts-option"
+  | "pinna/stage-visible-option"
   | "pinna/realm-read-in-recipe"
   | "pinna/realm-write-in-recipe"
   | "pinna/made-in-recipe"
