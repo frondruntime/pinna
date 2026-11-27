@@ -1,0 +1,38 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "url": "https://context7.com/frondruntime/pinna",
+  "public_key": "pk_YnJUgMU7CjMfMiBrsBcgZ",
+  "projectTitle": "Pinna",
+  "description": "Glitch-free reactive state for TypeScript applications: boxes, computed values, keyed collections, updates, and watchers, with Effect Schema boxes and models for checked data and React hooks. Not Pinia, Vue's store.",
+  "folders": [
+    "docs/public",
+    "apps/playground/src/docs",
+    "packages/pinna",
+    "packages/pinna-core",
+    "packages/pinna-effect",
+    "packages/pinna-react"
+  ],
+  "excludeFolders": [
+    "packages/pinna/src",
+    "packages/pinna/test",
+    "packages/pinna/bench",
+    "packages/pinna-core/src",
+    "packages/pinna-core/test",
+    "packages/pinna-effect/src",
+    "packages/pinna-effect/test",
+    "packages/pinna-effect/bench",
+    "packages/pinna-react/src",
+    "packages/pinna-react/test",
+    "packages/pinna-react/bench"
+  ],
+  "excludeFiles": ["CHANGELOG.md", "LICENSE"],
+  "rules": [
+    "Pinna is not Pinia: it shares no API with Vue's store.",
+    "Import from @frondruntime/pinna (no schema) or @frondruntime/pinna-effect (adds Box.schema and Model.Schema), never both in one file: each exports its own Box.",
+    "A name that starts with $ is an observable: a box, a computed value, an atom, or a collection. Everything else is plain readonly data.",
+    "Read with the read a place hands out (Computed.make, Realm.watch, Realm.autorun, Realm.update, useSelect); never keep a read past its place.",
+    "Write only inside Realm.update(realm, (read, write) => ...): write($box, value), write.modify for drafts, write.upsert and write.remove for collections.",
+    "A Box.schema or Model.boxField checks every write against its schema; a Box.make checks nothing.",
+    "A derived value is a $ property in the class body: readonly $total = Computed.make(this.realm, (read) => ...)."
+  ]
+}
