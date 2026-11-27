@@ -103,6 +103,20 @@ its class body beside its `Model.boxField`s. The plain box checks nothing, and t
   a `Model.boxField`, which checks every write, or a `Model.collectionField`, which
   checks every row written to it.
 
+## Agent skills
+
+Seven agent skills give a coding agent the rules of one task at a time:
+state, React components, Effect, stages and live data, saving and history,
+testing and errors, and moving from MobX. The `skills` command line
+(<https://skills.sh>) installs them into a project:
+
+```bash
+npx skills add frondruntime/pinna
+```
+
+`node_modules/@frondruntime/pinna/AGENTS.md` holds the same rules at the
+installed version, and wins where the two differ.
+
 ## See also
 
 - [Coming from MobX](./mobx.md): the Pinna call for each MobX one.

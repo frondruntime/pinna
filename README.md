@@ -34,6 +34,13 @@ With React, where `pinna` and React 19 or later are peer dependencies:
 bun add @frondruntime/pinna @frondruntime/pinna-react
 ```
 
+Agent skills for a coding agent that writes an application on Pinna, one
+per task, from [`skills/`](skills):
+
+```bash
+npx skills add frondruntime/pinna
+```
+
 ## Quick start
 
 ```tsx
@@ -101,6 +108,8 @@ every reader of the box.
 | `apps/rn-bench` | A React Native app that measures Pinna against other stores on iOS. |
 | `docs` | `public` the site's pages, `unpublished` (in the private repository only) the pages of the packages not on npm, `api.md` the decision record, `design.md` how it works, `performance.md` the measurements. |
 | `scripts/release.ts` | The release command line: build, pack check, and publish. |
+| `skills` | Agent skills for applications on Pinna, one per task, generated from `packages/pinna/AGENTS.md` and `docs/public`. |
+| `scripts/skills` | The generator of `skills/`, its manifest, and the test that fails when `skills/` differs from what it writes. |
 
 ## Commands
 
@@ -111,6 +120,7 @@ every reader of the box.
 | `bun run test` | Runs the tests of the packages, `apps/rn-bench`, and `apps/desk`. |
 | `bun run typecheck` | Typechecks the packages and the apps, the site's samples among them. |
 | `bun run lint`, `bun run format` | Checks, or formats, the workspace with Biome. |
+| `bun run skills` | Writes `skills/` from `scripts/skills/manifest.ts`, the hub, and `docs/public`; `--check` writes nothing and exits 1 on a difference. |
 | `bun run dev` | Starts the playground, `apps/playground`. |
 | `bun run site` | Starts the documentation site, `apps/site`. |
 | `bun run bench` | Measures Pinna, alien-signals, MobX, and Legend State on Node and Hermes, `packages/pinna-bench`; `bun run bench --help` lists its options. |

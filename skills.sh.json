@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "State",
+      "description": "Declaring, writing, and showing Pinna state, and moving to it from MobX.",
+      "skills": ["pinna-state", "pinna-react-components", "pinna-from-mobx"]
+    },
+    {
+      "title": "Async and history",
+      "description": "State from requests and sockets, optimistic writes, saving, and undo.",
+      "skills": ["pinna-stages-and-live-data", "pinna-saving-and-history"]
+    },
+    {
+      "title": "Effect",
+      "description": "Schema-checked state and Effect programs with @frondruntime/pinna-effect.",
+      "skills": ["pinna-with-effect"]
+    },
+    {
+      "title": "Testing",
+      "description": "Tests of code on Pinna, and tracing its errors.",
+      "skills": ["pinna-testing-and-errors"]
+    }
+  ]
+}

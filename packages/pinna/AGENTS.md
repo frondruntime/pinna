@@ -13,6 +13,9 @@ file, never both: each exports its own `Box`. The full documentation is at
 <https://pinna.frondruntime.dev/docs/start>; this page is what to keep in
 mind while writing code.
 
+The same rules, split by task, install as agent skills with
+`npx skills add frondruntime/pinna`.
+
 ## The rules
 
 1. **`$` means observable.** A name that starts with `$` is a box, a
@@ -250,17 +253,6 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
 - In a handler or an update, look a row up with `read.row($items, key)`.
   `read($items.row(key))` there makes a box for the key that the collection
   keeps until the key is removed; `read.row` makes none.
-- A test reads through `Source.peek` or `Realm.untracked` and writes through `Realm.update`,
-  as application code does. It makes its realm with `using realm =
-  testRealm()` and records what a select changed to with `using values =
-  record(realm, select)`, both from `@frondruntime/pinna/testing`; the
-  realm's dispose throws if a watch, an autorun, a `Source.observe`, a
-  `Collection.onRowChange` listener, or a stage is still running, and disposes the
-  realm either way. An autorun, a watch with its own
-  effect, or a `Source.observe` is held with `using _ = held(stop)`, so a failed
-  assertion still stops it. `retainedKeys($items)` names the keys a
-  collection still keeps something for, so a test checks that removed rows
-  were let go.
 - There is no `observer` wrapper. It works with the React Compiler as it is.
 - A write renders at once, even inside `startTransition`: the hooks read
   through `useSyncExternalStore`. A slow render after a write reads
@@ -268,6 +260,21 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
 - There are no components like `Memo`, `Show`, `For`, or `Reactive`. To
   rerender less, move the read into a small component under `memo`; for
   control flow, use plain JSX (`&&`, `.map`).
+
+## In a test
+
+- A test reads through `Source.peek` or `Realm.untracked` and writes
+  through `Realm.update`, as application code does. It makes its realm
+  with `using realm = testRealm()` and records what a select changed to
+  with `using values = record(realm, select)`, both from
+  `@frondruntime/pinna/testing`; the realm's dispose throws if a watch, an
+  autorun, a `Source.observe`, a `Collection.onRowChange` listener, or a
+  stage is still running, and disposes the realm either way. An autorun,
+  a watch with its own effect, or a `Source.observe` is held with
+  `using _ = held(stop)`, so a failed assertion still stops it.
+  `retainedKeys($items)` names the keys a collection still keeps something
+  for, so a test checks that removed rows were let go.
+- Assert on `_tag` and `code`, not on the message.
 
 ## MobX habits that do not carry over
 
@@ -289,14 +296,12 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
 
 Every error is a `PinnaError` with a literal `_tag`; a misuse is a
 `PinnaUsageError` whose `code` names it
-(`docs/public/reference/errors.md` lists each).
+(<https://pinna.frondruntime.dev/docs/reference/errors> lists each).
 
 - Catch a condition with `isPinnaError(error, "StageConflictError")`, which
   narrows to the class. Never `instanceof`: two copies of Pinna in one app
   each have their own classes. Never the message text: it changes with the
   API.
-- In tests, assert on `_tag` and `code`, not on the message.
-
 - `read(...) runs outside a place`: a `read` kept past its place, in
   a closure or a variable, then called. Read in the place itself.
 - `write inside Realm.update`: a `write` kept past its update. Write
@@ -304,8 +309,7 @@ Every error is a `PinnaError` with a literal `_tag`; a misuse is a
 - `... is handed an observable of another realm`: a `read` or a
   `write` of one realm given what another realm made; a realm made
   with `Realm.make({ name })` is named, as `(realm "quotes", not "ui")`.
-  Build every
-  observable from the realm that reads it.
+  Build every observable from the realm that reads it.
 - `the box rejects this value: ...`: a `ValueRejectedError`; the value
   does not match the field's schema, and `cause` is the `SchemaError`.
 - `decode rejects the input: ...`: a `DecodeError` from `Model.decode`; `cause`
@@ -318,8 +322,8 @@ Every error is a `PinnaError` with a literal `_tag`; a misuse is a
 - `... changed since the stage read ...; nothing lands`: a
   `StageConflictError` from a stage opened with `{ conflicts: "fail" }`;
   nothing landed. A visible stage stopped by one throws it from
-  `Stage.update`, `Stage.read`, and `Stage.apply`. Rerun the work over the new values, if its requests are
-  safe to repeat. Name boxes and collections (`{ name }`) so the error names
+  `Stage.update`, `Stage.read`, and `Stage.apply`. Rerun the work over
+  the new values, if its requests are safe to repeat. Name boxes and collections (`{ name }`) so the error names
   them.
 - `... is made inside a stage recipe` or `a stage recipe writes the
   realm`: a recipe made something or wrote around its stage. Make it
@@ -328,10 +332,10 @@ Every error is a `PinnaError` with a literal `_tag`; a misuse is a
   autorun or a watch effect writes what it reads on every run. Make the
   write settle, or derive the value with `Computed.make`.
 
-Pass `{ name }` to `Computed.make`, `Box.make`, `Computed.fn`, `Collection.make`, or
-`Model.collectionField`
-(`Computed.make(this.realm, (read) => ..., { name: "Todos.remaining" })`) and its
-errors name it. A `Model.boxField` takes no name, so its errors say
+Pass `{ name }` to `Computed.make`, `Box.make`, `Computed.fn`,
+`Collection.make`, or `Model.collectionField`
+(`Computed.make(this.realm, (read) => ..., { name: "Todos.remaining" })`)
+and its errors name it. A `Model.boxField` takes no name, so its errors say
 `$observable`. `Source.inspect($x)` reports what a value read and
 why it last recomputed.
 
