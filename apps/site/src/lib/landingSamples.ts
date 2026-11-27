@@ -1,6 +1,10 @@
+import { codeTheme } from "@frondruntime/site-kit/code-theme";
+import {
+  type SampleImport,
+  sampleImports,
+  withImports,
+} from "@frondruntime/site-kit/sample-imports";
 import { codeToHtml, type DecorationItem, type ShikiTransformer } from "shiki";
-import { pinnaCodeTheme } from "./pinnaCodeTheme";
-import { type SampleImport, sampleImports, withImports } from "./sampleImports";
 
 /**
  * One `// #region name` of a sample under `apps/playground/src/landing`, the source of every
@@ -183,7 +187,7 @@ export function highlightSample(
   );
   return codeToHtml(code, {
     lang: "tsx",
-    theme: pinnaCodeTheme,
+    theme: codeTheme,
     decorations,
     transformers: [errorNotes(errors, notes)],
   });

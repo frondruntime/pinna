@@ -1,6 +1,6 @@
 /**
- * Draws the footer's garden: the `--sprouts` tile in `src/styles/design-system.css`, rewritten in
- * place. `bun run sprouts`.
+ * Draws the footer's garden: the `--footer-art` tile in `src/styles/site.css`, rewritten in place.
+ * `bun run sprouts`.
  *
  * Every plant is a small copy of the brand mark (`src/components/Brand.astro`): a lime stem with a
  * filled node at its tip and pairs of beams that leave the stem at one point, one to each side,
@@ -12,17 +12,18 @@
  *
  * The tile is an SVG drawn from a seeded generator, so a run with the same seed writes the same
  * bytes. A data URI cannot read a custom property, so the run reads `--accent` and `--cyan` from
- * the stylesheet and fails when one is missing; change a token, then run it again. The tile is
- * 1499px wide, wider than a 1440px window, so its seam does not repeat within one screen.
+ * the engine's `design-system.css` and fails when one is missing; change a token, then run it
+ * again. The tile is 1499px wide, wider than a 1440px window, so its seam does not repeat within
+ * one screen.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const stylesheet = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../src/styles/design-system.css",
+const stylesheet = resolve(dirname(fileURLToPath(import.meta.url)), "../src/styles/site.css");
+const tokens = fileURLToPath(
+  import.meta.resolve("@frondruntime/site-kit/styles/design-system.css"),
 );
 
 const seed = 11;
@@ -161,12 +162,12 @@ const sapling = (random: Random): Plant => {
 const color = (css: string, token: string): string => {
   const match = new RegExp(`^  ${token}: (#[0-9a-f]{6});`, "m").exec(css);
   if (match?.[1] === undefined) {
-    throw new Error(`${stylesheet} has no ${token} token in hex on a line of its own`);
+    throw new Error(`${tokens} has no ${token} token in hex on a line of its own`);
   }
   return match[1];
 };
 
-const tile = (css: string): string => {
+const tile = (palette: string): string => {
   const random = seeded(seed);
   const strokes: Strokes = {
     beams: strengths.map(() => ""),
@@ -194,8 +195,8 @@ const tile = (css: string): string => {
       throw new Error(`Two plants stand closer than ${clearance}px at ${current.right}`);
     }
   }
-  const accent = color(css, "--accent");
-  const cyan = color(css, "--cyan");
+  const accent = color(palette, "--accent");
+  const cyan = color(palette, "--cyan");
   const layers = strengths
     .map(
       (strength, index) =>
@@ -217,14 +218,14 @@ const tile = (css: string): string => {
 };
 
 let css = readFileSync(stylesheet, "utf8");
-const size = `var(--sprouts) 0 100% / ${width}px ${height}px`;
+const size = `  --footer-art-size: ${width}px ${height}px;`;
 if (!css.includes(size)) {
-  throw new Error(`The footer does not size --sprouts as "${size}"`);
+  throw new Error(`${stylesheet} does not size --footer-art as "${size.trim()}"`);
 }
-const declaration = /^ {2}--sprouts: url\("[^"]*"\);$/m;
+const declaration = /^ {2}--footer-art: url\("[^"]*"\);$/m;
 if (!declaration.test(css)) {
-  throw new Error(`${stylesheet} has no --sprouts declaration on a line of its own`);
+  throw new Error(`${stylesheet} has no --footer-art declaration on a line of its own`);
 }
-css = css.replace(declaration, `  --sprouts: ${tile(css)};`);
+css = css.replace(declaration, `  --footer-art: ${tile(readFileSync(tokens, "utf8"))};`);
 writeFileSync(stylesheet, css);
-console.log(`Wrote --sprouts to ${stylesheet}`);
+console.log(`Wrote --footer-art to ${stylesheet}`);

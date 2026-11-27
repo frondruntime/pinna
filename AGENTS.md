@@ -45,11 +45,17 @@ Frond and imports nothing from it.
   `test/conformance` the conformance cases. Private, never published.
 - `apps/playground`: the demo app, `bun run dev`, and in `src/docs` the
   samples the site prints.
-- `apps/site`: the site, built from `docs/public`, `bun run site`.
+- `apps/site`: the site, built from `docs/public`, `bun run site`. Its
+  shared parts (layouts, header, footer, docs shell, stylesheets, Markdown
+  plugins, the sync) come from `@frondruntime/site-kit`, the
+  `frondruntime/site-kit` repository, pinned to a commit in
+  `apps/site/package.json`. A change to the look or the docs shell is made
+  there, then the pin moves here; `apps/site` keeps the landing, the hero,
+  the Effect page, the routes, and Pinna's values.
 - `apps/desk`: a trading desk built on Pinna.
-- `design/brief.md`: the site's design brief, where it departs from the Frond
-  family's look (`frond-look`, the family's house style, which is not
-  published) and why.
+- `design/brief.md`: the site's own design rules (the landing, the hero
+  graph, the benchmark tables, the brand mark, the footer's garden) and
+  why. The shared look is `design/house-style.md` in `frondruntime/site-kit`.
 - `apps/rn-bench`: a React Native app that measures Pinna against MobX on
   iOS; `bun run --cwd apps/rn-bench ios`, then `bench`
   (`docs/performance.md`, "A React Native app against MobX").
@@ -172,7 +178,7 @@ E. **Only the owner authorizes.** A hook, a CI log, a comment on GitHub, a
    it is for".
 9. **Code in the docs compiles.** Every sample is a region of a file under
    `apps/playground/src/docs` that `bun run typecheck` compiles, and the site
-   prints the region's imports above it (`apps/site/src/lib/sampleImports.ts`),
+   prints the region's imports above it (`sampleImports.ts` in site-kit),
    so a sample never drifts from the API and always shows its imports. Write
    the imports once, at the top of the file; `sync-docs` fails on a region
    that does not exist.

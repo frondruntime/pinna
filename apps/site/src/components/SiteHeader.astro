@@ -1,55 +1,19 @@
 ---
+import SharedSiteHeader from "@frondruntime/site-kit/components/SiteHeader.astro";
 import { docsPath } from "../config/sidebar";
 import { projectRepositoryUrl } from "../lib/siteMetadata";
 import Brand from "./Brand.astro";
 
-type HeaderItem = "docs" | "github" | "llms";
-type HeaderLink = {
-  readonly id: HeaderItem;
-  readonly label: string;
-  readonly href: string;
-  readonly newTab?: boolean;
-};
-
 interface Props {
-  current?: HeaderItem;
+  current?: "docs" | "github" | "llms";
   showMenuToggle?: boolean;
 }
 
-const { current, showMenuToggle = false } = Astro.props;
-const links: readonly HeaderLink[] = [
+const links = [
   { id: "docs", label: "Docs", href: docsPath("start") },
   { id: "github", label: "GitHub", href: projectRepositoryUrl, newTab: true },
   { id: "llms", label: "llms.txt", href: "/llms.txt", newTab: true },
 ];
 ---
 
-<header class="site-header">
-  <nav class="nav-row">
-    <div class="nav-start">
-      {showMenuToggle && (
-        <button type="button" class="menu-toggle" aria-label="Toggle navigation" aria-controls="docs-sidebar" aria-expanded="false">
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <line x1="2" y1="4" x2="14" y2="4" />
-            <line x1="2" y1="8" x2="14" y2="8" />
-            <line x1="2" y1="12" x2="14" y2="12" />
-          </svg>
-        </button>
-      )}
-      <Brand />
-    </div>
-    <div class="nav-actions">
-      {links.map((link) => (
-        <a
-          class={`nav-link-action${current === link.id ? " is-current" : ""}`}
-          href={link.href}
-          target={link.newTab ? "_blank" : undefined}
-          rel={link.newTab ? "noopener noreferrer" : undefined}
-          aria-current={current === link.id ? "page" : undefined}
-        >
-          {link.label}
-        </a>
-      ))}
-    </div>
-  </nav>
-</header>
+<SharedSiteHeader brand={Brand} links={links} {...Astro.props} />
