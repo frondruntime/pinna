@@ -1,14 +1,8 @@
 ---
+import SharedSiteFooter from "@frondruntime/site-kit/components/SiteFooter.astro";
 import { projectRepositoryUrl } from "../lib/siteMetadata";
+
+const credit = { label: "romanonthego", href: "https://romanonthego.dev" };
 ---
 
-<footer class="site-footer">
-  <div class="site-footer-shell">
-    <span class="site-footer-mark">PINNA</span>
-    <span class="site-footer-meta">
-      <span>© 2026</span>
-      <span>built by <a href="https://romanonthego.dev" target="_blank" rel="noopener noreferrer">romanonthego</a></span>
-      <a href={projectRepositoryUrl} target="_blank" rel="noopener noreferrer">GitHub</a>
-    </span>
-  </div>
-</footer>
+<SharedSiteFooter mark="PINNA" credit={credit} repositoryUrl={projectRepositoryUrl} />

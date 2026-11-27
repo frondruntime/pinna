@@ -88,20 +88,15 @@
         "@astrojs/check": "0.9.12",
         "@astrojs/markdown-remark": "7.3.4",
         "@frondruntime/pinna": "workspace:*",
-        "@vercel/analytics": "2.0.1",
-        "@vercel/speed-insights": "2.0.0",
+        "@frondruntime/site-kit": "github:frondruntime/site-kit#7d7beead6857d0b02ed1e3b7a545f7e9c816426c",
         "astro": "7.4.2",
-        "beautiful-mermaid": "1.1.3",
         "ogl": "1.0.11",
         "reactive-framework-test-suite": "0.2.0",
         "shiki": "4.5.0",
         "typescript": "6.0.3",
-        "unist-util-visit": "5.2.0",
-        "vfile": "6.0.3",
       },
       "devDependencies": {
         "@astrojs/sitemap": "3.7.4",
-        "@types/mdast": "4.0.4",
       },
     },
     "packages/pinna": {
@@ -499,6 +494,8 @@
     "@frondruntime/pinna-rn-bench": ["@frondruntime/pinna-rn-bench@workspace:apps/rn-bench"],
 
     "@frondruntime/pinna-site": ["@frondruntime/pinna-site@workspace:apps/site"],
+
+    "@frondruntime/site-kit": ["@frondruntime/site-kit@github:frondruntime/site-kit#7d7beea", { "dependencies": { "@astrojs/markdown-remark": "7.3.4", "@vercel/analytics": "2.0.1", "@vercel/speed-insights": "2.0.0", "beautiful-mermaid": "1.1.3", "unist-util-visit": "5.2.0", "vfile": "6.0.3" }, "peerDependencies": { "astro": "7.4.2" } }, "frondruntime-site-kit-7d7beea", "sha512-3jM13TRsRYslL9xMfPwLsK6FYoxvvp1BGXJMfDHe29+WST44QPfbzSJ9MwGFQWMpR3n/q89xYQCSPXHuiLJq0g=="],
 
     "@happy-dom/global-registrator": ["@happy-dom/global-registrator@21.0.4", "", { "dependencies": { "@types/node": ">=20.0.0", "happy-dom": "^21.0.4" } }, "sha512-Bbr0hW9hhDhBf3Jp0EyDlkCbFgbr0z2jd3BMKYOYW+fOkPM4Nx195GMXyCtRCGEgoNn6i09FabXrSkNFm2ONzg=="],
 
