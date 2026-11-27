@@ -14,7 +14,7 @@
     "@astrojs/check": "0.9.12",
     "@astrojs/markdown-remark": "7.3.4",
     "@frondruntime/pinna": "workspace:*",
-    "@frondruntime/site-kit": "github:frondruntime/site-kit#7d7beead6857d0b02ed1e3b7a545f7e9c816426c",
+    "@frondruntime/site-kit": "github:frondruntime/site-kit#0d8a656aa2630eaf891540fcce0975cc72357910",
     "astro": "7.4.2",
     "ogl": "1.0.11",
     "reactive-framework-test-suite": "0.2.0",
