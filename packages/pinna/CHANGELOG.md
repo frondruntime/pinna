@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.2](https://github.com/frondruntime/pinna/compare/pinna-v0.2.1...pinna-v0.2.2) (2026-11-28)
+
+
+### Features
+
+* **pinna:** add { immediate: true } to Realm.watch and Program.watchScoped ([#18](https://github.com/frondruntime/pinna/issues/18)) ([529dee0](https://github.com/frondruntime/pinna/commit/529dee0b074501e44661b9b8d64ed8af519c3a9f))
+
+
+### Bug Fixes
+
+* **pinna:** stop a failed immediate watch before its first-run writes settle ([#20](https://github.com/frondruntime/pinna/issues/20)) ([ed00439](https://github.com/frondruntime/pinna/commit/ed004394f56c5d37dab10dc1b32f73998f5c1993))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @frondruntime/pinna-core bumped from 0.2.1 to 0.2.2
+  * devDependencies
+    * @frondruntime/pinna-core bumped to 0.2.2
+
 ## [0.2.1](https://github.com/frondruntime/pinna/compare/pinna-v0.2.0...pinna-v0.2.1) (2026-11-26)
 
 

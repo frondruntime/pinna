@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.2](https://github.com/frondruntime/pinna/compare/pinna-react-v0.2.1...pinna-react-v0.2.2) (2026-11-28)
+
+
+### Miscellaneous Chores
+
+* **pinna-react:** Synchronize pinna versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @frondruntime/pinna-core bumped from 0.2.1 to 0.2.2
+  * devDependencies
+    * @frondruntime/pinna bumped to 0.2.2
+    * @frondruntime/pinna-core bumped to 0.2.2
+    * @frondruntime/pinna-effect bumped to 0.2.2
+  * peerDependencies
+    * @frondruntime/pinna bumped from 0.2.1 to 0.2.2
+
 ## [0.2.1](https://github.com/frondruntime/pinna/compare/pinna-react-v0.2.0...pinna-react-v0.2.1) (2026-11-26)
 
 
