@@ -52,6 +52,57 @@ export interface Skill {
 
 export const skills: ReadonlyArray<Skill> = [
   {
+    name: "pinna-overview",
+    title: "Pinna overview: where each call lives",
+    description:
+      "Use first for any work with Pinna (@frondruntime/pinna, not Pinia): every module and its calls, what read and write hand out, the hooks, the testing entry, and which skill covers each task. Then load the task's skill, such as pinna-state or pinna-react-components.",
+    claim:
+      "Maps the whole library: each module and its members, what each package adds, and the call and the skill for each kind of task.",
+    hub: [{ section: "Where each call lives" }],
+    references: [],
+    neighbors: [
+      {
+        skill: "pinna-state",
+        when: "declaring, writing, or reacting to state: boxes, computed values, models, collections, views, watches, and autoruns",
+      },
+      { skill: "pinna-react-components", when: "a React component that shows or changes state" },
+      {
+        skill: "pinna-with-effect",
+        when: "a value checked by Effect Schema, decoded from the wire, or run by an Effect program",
+      },
+      {
+        skill: "pinna-stages-and-live-data",
+        when: "writes that wait for asynchronous work or show optimistically, and state from a request or a socket",
+      },
+      {
+        skill: "pinna-saving-and-history",
+        when: "saving and restoring state, undo, redo, or a log of every write",
+      },
+      { skill: "pinna-testing-and-errors", when: "a test of code on Pinna, or an error to trace" },
+      { skill: "pinna-from-mobx", when: "code moving from MobX" },
+    ],
+    budget: 120,
+    prompts: {
+      loads: [
+        "Which Pinna module holds the function that reads a value without tracking",
+        "List every call Pinna exports",
+        "Where in Pinna is the call for a sorted list over rows",
+        "What does @frondruntime/pinna-effect add over @frondruntime/pinna",
+        "Which Pinna skill covers optimistic writes",
+      ],
+      skips: [
+        { prompt: "Add a Pinia store for the user", expected: "none" },
+        { prompt: "Port this MobX store to Pinna", expected: "pinna-from-mobx" },
+        { prompt: "Write tests for the cart model", expected: "pinna-testing-and-errors" },
+        { prompt: "Add undo and redo to the canvas", expected: "pinna-saving-and-history" },
+        {
+          prompt: "Show the cart total in the header component",
+          expected: "pinna-react-components",
+        },
+      ],
+    },
+  },
+  {
     name: "pinna-state",
     title: "Pinna state, collections, and watches",
     description:

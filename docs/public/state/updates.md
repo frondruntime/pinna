@@ -95,8 +95,8 @@ through `Realm.untracked`.
 | Call | Answers |
 | --- | --- |
 | `Realm.update(realm, (read, write) => ...)` | Runs the recipe atomically. If it throws, every box it wrote gets its old value back. |
-| `write($box, value)` | Replaces the value. |
-| `write.modify($box, (draft) => ...)` | Writes the drafted array or object back once. |
+| `write($box, value)` | Replaces the value. The write for a number, a string, a boolean, or any value but an array or a plain object: `write($count, read($count) + 1)`. |
+| `write.modify($box, (draft) => ...)` | Writes the drafted array or object back once. It takes no updater function, and throws `pinna/modify-not-draftable` on any other value. |
 | `Write` | The type of `write`, for a function an update hands it to. Each of its calls returns `undefined`, so a recipe can end in one. |
 | `Collection.reconcile(previous, next, { keyOf, equals })` | `next`, with each item `equals` finds unchanged replaced by its previous instance; `previous` itself when nothing changed. A key repeated in `next` throws. |
 | `Realm.untracked(realm, (read) => ...)` | What the function returns, read without subscribing. |

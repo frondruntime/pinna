@@ -105,9 +105,11 @@ its class body beside its `Model.boxField`s. The plain box checks nothing, and t
 
 ## Agent skills
 
-Seven agent skills give a coding agent the rules of one task at a time:
-state, React components, Effect, stages and live data, saving and history,
-testing and errors, and moving from MobX. The `skills` command line
+Eight agent skills give a coding agent a map of the library and the rules
+of one task at a time. `pinna-overview` loads first: every module and its calls, and
+the skill for each task. The other seven cover state, React components,
+Effect, stages and live data, saving and history, testing and errors, and
+moving from MobX. The `skills` command line
 (<https://skills.sh>) installs them into a project:
 
 ```bash

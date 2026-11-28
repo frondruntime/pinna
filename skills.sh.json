@@ -3,6 +3,11 @@
   "notGrouped": "bottom",
   "groupings": [
     {
+      "title": "Overview",
+      "description": "Where each Pinna call lives, and which skill covers each task.",
+      "skills": ["pinna-overview"]
+    },
+    {
       "title": "State",
       "description": "Declaring, writing, and showing Pinna state, and moving to it from MobX.",
       "skills": ["pinna-state", "pinna-react-components", "pinna-from-mobx"]
