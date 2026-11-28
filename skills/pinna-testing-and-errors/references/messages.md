@@ -119,6 +119,7 @@ how to find why a value recomputed.
 | `pinna: watchers did not settle after 100 rounds` | `pinna/watchers-unsettled` | Sent to `onError`: watchers kept changing what they read, such as an autorun that writes what it reads on every run. Make the write settle. |
 | `pinna: <name> ran 100 times in a row for its own writes; ...` | `pinna/watchers-unsettled` | Sent to `onError`: a scheduled watch or autorun whose every run writes what it read. It runs again at the next change from outside its own runs. Make the write settle. |
 | `pinna: <name>'s scheduler called run inside an update, ...` | `pinna/scheduled-run-not-at-rest` | A scheduler's `run` called inside an update, a computed value, a watch's select, an autorun, or a stage recipe, where values are not settled. Call it from a frame, a timer, an event handler, or a watch's effect. |
+| `pinna: <name> with { immediate: true } is made inside Realm.update, ...` | `pinna/watch-immediate-in-update` | A `Realm.watch` or `Program.watchScoped` with `{ immediate: true }` made inside an update, where its first effect would run before the update lands. Nothing is watched. Make the watch outside the update. |
 | `pinna: Source.onObserved hooks did not settle after 100 passes` | `pinna/hooks-unsettled` | Sent to `onError`: hooks kept starting other hooks. The hooks still due wait for the next settle. |
 
 ### Collections

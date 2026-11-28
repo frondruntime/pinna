@@ -32,6 +32,25 @@ const stop = Realm.watch(
 );
 ```
 
+`{ immediate: true }` also runs the effect once at the call, for the current
+value, with `previous` `undefined`, as MobX's `fireImmediately` on `reaction`
+does. That run ignores `equals`; an error from it is thrown from
+`Realm.watch`, and nothing is watched.
+
+```ts
+import { Realm } from "@frondruntime/pinna";
+
+const stopCount = Realm.watch(
+  realm,
+  (read) => read($tags).length,
+  (count, previous) => {
+    // `previous` is `undefined` on the run at the call.
+    console.log(previous === undefined ? `${count} tags` : `${previous} → ${count} tags`);
+  },
+  { immediate: true },
+);
+```
+
 `Realm.autorun` runs at once, and again when what its last run read changes.
 
 ```ts
@@ -128,6 +147,14 @@ const stopDraw = Realm.watch(
   is watched. A later one goes to the realm's `onError`.
 - Both return a stop function. Stopping twice does nothing, and once stopped,
   the effect never runs again.
+- `{ immediate: true }` throws `pinna/watch-immediate-in-update` inside
+  `Realm.update`: the run at the call would come before the update lands,
+  with a value a rollback can take back. Make the watch outside the update.
+  The effect's run at the call has no stop function yet: a watch that must
+  stop itself on its first value checks the value and stops on a later run.
+- `Realm.autorun` is the form for code that reads what it needs each run
+  and needs no `previous`; a watch with `{ immediate: true }` is the form
+  that keeps `previous` and `equals`.
 - A scheduled watch or autorun runs its first run at once, as the others do,
   so its error is thrown to the caller. Every later run waits for the
   scheduler, and its error goes to `onError`, since the writer has returned.
@@ -153,7 +180,7 @@ const stopDraw = Realm.watch(
 
 | Call | Answers |
 | --- | --- |
-| `Realm.watch(realm, (read) => ..., (value, previous) => ..., { name?, equals?, scheduler? })` | The stop function. `equals` decides what counts as a change; `Object.is` by default. |
+| `Realm.watch(realm, (read) => ..., (value, previous) => ..., { name?, equals?, scheduler?, immediate? })` | The stop function. `equals` decides what counts as a change; `Object.is` by default. With `immediate: true`, the effect also runs at the call, `previous` is typed `Value \| undefined`, and a scheduled watch's later runs stay the scheduler's. |
 | `Realm.autorun(realm, (read) => ..., { scheduler? })` | The stop function. |
 | `Scheduler` | The type `(run: () => void) => void`. |
 

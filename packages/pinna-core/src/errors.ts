@@ -95,6 +95,7 @@ export type PinnaUsageCode =
   | "pinna/hooks-unsettled"
   | "pinna/reentrant-run"
   | "pinna/scheduled-run-not-at-rest"
+  | "pinna/watch-immediate-in-update"
   | "pinna/unbalanced-batch"
   | "pinna/foreign-source"
   // Disposal

@@ -45,10 +45,16 @@ describe("a scheduler that runs at once", () => {
       Realm: {
         ...api.Realm,
         watch: ((realm, select, effect, options) =>
-          api.Realm.watch(realm, select, effect, {
-            ...options,
-            scheduler: immediate,
-          })) as typeof api.Realm.watch,
+          // A forwarder: the overload is the caller's, not this wrapper's.
+          api.Realm.watch(
+            realm,
+            select,
+            effect as never,
+            {
+              ...options,
+              scheduler: immediate,
+            } as never,
+          )) as typeof api.Realm.watch,
         autorun: ((realm, effect) =>
           api.Realm.autorun(realm, effect, { scheduler: immediate })) as typeof api.Realm.autorun,
       },

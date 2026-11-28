@@ -41,6 +41,18 @@ const stop = Realm.watch(
 );
 // #endregion
 
+// #region watchImmediate
+const stopCount = Realm.watch(
+  realm,
+  (read) => read($tags).length,
+  (count, previous) => {
+    // `previous` is `undefined` on the run at the call.
+    console.log(previous === undefined ? `${count} tags` : `${previous} → ${count} tags`);
+  },
+  { immediate: true },
+);
+// #endregion
+
 // #region autorun
 const stopTitle = Realm.autorun(realm, (read) => {
   document.title = `${read($tags).length} tags`;
@@ -179,6 +191,7 @@ export {
   requests,
   stop,
   stopClamp,
+  stopCount,
   stopDraw,
   stopEscape,
   stopSending,

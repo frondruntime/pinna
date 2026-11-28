@@ -31,8 +31,9 @@ its own.
   write before the throw in the same update is taken back.
 - There is no global state. Every observable belongs to the realm that made
   it, as with `configure({ isolateGlobalState: true })` for every store.
-- `Realm.watch` runs for changes, not for the current value. Where MobX would pass
-  `fireImmediately`, call the effect once by hand.
+- `Realm.watch` runs for changes, not for the current value. Where MobX passes
+  `fireImmediately: true` to `reaction`, pass `{ immediate: true }`: the
+  effect also runs at the call, with `previous` `undefined`.
 - `flow` has no counterpart: `await` outside, then one `Realm.update` per step. For
   cancellation, write the work as an Effect program.
 - A `Realm.autorun` writes through `Realm.update`, whose reads do not subscribe it.

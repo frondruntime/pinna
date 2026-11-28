@@ -1602,6 +1602,30 @@ Two hooks wait for a use:
   moving its store to a reaction notified when marked would run it once per
   render, a change with its own measurement.
 
+## Immediate watches
+
+A watch with `{ immediate: true }` runs its effect once for the value it
+starts from, so code that needs the current value and each change after it
+writes one watch, not a watch and a hand call (ruling 78). The mechanism
+lives in `pinna`, not the graph: `Realm.watch` wraps the select to keep its
+first result, makes the watch as before, and then calls the effect through
+`Realm.untracked` with that result and `previous` `undefined`. An error from
+that call stops the watch and is thrown, so nothing stays watched. A
+scheduled watch calls the effect inside its first run, which is already
+synchronous. `Program.watchScoped` passes the option through: its queue
+takes the first value as any other, so the effect is forked at once with
+`previous` `undefined`.
+
+The cost: one field test on the path with options, and a closure and a
+branch per select run for an immediate watch only; `read`, `write`, a
+recompute, and `Realm.update` are unchanged. The limit: inside
+`Realm.update` the option throws `pinna/watch-immediate-in-update`, since
+the run would see a value the update has not landed and a rollback can take
+back. The effect's first run has no stop function yet.
+
+The decision: the option ships on `Realm.watch` and `Program.watchScoped`,
+with `previous` typed `Value | undefined` only where the option may be set.
+
 ## Values from a promise or an Effect
 
 **A promise or an Effect enters Pinna as a read-only value that runs while

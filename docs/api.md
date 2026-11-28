@@ -61,7 +61,7 @@ there too.
 2. **`useValues` shape** (2026-11-02). An array in, a typed array out: an
    object is harder to keep stable across renders.
 3. **No `fireImmediately` on `Realm.watch`** (2026-11-02). Code that needs the
-   first value calls the effect once through `Realm.untracked`.
+   first value calls the effect once through `Realm.untracked`. Replaced by 78.
 4. **Where errors go** (2026-11-02). To `globalThis.reportError`. Replaced
    by 13.
 5. **Keyed collection** (2026-11-02). `Collection.reconcile` only. Replaced by 20.
@@ -1501,6 +1501,39 @@ there too.
       alias that would leave an agent asking which of two is the real one.
     - Ruling 3, no immediate option on `Realm.watch`, is the owner's to
       reopen and is not changed here.
+
+78. **`Realm.watch` takes `{ immediate: true }`** (2026-11-28, the owner
+    reopened 3 after agents building on Pinna logged the missing option;
+    MobX has `fireImmediately` on `reaction` alone, `autorun` runs at once,
+    and `when` has no such option). The effect also runs once at the call,
+    untracked and synchronous, after the select's first run, with `previous`
+    `undefined`. Replaces 3. Decisions, each by ruling 71:
+    - **Not covered by `Realm.autorun`** (test 4 does not block it): an
+      autorun's body is tracked and has no `value`, `previous`, or `equals`.
+      The workaround of 3 ran the select twice and passed a `previous` the
+      effect's type said was a `Value`.
+    - **`previous` is typed by overload** (test 3: a type that says `Value`
+      for an `undefined` is a silent wrong value). Without the option, or with
+      `immediate: false`, `previous` is a `Value`; with options that may hold
+      `true`, it is `Value | undefined`. `Program.watchScoped` takes the same
+      overloads. Lost: `Value | undefined` on every watch.
+    - **The name is `immediate`** (rule 5, whole words in Pinna's terms).
+      Lost: MobX's `fireImmediately`.
+    - **The run at the call ignores `equals`**, and an error from it is thrown
+      from `Realm.watch` with nothing watched, as an autorun's first run
+      (test 3).
+    - **Refused inside `Realm.update`** with
+      `pinna/watch-immediate-in-update` (test 3: the run would come before the
+      update lands, with a value a rollback can take back, and an effect that
+      cannot be taken back). Lost: deferring the run until the update lands,
+      which adds a queue to the update's end for a rare call (test 6).
+    - **With a scheduler**, the run at the call is synchronous and later runs
+      are the scheduler's, as a scheduled watch's first run already is.
+    - **`Program.changes` is unchanged**: it already starts with the current
+      value. The hooks render the current value already.
+    - **Cost** (test 6): one field test on `Realm.watch`'s path with options,
+      and a wrapper around the select of an immediate watch only. Nothing on
+      `read`, `write`, a recompute, or `Realm.update`.
 
 ## Build slices
 

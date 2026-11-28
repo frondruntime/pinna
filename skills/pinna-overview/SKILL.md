@@ -92,6 +92,7 @@ no other entry. `@frondruntime/pinna-effect` holds every member of
 | Keep rows by key, or a sorted list over them | `Collection.make`, `View.ordered` | `pinna-state` |
 | Run code now and after each change | `Realm.autorun` | `pinna-state` |
 | Run code after a change to a selected value | `Realm.watch` | `pinna-state` |
+| Run it for the current value too, with `previous` | `Realm.watch` with `{ immediate: true }` | `pinna-state` |
 | Show state in React | `useValue`, `useValues`, `useSelect` | `pinna-react-components` |
 | Check data against a schema, or decode it | `Box.schema`, `Model.Schema`, `Model.decode` | `pinna-with-effect` |
 | Run state as an Effect program | `Program.watchScoped`, `Program.changes`, `Realm.scoped` | `pinna-with-effect` |
