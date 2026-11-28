@@ -8,6 +8,7 @@ import {
   type Scheduler,
   Source,
   Stage,
+  type WatchOptions,
 } from "../src/index.ts";
 import { testRealm } from "../src/testing/index.ts";
 import { expectRealmAtRest } from "./rest.ts";
@@ -498,5 +499,174 @@ describe("an immediate watch and what it starts", () => {
     later.flush();
     expect(autoruns).toBe(1);
     stopAutorun();
+  });
+});
+
+describe("an immediate watch's run at the call, against what it writes", () => {
+  test("a write it makes settles once it returns, as an autorun's first run's does", () => {
+    using realm = testRealm();
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 0);
+    const log: Array<string> = [];
+    const stopOther = Realm.watch(
+      realm,
+      (read) => read($b),
+      (value) => {
+        log.push(`other ${value}`);
+      },
+    );
+    const stop = Realm.watch(
+      realm,
+      (read) => read($a),
+      (value, previous) => {
+        log.push(`start ${value} ${previous}`);
+        if (value === 1) {
+          Realm.update(realm, (_read, write) => {
+            write($a, 2);
+            write($b, 1);
+          });
+        }
+        log.push(`end ${value}`);
+      },
+      { immediate: true },
+    );
+    // Neither this watch's change nor another watch runs inside the run at
+    // the call, so the effect never starts again before it returns.
+    expect(log).toEqual(["start 1 undefined", "end 1", "start 2 1", "end 2", "other 1"]);
+    stop();
+    stopOther();
+  });
+
+  test("an update it makes reaches Realm.onUpdate before Realm.watch returns", () => {
+    using realm = testRealm();
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 0);
+    const later = frame();
+    for (const options of [
+      { immediate: true },
+      { immediate: true, scheduler: later.scheduler },
+    ] as const) {
+      const log: Array<string> = [];
+      const stopListening = Realm.onUpdate(realm, () => {
+        log.push("record");
+      });
+      const stop = Realm.watch(
+        realm,
+        (read) => read($a),
+        () => {
+          Realm.update(realm, (read, write) => write($b, read($b) + 1));
+        },
+        options,
+      );
+      log.push("returned");
+      expect(log).toEqual(["record", "returned"]);
+      stop();
+      stopListening();
+    }
+  });
+
+  test("lets go of the first value once it is delivered", async () => {
+    // Against a watch without the option, so a GC that collects nothing
+    // fails the control, not the claim.
+    const firstValueKept = async (options: WatchOptions<object>): Promise<boolean> => {
+      const realm = Realm.make();
+      const $a = Box.make<object>(realm, { rows: new Array(1000).fill(1) });
+      const first = new WeakRef(Source.peek($a));
+      const stop = Realm.watch(
+        realm,
+        (read) => read($a),
+        () => undefined,
+        options,
+      );
+      Realm.update(realm, (_read, write) => write($a, { rows: [] }));
+      await Bun.sleep(1);
+      Bun.gc(true);
+      await Bun.sleep(1);
+      Bun.gc(true);
+      const kept = first.deref() !== undefined;
+      stop();
+      return kept;
+    };
+    expect(await firstValueKept({ equals: Object.is })).toBe(false);
+    expect(await firstValueKept({ immediate: true })).toBe(false);
+  });
+});
+
+describe("an immediate watch made inside a settle", () => {
+  test("a hook it starts begins after the run at the call, and its write is a change equals judges", () => {
+    for (const [options, expected] of [
+      [
+        { immediate: true },
+        [
+          [1, undefined],
+          [2, 1],
+        ],
+      ],
+      [{ immediate: true, equals: () => true }, [[1, undefined]]],
+    ] as const) {
+      using realm = testRealm();
+      const $a = Box.make(realm, 1);
+      const $go = Box.make(realm, 0);
+      const stopHook = Source.onObserved($a, () => {
+        Realm.update(realm, (_read, write) => write($a, 2));
+        return undefined;
+      });
+      const seen: Array<[number, number | undefined]> = [];
+      let stopInner: (() => void) | undefined;
+      const stopOuter = Realm.watch(
+        realm,
+        (read) => read($go),
+        () => {
+          stopInner = Realm.watch(
+            realm,
+            (read) => read($a),
+            (value, previous) => {
+              seen.push([value, previous]);
+            },
+            options,
+          );
+        },
+      );
+      Realm.update(realm, (_read, write) => write($go, 1));
+      expect(seen).toEqual(expected as unknown as Array<[number, number | undefined]>);
+      stopInner?.();
+      stopOuter();
+      stopHook();
+    }
+  });
+});
+
+describe("an immediate watch's run at the call that throws after an update", () => {
+  test("hands the update's record out before the error reaches the caller", () => {
+    using realm = testRealm();
+    const $a = Box.make(realm, 1);
+    const $b = Box.make(realm, 0);
+    const later = frame();
+    for (const options of [
+      { immediate: true },
+      { immediate: true, scheduler: later.scheduler },
+    ] as const) {
+      const log: Array<string> = [];
+      const stopListening = Realm.onUpdate(realm, () => {
+        log.push("record");
+      });
+      const failure = new Error("after the update");
+      try {
+        Realm.watch(
+          realm,
+          (read) => read($a),
+          () => {
+            Realm.update(realm, (read, write) => write($b, read($b) + 1));
+            throw failure;
+          },
+          options,
+        );
+      } catch (error) {
+        log.push(error === failure ? "caught" : String(error));
+      }
+      // Stopped while handling the error, so a record still queued is lost.
+      stopListening();
+      expect(log).toEqual(["record", "caught"]);
+    }
   });
 });

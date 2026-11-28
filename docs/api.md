@@ -1531,6 +1531,19 @@ there too.
       are the scheduler's, as a scheduled watch's first run already is.
     - **`Program.changes` is unchanged**: it already starts with the current
       value. The hooks render the current value already.
+    - **A write in the run at the call settles once it returns** (test 3,
+      2026-11-28 review): the run is one batch, as an autorun's first run
+      is one observing scope, so no watcher, the watch itself included,
+      runs inside it, and its updates' records go out before `Realm.watch`
+      returns, with or without a scheduler. Lost: the settle inside the
+      run, which started the effect again before its first run ended.
+    - **The run at the call is the value current at the call** (test 1):
+      a hook the watch starts that begins only at an enclosing settle
+      (inside an effect, an autorun's body, a hook, or a scheduled watch's
+      start) writes a later change that `equals` judges. Lost: deferring
+      the run to the enclosing settle (it reverses "synchronous"), and
+      exempting a hook's first write from `equals` (a second reading of
+      `equals`, and a flag on the delivery path).
     - **Cost** (test 6): one field test on `Realm.watch`'s path with options,
       and a wrapper around the select of an immediate watch only. Nothing on
       `read`, `write`, a recompute, or `Realm.update`.

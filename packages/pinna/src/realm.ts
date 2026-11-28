@@ -1060,11 +1060,36 @@ const immediateWatch = <Value>(
     { equals: options.equals, label: options.name },
   );
   delivered = true;
+  // In one batch, so a write the run makes settles once it returns, as an
+  // autorun's first run's does: no watcher, this one included, runs inside
+  // it, and the effect never starts again before its run at the call ends.
+  const core = owner.core;
   try {
-    untracked(owner, () => effect(latest as Value, undefined as Value));
+    core.beginBatch();
+    let failed = true;
+    try {
+      untracked(owner, () => {
+        // Let go of it, so the watch does not keep its first value alive
+        // after it changes: a local of this function alone, since a variable
+        // the watch's closures share stays as long as they do.
+        const first = latest as Value;
+        latest = undefined;
+        return effect(first, undefined as Value);
+      });
+      failed = false;
+    } finally {
+      core.endBatch(failed);
+    }
   } catch (error) {
     stop();
     throw error;
+  } finally {
+    // The run's updates go out now, as an autorun's first run's do: inside
+    // the batch they were queued. Also when the run throws: an update it
+    // made landed, so its record is owed before the caller sees the error.
+    if (owner.recordQueue !== undefined) {
+      drainRecords(owner);
+    }
   }
   return stop;
 };
@@ -1110,7 +1135,16 @@ const scheduledWatch = <Value>(
       }
     },
   );
-  scheduled.start();
+  try {
+    scheduled.start();
+  } finally {
+    // An immediate watch's first run may update, inside the start's batch:
+    // its updates go out now, as an autorun's first run's do, also when the
+    // run throws after one landed.
+    if (owner.recordQueue !== undefined) {
+      drainRecords(owner);
+    }
+  }
   return owner.register("scheduled watch", () => scheduled.stop());
 };
 

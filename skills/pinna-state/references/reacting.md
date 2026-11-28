@@ -152,6 +152,17 @@ const stopDraw = Realm.watch(
   with a value a rollback can take back. Make the watch outside the update.
   The effect's run at the call has no stop function yet: a watch that must
   stop itself on its first value checks the value and stops on a later run.
+- A write the run at the call makes settles once it returns, as one in an
+  autorun's first run does: no watcher, the watch itself included, runs
+  inside it, so the effect never starts again before that run ends, and the
+  update's record reaches `Realm.onUpdate` before `Realm.watch` returns.
+- The run at the call delivers the value current when the effect runs. A
+  `Source.onObserved` hook the watch starts begins when the outermost
+  enclosing run settles: at the top that is inside `Realm.watch`, before the
+  run at the call, so the effect gets the hook's value. Inside a watch's
+  effect, an autorun's body, a hook, or with a `scheduler`, the hook begins
+  after the run at the call, and its write is a later change that `equals`
+  judges.
 - `Realm.autorun` is the form for code that reads what it needs each run
   and needs no `previous`; a watch with `{ immediate: true }` is the form
   that keeps `previous` and `equals`.
