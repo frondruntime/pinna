@@ -101,9 +101,9 @@
     },
     "packages/pinna": {
       "name": "@frondruntime/pinna",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
-        "@frondruntime/pinna-core": "0.2.1",
+        "@frondruntime/pinna-core": "0.2.2",
       },
       "devDependencies": {
         "@frondruntime/pinna-core": "workspace:*",
@@ -130,11 +130,11 @@
     },
     "packages/pinna-core": {
       "name": "@frondruntime/pinna-core",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "packages/pinna-effect": {
       "name": "@frondruntime/pinna-effect",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "devDependencies": {
         "@frondruntime/pinna": "workspace:*",
         "@frondruntime/pinna-core": "workspace:*",
@@ -142,15 +142,15 @@
         "mobx": "7.1.7",
       },
       "peerDependencies": {
-        "@frondruntime/pinna": "0.2.1",
+        "@frondruntime/pinna": "0.2.2",
         "effect": "^4.1.0",
       },
     },
     "packages/pinna-react": {
       "name": "@frondruntime/pinna-react",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
-        "@frondruntime/pinna-core": "0.2.1",
+        "@frondruntime/pinna-core": "0.2.2",
       },
       "devDependencies": {
         "@babel/core": "8.0.9",
@@ -168,7 +168,7 @@
         "react-dom": "19.3.1",
       },
       "peerDependencies": {
-        "@frondruntime/pinna": "0.2.1",
+        "@frondruntime/pinna": "0.2.2",
         "react": ">=19",
       },
     },
