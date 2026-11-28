@@ -1613,8 +1613,10 @@ first result, makes the watch as before, and then calls the effect through
 so a write the effect makes settles once it returns, as one in an
 autorun's first run does, and its records go out before `Realm.watch`
 returns. The first result is cleared as it is handed over, so the watch does
-not keep it alive once it changes. An error from that call, or from the
-batch's settle, stops the watch and is thrown, so nothing stays watched. A
+not keep it alive once it changes. An error from that call stops the watch
+before the batch settles, so a write the run made before it threw runs no
+effect, and the error is thrown; an error from the settle stops it too, so
+nothing stays watched. A
 scheduled watch calls the effect inside its first run, which is already
 synchronous and already one batch. Hooks the watch starts begin at the
 outermost settle: at the top, inside the call and before the run, so the
