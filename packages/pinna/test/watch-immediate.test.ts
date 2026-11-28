@@ -453,6 +453,27 @@ describe("an immediate watch and what it starts", () => {
     stopHook();
   });
 
+  test("a hook's write that equals finds unchanged still leaves the first value current", () => {
+    using realm = testRealm();
+    const $a = Box.make(realm, 1);
+    const stopHook = Source.onObserved($a, () => {
+      Realm.update(realm, (_read, write) => write($a, 2));
+      return undefined;
+    });
+    const seen: Array<[number, number | undefined]> = [];
+    const stop = Realm.watch(
+      realm,
+      (read) => read($a),
+      (value, previous) => {
+        seen.push([value, previous]);
+      },
+      { immediate: true, equals: () => true },
+    );
+    expect(seen).toEqual([[2, undefined]]);
+    stop();
+    stopHook();
+  });
+
   test("a scheduled one made in an autorun's body runs its first effect untracked", () => {
     using realm = testRealm();
     const $a = Box.make(realm, 1);

@@ -1038,14 +1038,14 @@ const immediateWatch = <Value>(
   // later one when a `Source.onObserved` hook the watch starts writes what it
   // reads before `core.watch` returns. A change before that run is held, not
   // delivered, so the effect never sees a value older than one it saw.
+  // Every select run before that run sets it, so an `equals` that finds the
+  // hook's write unchanged, and so delivers no change, still leaves it current.
   let delivered = false;
-  let started = false;
   let latest: Value | undefined;
   const stop = owner.core.watch(
     (read: Read) => {
       const value = select(read);
-      if (!started) {
-        started = true;
+      if (!delivered) {
         latest = value;
       }
       return value;
