@@ -670,3 +670,34 @@ describe("an immediate watch's run at the call that throws after an update", () 
     }
   });
 });
+
+describe("an immediate watch's run at the call that throws after writing what it selects", () => {
+  test("runs no effect for that write: the watch stops before the write settles", () => {
+    using realm = testRealm();
+    const $a = Box.make(realm, 0);
+    const later = frame();
+    for (const options of [
+      { immediate: true },
+      { immediate: true, scheduler: later.scheduler },
+    ] as const) {
+      Realm.update(realm, (_read, write) => write($a, 0));
+      const seen: Array<[number, number | undefined]> = [];
+      const failure = new Error("after the write");
+      expect(() =>
+        Realm.watch(
+          realm,
+          (read) => read($a),
+          (value, previous) => {
+            seen.push([value, previous]);
+            Realm.update(realm, (_read, write) => write($a, value + 1));
+            throw failure;
+          },
+          options,
+        ),
+      ).toThrow(failure);
+      later.flush();
+      expect(seen).toEqual([[0, undefined]]);
+      expect(Source.inspect($a).observers).toBe(0);
+    }
+  });
+});

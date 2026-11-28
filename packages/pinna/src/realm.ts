@@ -1077,6 +1077,11 @@ const immediateWatch = <Value>(
         return effect(first, undefined as Value);
       });
       failed = false;
+    } catch (error) {
+      // Stopped before the batch settles, so a write the failed run made
+      // runs no effect, as a scheduled watch deactivates before its settle.
+      stop();
+      throw error;
     } finally {
       core.endBatch(failed);
     }
