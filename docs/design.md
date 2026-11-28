@@ -1602,6 +1602,38 @@ Two hooks wait for a use:
   moving its store to a reaction notified when marked would run it once per
   render, a change with its own measurement.
 
+## Immediate watches
+
+A watch with `{ immediate: true }` runs its effect once for the value it
+starts from, so code that needs the current value and each change after it
+writes one watch, not a watch and a hand call (ruling 78). The mechanism
+lives in `pinna`, not the graph: `Realm.watch` wraps the select to keep its
+first result, makes the watch as before, and then calls the effect through
+`Realm.untracked` with that result and `previous` `undefined`, in one batch,
+so a write the effect makes settles once it returns, as one in an
+autorun's first run does, and its records go out before `Realm.watch`
+returns. The first result is cleared as it is handed over, so the watch does
+not keep it alive once it changes. An error from that call, or from the
+batch's settle, stops the watch and is thrown, so nothing stays watched. A
+scheduled watch calls the effect inside its first run, which is already
+synchronous and already one batch. Hooks the watch starts begin at the
+outermost settle: at the top, inside the call and before the run, so the
+run gets their value; inside a batch, a settle, an autorun's body, or a
+scheduled watch's start, after it, where their write is a change `equals`
+judges. `Program.watchScoped` passes the option through: its queue
+takes the first value as any other, so the effect is forked at once with
+`previous` `undefined`.
+
+The cost: one field test on the path with options, and a closure and a
+branch per select run for an immediate watch only; `read`, `write`, a
+recompute, and `Realm.update` are unchanged. The limit: inside
+`Realm.update` the option throws `pinna/watch-immediate-in-update`, since
+the run would see a value the update has not landed and a rollback can take
+back. The effect's first run has no stop function yet.
+
+The decision: the option ships on `Realm.watch` and `Program.watchScoped`,
+with `previous` typed `Value | undefined` only where the option may be set.
+
 ## Values from a promise or an Effect
 
 **A promise or an Effect enters Pinna as a read-only value that runs while

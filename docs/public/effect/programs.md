@@ -85,8 +85,11 @@ Each of them stops when its scope closes.
   [Failures as values](#failures-as-values).
 - A watch's select is tracked and must not write. Its effect writes through
   `Realm.update`.
-- `Program.watchScoped` runs for changes, not for the current value. `Program.changes` starts with
-  the current value.
+- `Program.watchScoped` runs for changes, not for the current value, unless
+  `{ immediate: true }` is passed: then its effect is also forked for the
+  current value, with `previous` `undefined`, and inside `Realm.update` it
+  throws `pinna/watch-immediate-in-update`, as `Realm.watch` does.
+  `Program.changes` starts with the current value.
 - `Program.changes`, `Source.observeScoped`, and `Program.whileObserved` take the realm from the
   observable. A host whose programs require nothing but `Scope` watches a
   box with `Program.changes` while its work awaits.

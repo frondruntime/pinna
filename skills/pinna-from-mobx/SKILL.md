@@ -65,6 +65,7 @@ mind while writing code.
 | `store.x = value` | `write(store.$x, value)` in an update |
 | a `computed` getter | `readonly $x = Computed.make(this.realm, (read) => ...)` |
 | `reaction(select, effect)` | `Realm.watch(realm, (read) => ..., effect)` |
+| `reaction(..., { fireImmediately: true })` | `Realm.watch(realm, select, effect, { immediate: true })`, outside an update |
 | `autorun` | `Realm.autorun(realm, (read) => ...)` |
 | `map.get(key)` in an action | `read.row($items, key)` in an update |
 | pushing into an observable array | `write.modify($box, (draft) => { draft.push(item) })`, or a collection: `Collection.make(realm, { keyOf })`, or a `Model.collectionField` |

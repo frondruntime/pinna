@@ -2,7 +2,7 @@
  * Effect programs over a realm. A service reacts to state in three ways:
  *
  * - `Program.watchScoped(select, effect)` runs `effect` for each change of what `select`
- *   reads, in the caller's scope. A new value interrupts a running effect and
+ *   reads, and with `{ immediate: true }` for its current value too, in the caller's scope. A new value interrupts a running effect and
  *   starts one for the new value: the latest value wins.
  * - `Program.changes($x)` streams an observable's current value, then each change.
  * - `Source.observeScoped($x)` holds an observable observed until the scope closes.
@@ -65,8 +65,28 @@ export const createRealmScoped = (
   );
 
 /**
- * Runs `effect` whenever `select`'s result changes, not for the current
- * value. `select` is tracked and must not write. A new value interrupts the
+ * `Program.watchScoped`'s type: without `immediate`, `previous` is a `Value`;
+ * with it, `previous` is `undefined` on the run for the current value.
+ */
+export interface WatchScoped {
+  <Value>(
+    realm: Realm,
+    select: (read: Read) => Value,
+    effect: (value: Value, previous: Value) => Effect.Effect<void>,
+    options?: WatchOptions<Value> & { readonly immediate?: false },
+  ): Effect.Effect<void, never, Scope.Scope>;
+  <Value>(
+    realm: Realm,
+    select: (read: Read) => Value,
+    effect: (value: Value, previous: Value | undefined) => Effect.Effect<void>,
+    options: WatchOptions<Value>,
+  ): Effect.Effect<void, never, Scope.Scope>;
+}
+
+/**
+ * Runs `effect` whenever `select`'s result changes, and with
+ * `{ immediate: true }` also for the current value, with `previous`
+ * `undefined`, forked when the watch starts. `select` is tracked and must not write. A new value interrupts the
  * running effect. `previous` is the value the effect last ran with, or, before
  * its first run, the value the watch started from; a value replaced before the
  * effect saw it is never `previous`. The effect's error type is `never`, so a
@@ -78,7 +98,7 @@ export const createRealmScoped = (
  * `scheduler` runs the select when the scheduler calls `run`, once for every
  * write before it, rather than before `Realm.update` returns.
  */
-export const watchScoped = <Value>(
+export const watchScoped: WatchScoped = <Value>(
   realm: Realm,
   select: (read: Read) => Value,
   effect: (value: Value, previous: Value) => Effect.Effect<void>,
@@ -94,13 +114,13 @@ export const watchScoped = <Value>(
         Realm.watch(
           realm,
           select,
-          (value, previous) => {
+          (value: Value, previous: Value | undefined) => {
             if (ranWith === undefined) {
-              ranWith = { value: previous };
+              ranWith = { value: previous as Value };
             }
             Queue.offerUnsafe(values, value);
           },
-          options,
+          options as WatchOptions<Value>,
         ),
       ),
       (stop) => Effect.sync(stop),

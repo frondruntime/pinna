@@ -64,6 +64,32 @@ export interface WatchOptions<Value> extends ValueOptions<Value> {
    * which reads the values current when it starts.
    */
   readonly scheduler?: Scheduler;
+  /**
+   * Also runs the effect once when `Realm.watch` is called, after `select`'s
+   * first run, with `previous` `undefined`. That run ignores `equals`, and an
+   * error from it is thrown from `Realm.watch` with nothing watched. Refused
+   * inside an update (`pinna/watch-immediate-in-update`).
+   */
+  readonly immediate?: boolean;
+}
+
+/**
+ * `Realm.watch`'s type: without `immediate`, `previous` is a `Value`; with
+ * it, `previous` is `undefined` on the run at the call.
+ */
+export interface Watch {
+  <Value>(
+    realm: Realm,
+    select: (read: Read) => Value,
+    effect: (value: Value, previous: Value) => undefined,
+    options?: WatchOptions<Value> & { readonly immediate?: false },
+  ): () => void;
+  <Value>(
+    realm: Realm,
+    select: (read: Read) => Value,
+    effect: (value: Value, previous: Value | undefined) => undefined,
+    options: WatchOptions<Value>,
+  ): () => void;
 }
 
 /** `Realm.autorun`'s options. */
@@ -965,7 +991,7 @@ export const untracked = <Result>(realm: Realm, run: (read: Read) => Result): Re
  * returns `undefined`, as `Realm.update`'s recipe does, so an async function is
  * refused: its rejection would reach no one.
  */
-export const watch = <Value>(
+export const watch: Watch = <Value>(
   realm: Realm,
   select: (read: Read) => Value,
   effect: (value: Value, previous: Value) => undefined,
@@ -978,10 +1004,94 @@ export const watch = <Value>(
     return core.watch(select, effect);
   }
   checkName(options.name);
+  if (options.immediate === true) {
+    return immediateWatch(owner, select, effect, options);
+  }
   if (options.scheduler !== undefined) {
-    return scheduledWatch(owner, select, effect, options, options.scheduler);
+    return scheduledWatch(owner, select, effect, options, options.scheduler, false);
   }
   return core.watch(select, effect, { equals: options.equals, label: options.name });
+};
+
+/**
+ * `Realm.watch` with `{ immediate: true }`: the effect runs once at the call
+ * with `select`'s first result and `previous` `undefined`, then as a plain or
+ * a scheduled watch. Inside an update it throws: the run would come before
+ * the update lands, with a value a rollback could take back.
+ */
+const immediateWatch = <Value>(
+  owner: ObservableRealm,
+  select: (read: Read) => Value,
+  effect: (value: Value, previous: Value) => undefined,
+  options: WatchOptions<Value>,
+): (() => void) => {
+  if (owner.updateDepth > 0) {
+    throw new PinnaUsageError(
+      "pinna/watch-immediate-in-update",
+      `pinna: ${options.name ?? "a watch"} with { immediate: true } is made inside Realm.update, where its first effect would run before the update lands; make the watch outside the update`,
+    );
+  }
+  if (options.scheduler !== undefined) {
+    return scheduledWatch(owner, select, effect, options, options.scheduler, true);
+  }
+  // The value the run at the call delivers: the select's first result, or a
+  // later one when a `Source.onObserved` hook the watch starts writes what it
+  // reads before `core.watch` returns. A change before that run is held, not
+  // delivered, so the effect never sees a value older than one it saw.
+  // Every select run before that run sets it, so an `equals` that finds the
+  // hook's write unchanged, and so delivers no change, still leaves it current.
+  let delivered = false;
+  let latest: Value | undefined;
+  const stop = owner.core.watch(
+    (read: Read) => {
+      const value = select(read);
+      if (!delivered) {
+        latest = value;
+      }
+      return value;
+    },
+    (value: Value, previous: Value) => {
+      if (!delivered) {
+        latest = value;
+        return undefined;
+      }
+      return effect(value, previous);
+    },
+    { equals: options.equals, label: options.name },
+  );
+  delivered = true;
+  // In one batch, so a write the run makes settles once it returns, as an
+  // autorun's first run's does: no watcher, this one included, runs inside
+  // it, and the effect never starts again before its run at the call ends.
+  const core = owner.core;
+  try {
+    core.beginBatch();
+    let failed = true;
+    try {
+      untracked(owner, () => {
+        // Let go of it, so the watch does not keep its first value alive
+        // after it changes: a local of this function alone, since a variable
+        // the watch's closures share stays as long as they do.
+        const first = latest as Value;
+        latest = undefined;
+        return effect(first, undefined as Value);
+      });
+      failed = false;
+    } finally {
+      core.endBatch(failed);
+    }
+  } catch (error) {
+    stop();
+    throw error;
+  } finally {
+    // The run's updates go out now, as an autorun's first run's do: inside
+    // the batch they were queued. Also when the run throws: an update it
+    // made landed, so its record is owed before the caller sees the error.
+    if (owner.recordQueue !== undefined) {
+      drainRecords(owner);
+    }
+  }
+  return stop;
 };
 
 /** `Realm.watch` with a scheduler: its first run is synchronous, each later one the scheduler's. */
@@ -991,6 +1101,7 @@ const scheduledWatch = <Value>(
   effect: (value: Value, previous: Value) => undefined,
   options: WatchOptions<Value>,
   scheduler: Scheduler,
+  immediate: boolean,
 ): (() => void) => {
   const equals = options.equals ?? Object.is;
   let value: Value;
@@ -1004,6 +1115,12 @@ const scheduledWatch = <Value>(
       if (!started) {
         started = true;
         value = next;
+        if (immediate) {
+          // Untracked, as a plain immediate watch's run: a scheduled watch
+          // made inside an autorun's body runs this inside the autorun's
+          // tracked run, whose reads it must not join.
+          untracked(owner, () => effect(next, undefined as Value));
+        }
         return;
       }
       // As a plain watch: `previous` is the last result, even one `equals`
@@ -1018,7 +1135,16 @@ const scheduledWatch = <Value>(
       }
     },
   );
-  scheduled.start();
+  try {
+    scheduled.start();
+  } finally {
+    // An immediate watch's first run may update, inside the start's batch:
+    // its updates go out now, as an autorun's first run's do, also when the
+    // run throws after one landed.
+    if (owner.recordQueue !== undefined) {
+      drainRecords(owner);
+    }
+  }
   return owner.register("scheduled watch", () => scheduled.stop());
 };
 

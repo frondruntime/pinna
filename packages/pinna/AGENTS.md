@@ -54,6 +54,7 @@ no other entry. `@frondruntime/pinna-effect` holds every member of
 | Keep rows by key, or a sorted list over them | `Collection.make`, `View.ordered` | `pinna-state` |
 | Run code now and after each change | `Realm.autorun` | `pinna-state` |
 | Run code after a change to a selected value | `Realm.watch` | `pinna-state` |
+| Run it for the current value too, with `previous` | `Realm.watch` with `{ immediate: true }` | `pinna-state` |
 | Show state in React | `useValue`, `useValues`, `useSelect` | `pinna-react-components` |
 | Check data against a schema, or decode it | `Box.schema`, `Model.Schema`, `Model.decode` | `pinna-with-effect` |
 | Run state as an Effect program | `Program.watchScoped`, `Program.changes`, `Realm.scoped` | `pinna-with-effect` |
@@ -340,6 +341,7 @@ const Row = memo(function Row({ todo }: { readonly todo: Todo }) {
 | `store.x = value` | `write(store.$x, value)` in an update |
 | a `computed` getter | `readonly $x = Computed.make(this.realm, (read) => ...)` |
 | `reaction(select, effect)` | `Realm.watch(realm, (read) => ..., effect)` |
+| `reaction(..., { fireImmediately: true })` | `Realm.watch(realm, select, effect, { immediate: true })`, outside an update |
 | `autorun` | `Realm.autorun(realm, (read) => ...)` |
 | `map.get(key)` in an action | `read.row($items, key)` in an update |
 | pushing into an observable array | `write.modify($box, (draft) => { draft.push(item) })`, or a collection: `Collection.make(realm, { keyOf })`, or a `Model.collectionField` |

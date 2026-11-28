@@ -15,6 +15,13 @@ run. The effect gets the value and the one before it.
 
 <!-- region state.ts#watch -->
 
+`{ immediate: true }` also runs the effect once at the call, for the current
+value, with `previous` `undefined`, as MobX's `fireImmediately` on `reaction`
+does. That run ignores `equals`; an error from it is thrown from
+`Realm.watch`, and nothing is watched.
+
+<!-- region state.ts#watchImmediate -->
+
 `Realm.autorun` runs at once, and again when what its last run read changes.
 
 <!-- region state.ts#autorun -->
@@ -54,6 +61,25 @@ has.
   is watched. A later one goes to the realm's `onError`.
 - Both return a stop function. Stopping twice does nothing, and once stopped,
   the effect never runs again.
+- `{ immediate: true }` throws `pinna/watch-immediate-in-update` inside
+  `Realm.update`: the run at the call would come before the update lands,
+  with a value a rollback can take back. Make the watch outside the update.
+  The effect's run at the call has no stop function yet: a watch that must
+  stop itself on its first value checks the value and stops on a later run.
+- A write the run at the call makes settles once it returns, as one in an
+  autorun's first run does: no watcher, the watch itself included, runs
+  inside it, so the effect never starts again before that run ends, and the
+  update's record reaches `Realm.onUpdate` before `Realm.watch` returns.
+- The run at the call delivers the value current when the effect runs. A
+  `Source.onObserved` hook the watch starts begins when the outermost
+  enclosing run settles: at the top that is inside `Realm.watch`, before the
+  run at the call, so the effect gets the hook's value. Inside a watch's
+  effect, an autorun's body, a hook, or with a `scheduler`, the hook begins
+  after the run at the call, and its write is a later change that `equals`
+  judges.
+- `Realm.autorun` is the form for code that reads what it needs each run
+  and needs no `previous`; a watch with `{ immediate: true }` is the form
+  that keeps `previous` and `equals`.
 - A scheduled watch or autorun runs its first run at once, as the others do,
   so its error is thrown to the caller. Every later run waits for the
   scheduler, and its error goes to `onError`, since the writer has returned.
@@ -79,7 +105,7 @@ has.
 
 | Call | Answers |
 | --- | --- |
-| `Realm.watch(realm, (read) => ..., (value, previous) => ..., { name?, equals?, scheduler? })` | The stop function. `equals` decides what counts as a change; `Object.is` by default. |
+| `Realm.watch(realm, (read) => ..., (value, previous) => ..., { name?, equals?, scheduler?, immediate? })` | The stop function. `equals` decides what counts as a change; `Object.is` by default. With `immediate: true`, the effect also runs at the call, `previous` is typed `Value \| undefined`, and a scheduled watch's later runs stay the scheduler's. |
 | `Realm.autorun(realm, (read) => ..., { scheduler? })` | The stop function. |
 | `Scheduler` | The type `(run: () => void) => void`. |
 
