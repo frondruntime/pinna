@@ -1,6 +1,6 @@
 {
   "name": "@frondruntime/pinna",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Glitch-free reactive state: boxes, computed values, keyed collections, and updates.",
   "license": "MIT",
   "author": {
@@ -76,7 +76,7 @@
     "bench:hermes-changes": "bun --conditions=source bench/hermes-changes.ts"
   },
   "dependencies": {
-    "@frondruntime/pinna-core": "0.2.1"
+    "@frondruntime/pinna-core": "0.2.2"
   },
   "devDependencies": {
     "@frondruntime/pinna-core": "workspace:*",

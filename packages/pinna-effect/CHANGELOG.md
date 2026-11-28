@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.2](https://github.com/frondruntime/pinna/compare/pinna-effect-v0.2.1...pinna-effect-v0.2.2) (2026-11-28)
+
+
+### Features
+
+* **pinna:** add { immediate: true } to Realm.watch and Program.watchScoped ([#18](https://github.com/frondruntime/pinna/issues/18)) ([529dee0](https://github.com/frondruntime/pinna/commit/529dee0b074501e44661b9b8d64ed8af519c3a9f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @frondruntime/pinna bumped to 0.2.2
+    * @frondruntime/pinna-core bumped to 0.2.2
+  * peerDependencies
+    * @frondruntime/pinna bumped from 0.2.1 to 0.2.2
+
 ## [0.2.1](https://github.com/frondruntime/pinna/compare/pinna-effect-v0.2.0...pinna-effect-v0.2.1) (2026-11-26)
 
 
