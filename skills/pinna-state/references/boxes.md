@@ -121,6 +121,7 @@ basket.add(2);
 | `Computed.fn(realm, (read, ...args) => ..., options?)` | A function from arguments to a computed value, shared while observed. |
 | `class X extends Model` | A model that checks nothing. `new X(realm)` makes one; field initializers read `this.realm`. |
 | `read($x)` | The value, inside a computed value, a computed function, a watch's select, an autorun, `useSelect`, an update, or `Realm.untracked`. An atom reads as `undefined`. |
+| `Source.peek($x)` | The value, read outside every place, such as an event handler or a test, with nothing tracked. It throws `pinna/peek-while-tracking` where reads are tracked and `pinna/peek-in-recipe` in a stage recipe. `Realm.untracked(realm, (read) => ...)` reads several values. `Realm` has no read or peek member. |
 | `read.row($collection, key)` | The row under `key`, or `undefined`: see [Collections](collections.md). |
 | `Read` | The type of `read`, for a function that takes it: `(read: Read) => ...`. |
 | `Realm.isTracking(realm)` | `true` while reads are tracked: in a computed value, a watch's select, or an autorun. `false` in an update, `Realm.untracked`, a watch's effect, and a hook. |

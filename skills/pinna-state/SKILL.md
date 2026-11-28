@@ -36,13 +36,19 @@ mind while writing code.
    function a `read`: `Computed.make(realm, (read) => read($a) + 1)`.
    Never keep a `read` past its place: outside every place of its realm
    it throws, and inside another it reads as that place's `read`. Pass it
-   down instead.
+   down instead. Outside every place, such as an event handler or a test,
+   `Source.peek($x)` reads one value and `Realm.untracked(realm, (read) =>
+   ...)` several. `Realm` has no read or peek member: each member of
+   `Realm` takes a realm, and `Source.peek` takes the realm from `$x`.
 
 3. **Write with the `write` that `Realm.update` hands out.**
    `Realm.update(realm, (read, write) => { ... })`: `write($box, value)` replaces a
-   value; `write.modify($box, (draft) => { ... })` drafts arrays and plain
-   objects; a collection takes `write.upsert`, `write.remove`, and
-   `write.replaceAll`; an atom takes `write.changed`. An update that throws
+   value, and is the only write for a number, a string, a boolean, or any
+   value but an array or a plain object: `write($count, read($count) + 1)`;
+   `write.modify($box, (draft) => { ... })` drafts arrays and plain
+   objects, takes no updater function, and throws
+   `pinna/modify-not-draftable` on any other value; a collection takes
+   `write.upsert`, `write.remove`, and `write.replaceAll`; an atom takes `write.changed`. An update that throws
    is rolled back, but only its writes: a request sent inside the recipe
    has gone out. Run an effect that cannot be taken back after the update,
    from a `Realm.watch`

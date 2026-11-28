@@ -1469,6 +1469,39 @@ there too.
       `build.test.ts` fails when it names a skill that does not exist or
       leaves one out.
 
+77. **A root skill maps the library** (2026-11-28, the owner asked for it
+    after agents building Frond logged three calls as missing that exist:
+    a read outside an update, `Source.peek`; a write of a number, `write($box,
+    value)`; and a watch that runs at once, `Realm.autorun`). Amends 76: eight
+    skills. `pinna-overview` loads first for any work with Pinna and prints
+    the hub's section "Where each call lives": every module with its members and what
+    `@frondruntime/pinna-effect` adds, what `read` and `write` hand out, the
+    hooks, the testing entry, the errors, and a table from a task to its call
+    and its skill. Its neighbors are the seven others. Decisions, each by
+    ruling 71:
+    - **The map lives in the hub, not in the manifest** (test 4: a sentence a
+      skill needs goes into the hub or a page, as 76 rules), so the installed
+      `AGENTS.md` carries it too, and the name check resolves every member it
+      lists. Lost: a map written in `manifest.ts`, which the tarball would not
+      carry.
+    - **Rules 2 and 3 name the calls the agents missed** (test 3: a missing
+      call read as absent is a wrong answer an agent acts on). Rule 2 names
+      `Source.peek` and `Realm.untracked` for reads outside every place, and
+      says why `Realm` has no read member; rule 3 names `write($box, value)`
+      as the write for every value but an array or a plain object. Every
+      skill prints rules 1 to 3, so every skill carries both.
+    - **It is named `pinna-overview`** (the owner, 2026-11-28; the Agent
+      Skills specification names no root or index skill, so the name follows
+      the others, `pinna-` and what it holds). Lost: `pinna`, which says
+      nothing of what the skill does, and `pinna-index`, which reads as a
+      row index.
+    - **The root skill carries no reference** (test 4: each docs section has
+      one skill, and every section already has one). Its pages are links.
+    - **No `Realm.peek` alias** (test 4, one form per kind; rule 7). Lost: an
+      alias that would leave an agent asking which of two is the real one.
+    - Ruling 3, no immediate option on `Realm.watch`, is the owner's to
+      reopen and is not changed here.
+
 ## Build slices
 
 Built in order, each with its tests: 0, housekeeping (Effect 4.1.0, the

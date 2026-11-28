@@ -249,19 +249,22 @@ function skillText(hub: Hub, skill: Skill, covered: Set<Block>): string {
       ? []
       : [rulesText(hub, [{ rule: 1 }, { rule: 2 }, { rule: 3 }], new Set()), ""]),
   ];
-  const references = [
-    "## References",
-    "",
-    "Open a file under `references/` when its condition holds.",
-    "",
-    "| File | Read when |",
-    "| --- | --- |",
-    ...skill.references.map(
-      (reference) =>
-        `| [${reference.file}](references/${reference.file}) | ${whenOf(reference).replace(/\|/g, "\\|")} |`,
-    ),
-    "",
-  ];
+  const references =
+    skill.references.length === 0
+      ? []
+      : [
+          "## References",
+          "",
+          "Open a file under `references/` when its condition holds.",
+          "",
+          "| File | Read when |",
+          "| --- | --- |",
+          ...skill.references.map(
+            (reference) =>
+              `| [${reference.file}](references/${reference.file}) | ${whenOf(reference).replace(/\|/g, "\\|")} |`,
+          ),
+          "",
+        ];
   const neighbors = [
     "## Another skill applies",
     "",

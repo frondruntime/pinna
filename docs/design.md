@@ -1796,9 +1796,9 @@ Kept in the private repository: `pinna-devtools` and
 
 ## Agent skills
 
-Seven agent skills under `skills/` give an agent writing an application on
-Pinna the rules for one kind of work at a time, and none of them can drift
-from the code: each is generated from `packages/pinna/AGENTS.md` (the hub)
+Eight agent skills under `skills/` give an agent writing an application on
+Pinna a map of the library and the rules for one kind of work at a time,
+and none of them can drift from the code: each is generated from `packages/pinna/AGENTS.md` (the hub)
 and `docs/public`, and `scripts/skills/build.test.ts` fails when the
 committed files differ from what `scripts/skills/build.ts` writes (ruling
 76). `npx skills add frondruntime/pinna` installs them.
@@ -1809,6 +1809,7 @@ own `description` states.
 
 | Skill | Hub | References |
 | --- | --- | --- |
+| `pinna-overview` | "Where each call lives": every module and member, what `read` and `write` hand out, the hooks, the testing entry, and a task-to-call-and-skill table (ruling 77) | none |
 | `pinna-state` | rules 1 to 6 (models without Effect, collections, views, row listeners, reconcile), rule 10, `read.row` | `start/index`, `state/boxes`, `state/updates` (to "Stages", and "Effects after the update"), `state/collections`, `state/views`, `guides/row-indexes`, `state/reacting`, `start/principles` |
 | `pinna-react-components` | rule 9, "In a component", "No lint rule" | `react/hooks` |
 | `pinna-with-effect` | rule 4, the Effect bullets of rules 6, 7, 8, 12, and rule 9 | `effect/boxes`, `effect/classes`, `effect/collections`, `effect/equality`, `effect/programs` (two parts), `guides/live-data` ("With Effect") |
@@ -1829,7 +1830,7 @@ that file; any other points at the page on the site. `names.ts` builds a
 TypeScript program over the published packages through the `source`
 condition and resolves every `Module.member`, `read.x`, `write.x`,
 `use...`, error class, and `pinna/...` a skill, the hub, or a page prints.
-`skills.sh.json` groups the seven on skills.sh; the test fails when it
+`skills.sh.json` groups the eight on skills.sh; the test fails when it
 names a skill that does not exist or leaves one out.
 
 The cost: a skill says nothing the hub and the docs do not say, so a
